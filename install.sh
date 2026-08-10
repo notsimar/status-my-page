@@ -10,7 +10,20 @@ INSTALL_DIR="${1:-/opt/status-page}"
 SERVICE_USER="statuspage"
 SYSTEMD_NAME="status-page.service"
 
-echo "=== Status Page Installer ==="
+echo ""
+echo "=== Validating installation path ==="
+# Resolve to absolute path and validate
+case "$INSTALL_DIR" in
+    /*) : ;;  # absolute path OK
+    *) echo "ERROR: Install path must be absolute: $INSTALL_DIR"; exit 1 ;;
+esac
+# Prevent path traversal — reject ../ sequences
+if echo "$INSTALL_DIR" | grep -q '\.\.\/'; then
+    echo "ERROR: Invalid install path (traversal not allowed): $INSTALL_DIR"
+    exit 1
+fi
+INSTALL_DIR=$(realpath -m "$INSTALL_DIR")
+
 echo "Install directory: $INSTALL_DIR"
 echo "Service user: $SERVICE_USER"
 echo ""
@@ -122,6 +135,16 @@ rm -f /tmp/_status_pass_hash.txt
 
 echo "Credentials set: user=$ADMIN_USER"
 
+# ---- Create credentials env file (restricted permissions) ----
+ENV_FILE="/etc/status-page/env"
+mkdir -p "$(dirname "$ENV_FILE")"
+cat > "$ENV_FILE" << ENVEOF
+STATUS_ADMIN_PASS_HASH=$PASS_HASH
+PYTHONUNBUFFERED=1
+ENVEOF
+chmod 0640 "$ENV_FILE"
+chown root:"$SERVICE_USER" "$ENV_FILE"
+
 # ---- Create systemd service ----
 echo ""
 echo "=== Installing systemd service ($SYSTEMD_NAME) ==="
@@ -140,8 +163,7 @@ ExecStart=$VENV_DIR/bin/python3 $INSTALL_DIR/app.py
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=5
-Environment="PYTHONUNBUFFERED=1"
-Environment="STATUS_ADMIN_PASS_HASH=$PASS_HASH"
+EnvironmentFile=$ENV_FILE
 Environment="PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin"
 
 [Install]

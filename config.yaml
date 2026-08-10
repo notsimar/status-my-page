@@ -16,17 +16,14 @@ items:
   - Confluence
 
 # Admin credentials
-# Local development uses plain-text password below (hashed at startup).
-# Production: override with env vars in systemd or your process manager:
-#   STATUS_ADMIN_USER=youruser
+# DO NOT store passwords here. Use environment variables exclusively:
+#   STATUS_ADMIN_USER=admin
 #   STATUS_ADMIN_PASS_HASH=<hash from werkzeug.security.generate_password_hash>
 admin:
   user: admin
-  password: changeme  # <-- change before deploying!
 
 # Server settings
 server:
   host: "0.0.0.0"
   port: 8920
   secret_key_env: STATUS_SECRET_KEY
-  secret_key_default: "change-me-in-production"

@@ -35,7 +35,7 @@ loginForm && loginForm.addEventListener('submit', async e => {
 
 // Logout
 document.getElementById('logoutBtn') && document.getElementById('logoutBtn').addEventListener('click', async () => {
-    await fetch('/logout', { method: 'POST' }); location.reload();
+    await csrfFetch('/logout', { method: 'POST' }); location.reload();
 });
 
 // ── Toggle on status-main click (admin only) ──────────────────────
@@ -59,7 +59,7 @@ list && list.addEventListener('click', async e => {
     label.className = 'status-label ' + next;
     label.textContent = STATUS_LABELS[next];
     row.classList.toggle('show-notes', next !== 'green');
-    try { await fetch('/api/toggle/' + id, { method: 'POST' }); } catch (err) { location.reload(); }
+    try { await csrfFetch('/api/toggle/' + id, { method: 'POST' }); } catch (err) { location.reload(); }
     updateBadge();
 });
 
@@ -71,7 +71,7 @@ document.querySelectorAll('textarea.notes-input').forEach(function(ta) {
         var id = ta.dataset.id;
         if (timers[id]) clearTimeout(timers[id]);
         timers[id] = setTimeout(async function() {
-            try { await fetch('/api/notes/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
+            try { await csrfFetch('/api/notes/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
         }, 800);
     });
     ta.addEventListener('input', function() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
@@ -88,7 +88,7 @@ list && list.addEventListener('click', async e => {
     const name = row.querySelector('.status-name').textContent;
 
     try {
-        const res = await fetch('/api/delete/' + id, { method: 'POST' });
+        const res = await csrfFetch('/api/delete/' + id, { method: 'POST' });
         if (!res.ok) throw new Error(await res.text());
         row.style.transition = 'opacity 0.3s, transform 0.3s';
         row.style.opacity = '0';
@@ -107,7 +107,7 @@ if (addItemForm) {
         if (!name) return;
 
         try {
-            const res = await fetch('/api/add', {
+            const res = await csrfFetch('/api/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
@@ -139,7 +139,7 @@ if (addItemForm) {
                 const tid = ta.dataset.id;
                 if (timers[tid]) clearTimeout(timers[tid]);
                 timers[tid] = setTimeout(async function() {
-                    try { await fetch('/api/notes/' + tid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
+                    try { await csrfFetch('/api/notes/' + tid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
                 }, 800);
             });
             ta.addEventListener('input', function() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
@@ -224,14 +224,35 @@ list && list.addEventListener('drop', e => {
     dragSourceRow = null;
 });
 
-// ── Helpers ───────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────
+/** CSRF-protected fetch — adds X-CSRF-Token header; rotates token on success. */
+async function csrfFetch(url, options = {}) {
+    const token = window.__CSRF__ || '';
+    if (!options.headers) options.headers = {};
+    if (token) options.headers['X-CSRF-Token'] = token;
+    const res = await fetch(url, options);
+
+    // On success (+ 2xx), rotate the token by fetching a fresh one.
+    if (res.ok && res.status < 300) {
+        try {
+            const tokRes = await fetch('/api/csrf-token');
+            if (tokRes.ok) {
+                const data = await tokRes.json();
+                if (data.token) window.__CSRF__ = data.token;
+            }
+        } catch (_) { /* non-critical — token will refresh on next page load */ }
+    }
+
+    return res;
+}
+
 function sendReorder() {
     if (!document.body.classList.contains('admin')) return;
     const order = {};
     list.querySelectorAll('.status-row').forEach((row, i) => {
         order[row.dataset.id] = i;
     });
-    fetch('/api/reorder', {
+    csrfFetch('/api/reorder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order })

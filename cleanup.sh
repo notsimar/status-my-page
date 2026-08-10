@@ -32,15 +32,15 @@ fi
 do_list() {
     printf "%-25s %s\n" "FILE" "SUMMARY"
     printf "%-25s %s\n" "----" "-------"
-    ls -1 "$ARCHIVES_DIR"/*.json 2>/dev/null | sort -r | while read -r f; do
-        ts=$(python3 -c "import json; d=json.load(open('$f')); print(d['timestamp'])" 2>/dev/null || echo "?")
+    ls -1t "$ARCHIVES_DIR"/*.json 2>/dev/null | sort -r | while IFS= read -r f; do
+        ts=$(python3 -c "import json, sys; d=json.load(open(sys.argv[1])); print(d['timestamp'])" "$f" 2>/dev/null || echo "?")
         items=$(python3 -c "
-import json
-d = json.load(open('$f'))
+import json, sys
+d = json.load(open(sys.argv[1]))
 items = d.get('items', [])
 reds = sum(1 for i in items if i['status'] == 'red')
 print(f'{len(items)} total, {reds} red')
-" 2>/dev/null || echo "?")
+" "$f" 2>/dev/null || echo "?")
         printf "%-25s %s\n" "$(basename "$f")" "$items  ($ts)"
     done
 }
@@ -58,16 +58,16 @@ do_show() {
         exit 1
     fi
     python3 -c "
-import json
-d = json.load(open('$path'))
+import json, sys
+d = json.load(open(sys.argv[1]))
 print(f'Timestamp: {d[\"timestamp\"]}')
 print()
 print(f'{\"Name\":<22s} {\"Status\":>8s}  Notes')
 print('-' * 60)
 for i in d['items']:
-    flag = '🔴 red' if i['status']=='red' else '🟢 green'
+    flag = '\U0001f534 red' if i['status']=='red' else '\U0001f7e2 green'
     print(f'{i[\"name\"]:<22s} {flag:>8s}  {i.get(\"notes\",\"\")}')
-"
+" "$path"
 }
 
 # ── prune ───────────────────────────────────────

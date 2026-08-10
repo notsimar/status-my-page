@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Tiny status page — Flask + SQLite + YAML config."""
 
+import hashlib
+import hmac
+import json
 import os
+import secrets
 import sqlite3
+import time
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -28,23 +34,57 @@ cfg = load_config()
 
 ITEM_NAMES: list[str] = cfg.get("items", [])
 CFG_ADMIN_USER = cfg.get("admin", {}).get("user", "admin")
-CFG_ADMIN_PASS_PLAIN = cfg.get("admin", {}).get("password", "changeme")
+# Do not read config plaintext password — use env var hash only.
+# If neither STATUS_ADMIN_PASS_HASH nor a fallback exists, refuse to start.
+CFG_ADMIN_PASS_FALLBACK_PLAIN = cfg.get("admin", {}).get("password", "")
 SERVER_HOST = cfg.get("server", {}).get("host", "0.0.0.0")
 SERVER_PORT = cfg.get("server", {}).get("port", 8920)
+
+# Secret key: env var or generate a per-session random key.
 SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
-SECRET_DEFAULT = cfg.get("server", {}).get("secret_key_default", "change-me-in-production")
 
 
 # ── App factory ────────────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = os.environ.get(SECRET_ENV, SECRET_DEFAULT)
+app.secret_key = os.environ.get(SECRET_ENV) or secrets.token_hex(32)
 
-# Admin credentials — env vars override config file at runtime
+# ── Rate-limiter state ─────────────────────────────────────────────
+MAX_LOGIN_ATTEMPTS = 5          # failures before lockout
+LOCKOUT_SECONDS = 30            # how long to block that IP
+
+_failed_logins: dict[str, list[float]] = defaultdict(list)
+
+
+def _record_attempt(ip: str):
+    now = time.time()
+    _failed_logins[ip] = [t for t in _failed_logins[ip] if now - t < LOCKOUT_SECONDS]
+    _failed_logins[ip].append(now)
+
+    # Purge stale keys (prevent mem leak)
+    stale = [k for k, ts in _failed_logins.items()
+             if not ts or time.time() - max(ts) >= LOCKOUT_SECONDS * 2]
+    for k in stale:
+        del _failed_logins[k]
+
+
+def _is_locked(ip: str) -> bool:
+    return len(_failed_logins.get(ip, [])) >= MAX_LOGIN_ATTEMPTS
+
+
+# Admin credentials — env var hash takes priority; fall back to config plaintext only if set.
 ADMIN_USER = os.environ.get("STATUS_ADMIN_USER", CFG_ADMIN_USER)
-ADMIN_PASS_HASH = os.environ.get(
-    "STATUS_ADMIN_PASS_HASH",
-    generate_password_hash(CFG_ADMIN_PASS_PLAIN),
-)
+admin_hash_env = os.environ.get("STATUS_ADMIN_PASS_HASH")
+if admin_hash_env:
+    ADMIN_PASS_HASH = admin_hash_env
+elif CFG_ADMIN_PASS_FALLBACK_PLAIN and CFG_ADMIN_PASS_FALLBACK_PLAIN != "changeme":
+    ADMIN_PASS_HASH = generate_password_hash(CFG_ADMIN_PASS_FALLBACK_PLAIN)
+else:
+    # No hash configured — refuse to start with a blank password.
+    raise RuntimeError(
+        "STATUS_ADMIN_PASS_HASH environment variable must be set in production. "
+        "Generate one with:\n"
+        "  python3 -c 'from werkzeug.security import generate_password_hash; print(generate_password_hash(\"your-password\"))'"
+    )
 
 
 # ── Database helpers ───────────────────────────────────────────────
@@ -190,34 +230,123 @@ def set_notes(item_id: int, notes: str):
     db.commit()
 
 
+# ── CSRF ───────────────────────────────────────────────────────────
+CSRF_SESSION_KEY = "_csrf"
+MAX_CSRF_FAILURES = 3      # bad tokens before session wipe
+
+_csrf_failures: dict[str, int] = defaultdict(int)
+
+
+def _get_csrf() -> str:
+    token = session.get(CSRF_SESSION_KEY)
+    if not token:
+        token = secrets.token_hex(32)
+        session[CSRF_SESSION_KEY] = token
+    return token
+
+
+def _check_csrf() -> bool:
+    ip = request.remote_addr or ""
+    header_token = request.headers.get("X-CSRF-Token", "")
+    query_token = request.args.get(CSRF_SESSION_KEY, "")
+    sent = header_token or query_token
+
+    expected = session.get(CSRF_SESSION_KEY)
+    if not expected or not hmac.compare_digest(sent, expected):
+        _csrf_failures[ip] += 1
+        if _csrf_failures[ip] >= MAX_CSRF_FAILURES:
+            session.clear()
+            _csrf_failures.pop(ip, None)
+        return False
+
+    # Success — rotate token and clear failure counter
+    session[CSRF_SESSION_KEY] = secrets.token_hex(32)
+    _csrf_failures.pop(ip, None)
+    return True
+
+
+# ── Security headers ───────────────────────────────────────────────
+@app.after_request
+def security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=()"
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self';"
+    )
+    return response
+
+
 # ── Routes ─────────────────────────────────────────────────────────
 @app.route("/")
 def status_page():
     items = get_all_items()
     is_admin = session.get("admin", False) or request.cookies.get("_admin") == "1"
-    return render_template("index.html", items=items, session_admin=is_admin)
+    csrf = _get_csrf() if is_admin else ""
+    return render_template(
+        "index.html", items=items, session_admin=is_admin, csrf_token=csrf
+    )
+
+
+@app.route("/api/csrf-token")
+def api_csrf():
+    is_admin = session.get("admin") or request.cookies.get("_admin") == "1"
+    if not is_admin:
+        abort(403)
+    return jsonify(token=_get_csrf())
 
 
 @app.route("/login", methods=["POST"])
 def login():
+    ip = request.remote_addr or ""
+
+    # Rate limit: lock out IP after too many failures
+    if _is_locked(ip):
+        return jsonify(ok=False, error="Too many attempts. Wait 30s."), 429
+
     data = request.get_json(silent=True) or {}
-    if (
-        data.get("user") == ADMIN_USER
-        and check_password_hash(ADMIN_PASS_HASH, data.get("pass", ""))
+    user_supplied = data.get("user", "")
+    pass_supplied = data.get("pass", "")
+
+    # Timing-safe: hash both username and password-hash-result together to prevent user enumeration.
+    # Use fixed-length hex string 'true' (4 chars) for the boolean to avoid length-based leaks.
+    pass_ok = check_password_hash(ADMIN_PASS_HASH, pass_supplied)
+    if hmac.compare_digest(
+        f"{hashlib.sha256(user_supplied.encode()).hexdigest()}{str(pass_ok).lower()}"[:68],
+        (f"{hashlib.sha256(ADMIN_USER.encode()).hexdigest()}true")[:68],
     ):
+        session.clear()  # new clean session on login
         session["admin"] = True
+        session.permanent = True
         response = jsonify(ok=True)
-        response.set_cookie("_admin", "1", httponly=True, samesite="Lax", max_age=86400)
+        is_https = request.headers.get("X-Forwarded-Proto") == "https" or request.is_secure
+        response.set_cookie(
+            "_admin", "1",
+            httponly=True,
+            secure=is_https,          # Secure when behind HTTPS proxy
+            samesite="Strict",
+            max_age=86400,
+            path="/",
+        )
+        _failed_logins.clear()       # unlock on success
         return response
 
+    _record_attempt(ip)
     return jsonify(ok=False, error="Invalid credentials"), 401
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    session.pop("admin", None)
+    session.clear()
     resp = jsonify(ok=True)
-    resp.delete_cookie("_admin")
+    resp.delete_cookie("_admin", path="/")
     return resp
 
 
@@ -233,7 +362,7 @@ def auth_check():
 
 @app.route("/api/toggle/<int:item_id>", methods=["POST"])
 def api_toggle(item_id):
-    if _not_admin():
+    if _not_admin() or not _check_csrf():
         abort(403)
     status = toggle_item(item_id)
     return jsonify(status=status)
@@ -241,7 +370,7 @@ def api_toggle(item_id):
 
 @app.route("/api/rename/<int:item_id>", methods=["POST"])
 def api_rename(item_id):
-    if _not_admin():
+    if _not_admin() or not _check_csrf():
         abort(403)
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
@@ -253,7 +382,7 @@ def api_rename(item_id):
 
 @app.route("/api/notes/<int:item_id>", methods=["POST"])
 def api_notes(item_id):
-    if _not_admin():
+    if _not_admin() or not _check_csrf():
         abort(403)
     data = request.get_json(silent=True) or {}
     notes = data.get("notes", "").strip()
@@ -263,7 +392,7 @@ def api_notes(item_id):
 
 @app.route("/api/add", methods=["POST"])
 def api_add():
-    if _not_admin():
+    if _not_admin() or not _check_csrf():
         abort(403)
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
@@ -285,7 +414,7 @@ def api_add():
 
 @app.route("/api/delete/<int:item_id>", methods=["POST"])
 def api_delete(item_id):
-    if _not_admin():
+    if _not_admin() or not _check_csrf():
         abort(403)
     db = get_db()
     row = db.execute("SELECT name FROM status_items WHERE id = ?", (item_id,)).fetchone()
@@ -303,7 +432,7 @@ def api_delete(item_id):
 
 @app.route("/api/reorder", methods=["POST"])
 def api_reorder():
-    if _not_admin():
+    if _not_admin() or not _check_csrf():
         abort(403)
     data = request.get_json(silent=True) or {}
     raw_order = data.get("order", {})
@@ -320,5 +449,5 @@ def _not_admin() -> bool:
 if __name__ == "__main__":
     init_db()
     print(f"Status page running on http://0.0.0.0:{SERVER_PORT}")
-    print(f"Admin: {ADMIN_USER} / {CFG_ADMIN_PASS_PLAIN}")
+    print(f"Admin user: {ADMIN_USER} (hash provided via env)")
     app.run(host=SERVER_HOST, port=SERVER_PORT)

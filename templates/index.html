@@ -62,6 +62,9 @@
         </div>
     </div>
 
+    {% if csrf_token %}
+    <script>window.__CSRF__ = {{ csrf_token | tojson }};</script>
+    {% endif %}
     <script src="/static/js/app.js"></script>
 </body>
 </html>
