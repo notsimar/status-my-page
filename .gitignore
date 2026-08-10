@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# App runtime
+instance/
+logs/
+archives/
+.server.pid
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deploy tarballs
+*-deploy.tar.gz
+*.0-1.tgz

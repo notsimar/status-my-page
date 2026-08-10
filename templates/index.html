@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Status</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="{% if session_admin %}admin{% endif %}">
+    <div class="container">
+        <header>
+            <h1>Application Status</h1>
+            <div class="overall-badge" id="overallBadge"></div>
+        </header>
+
+        <div class="status-list" id="statusList">
+            {% for item in items %}
+            <div class="status-row" data-id="{{ item.id }}" draggable="true">
+                <div class="drag-handle" title="Drag to reorder">⠿</div>
+                <div class="status-main">
+                    <span class="status-dot {{ item.status }}"></span>
+                    <span class="status-name">{{ item.name }}</span>
+                    <span class="status-label {{ item.status }}">
+                        {% if item.status == 'green' %}Operational{% elif item.status == 'degraded' %}Degraded{% else %}Outage{% endif %}
+                    </span>
+                </div>
+                <textarea class="notes-input" placeholder="Add status notes…" data-id="{{ item.id }}">{{ item.notes }}</textarea>
+                <button class="btn-delete" title="Delete this item" data-id="{{ item.id }}">✕</button>
+            </div>
+            {% endfor %}
+        </div>
+
+    {% if session_admin %}
+    <div class="admin-footer">
+        <form id="addItemForm" class="add-item-form">
+            <input type="text" id="newItemName" placeholder="Add service name…" autocomplete="off" required>
+            <button type="submit" class="btn-add">Add</button>
+        </form>
+        <div class="admin-bar">
+            <span>⚡ Admin mode — click dots to toggle, drag to reorder</span>
+            <button id="logoutBtn" class="btn-logout">Logout</button>
+        </div>
+    </div>
+    {% else %}
+    <button id="loginBtn" class="login-btn">Admin Login</button>
+    {% endif %}
+    </div>
+
+    <!-- Login modal -->
+    <div id="loginModal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Admin Login</h2>
+            <form id="loginForm">
+                <input type="text" id="userInput" placeholder="Username" autocomplete="username" required>
+                <input type="password" id="passInput" placeholder="Password" autocomplete="current-password" required>
+                <div id="loginError" class="error hidden">Invalid credentials</div>
+            </form>
+            <div class="modal-actions">
+                <button type="button" id="cancelLogin" class="btn-cancel">Cancel</button>
+                <button type="submit" form="loginForm" id="submitLogin" class="btn-submit">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

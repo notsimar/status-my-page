@@ -1,0 +1,273 @@
+// ── Auth modal ────────────────────────────────────────────────────
+const loginBtn = document.getElementById('loginBtn');
+const loginModal = document.getElementById('loginModal');
+const cancelLogin = document.getElementById('cancelLogin');
+const loginError = document.getElementById('loginError');
+const loginForm = document.getElementById('loginForm');
+
+if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+        loginModal.classList.remove('hidden');
+        setTimeout(() => document.getElementById('userInput').focus(), 50);
+    });
+}
+if (cancelLogin) {
+    cancelLogin.addEventListener('click', () => {
+        loginModal.classList.add('hidden');
+        loginError.classList.add('hidden');
+        document.getElementById('passInput').value = '';
+    });
+}
+loginModal && loginModal.addEventListener('click', e => { if (e.target === loginModal) cancelLogin.click(); });
+
+loginForm && loginForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const user = document.getElementById('userInput').value;
+    const pass = document.getElementById('passInput').value;
+    try {
+        const res = await fetch('/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user, pass })
+        });
+        if (res.ok) location.reload(); else loginError.classList.remove('hidden');
+    } catch (err) { loginError.textContent = 'Connection error'; loginError.classList.remove('hidden'); }
+});
+
+// Logout
+document.getElementById('logoutBtn') && document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/logout', { method: 'POST' }); location.reload();
+});
+
+// ── Toggle on status-main click (admin only) ──────────────────────
+const list = document.getElementById('statusList');
+const STATUS_CYCLE = ['green', 'degraded', 'red'];
+const STATUS_LABELS = { green: 'Operational', degraded: 'Degraded', red: 'Outage' };
+
+list && list.addEventListener('click', async e => {
+    const main = e.target.closest('.status-main');
+    if (!main || !document.body.classList.contains('admin')) return;
+    // Don't toggle if clicking the drag handle
+    if (e.target.closest('.drag-handle') || e.target.closest('.btn-delete')) return;
+
+    const row = main.closest('.status-row');
+    const id = row.dataset.id;
+    const dot = main.querySelector('.status-dot');
+    const label = main.querySelector('.status-label');
+    const current = STATUS_CYCLE.find(s => dot.classList.contains(s)) || 'green';
+    const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(current) + 1) % STATUS_CYCLE.length];
+    dot.className = 'status-dot ' + next;
+    label.className = 'status-label ' + next;
+    label.textContent = STATUS_LABELS[next];
+    row.classList.toggle('show-notes', next !== 'green');
+    try { await fetch('/api/toggle/' + id, { method: 'POST' }); } catch (err) { location.reload(); }
+    updateBadge();
+});
+
+// ── Notes auto-save on blur (admin only), debounce 800ms ─────────
+var timers = {};
+document.querySelectorAll('textarea.notes-input').forEach(function(ta) {
+    ta.addEventListener('blur', async function() {
+        if (!document.body.classList.contains('admin')) return;
+        var id = ta.dataset.id;
+        if (timers[id]) clearTimeout(timers[id]);
+        timers[id] = setTimeout(async function() {
+            try { await fetch('/api/notes/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
+        }, 800);
+    });
+    ta.addEventListener('input', function() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
+    ta.dispatchEvent(new Event('input'));
+});
+
+// ── Delete item (admin only) ─────────────────────────────────────
+list && list.addEventListener('click', async e => {
+    const btn = e.target.closest('.btn-delete');
+    if (!btn || !document.body.classList.contains('admin')) return;
+    e.stopPropagation();
+    const row = btn.closest('.status-row');
+    const id = btn.dataset.id;
+    const name = row.querySelector('.status-name').textContent;
+
+    try {
+        const res = await fetch('/api/delete/' + id, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        row.style.transition = 'opacity 0.3s, transform 0.3s';
+        row.style.opacity = '0';
+        row.style.transform = 'translateX(-20px)';
+        setTimeout(() => { row.remove(); updateBadge(); }, 300);
+    } catch (err) { alert('Failed to delete: ' + err.message); }
+});
+
+// ── Add item (admin only) ────────────────────────────────────────
+const addItemForm = document.getElementById('addItemForm');
+if (addItemForm) {
+    addItemForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const input = document.getElementById('newItemName');
+        const name = input.value.trim();
+        if (!name) return;
+
+        try {
+            const res = await fetch('/api/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            if (!res.ok) throw new Error((await res.json()).error || 'Failed');
+
+            // Appending DOM row client-side is instant.
+            const item = (await res.json()).item;
+            const row = document.createElement('div');
+            row.className = 'status-row';
+            row.dataset.id = item.id;
+            row.draggable = true;
+            row.innerHTML = `
+                <div class="drag-handle" title="Drag to reorder">⠿</div>
+                <div class="status-main">
+                    <span class="status-dot green"></span>
+                    <span class="status-name">${escHtml(item.name)}</span>
+                    <span class="status-label green">Operational</span>
+                </div>
+                <textarea class="notes-input" placeholder="Add status notes…" data-id="${item.id}">${escHtml(item.notes || '')}</textarea>
+                <button class="btn-delete" title="Delete this item" data-id="${item.id}">✕</button>
+            `;
+            list.appendChild(row);
+
+            // Attach notes auto-save to the new textarea
+            const ta = row.querySelector('textarea.notes-input');
+            ta.addEventListener('blur', async function() {
+                if (!document.body.classList.contains('admin')) return;
+                const tid = ta.dataset.id;
+                if (timers[tid]) clearTimeout(timers[tid]);
+                timers[tid] = setTimeout(async function() {
+                    try { await fetch('/api/notes/' + tid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
+                }, 800);
+            });
+            ta.addEventListener('input', function() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
+
+            input.value = '';
+            updateBadge();
+        } catch (err) { alert(err.message); }
+    });
+}
+
+// ── Drag-and-drop reorder (admin only) ───────────────────────────
+let dragSourceRow = null;
+
+list && list.addEventListener('dragstart', e => {
+    if (!document.body.classList.contains('admin')) return;
+    const handle = e.target.closest('.drag-handle');
+    const row = e.target.closest('.status-row');
+    if (!row || !handle) return; // only allow drag from handle
+
+    dragSourceRow = row;
+    setTimeout(() => { dragSourceRow.classList.add('dragging'); }, 0);
+    e.dataTransfer.effectAllowed = 'move';
+});
+
+list && list.addEventListener('dragend', e => {
+    if (!dragSourceRow) return;
+    dragSourceRow.classList.remove('dragging');
+    // Clear all drop indicators
+    list.querySelectorAll('.status-row').forEach(r => {
+        r.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+    dragSourceRow = null;
+
+    // Persist new order if rows moved
+    sendReorder();
+});
+
+list && list.addEventListener('dragover', e => {
+    if (!dragSourceRow || !document.body.classList.contains('admin')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const targetRow = e.target.closest('.status-row');
+    if (!targetRow || targetRow === dragSourceRow) return;
+
+    // Clear previous indicators
+    list.querySelectorAll('.status-row').forEach(r => {
+        r.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+
+    const rect = targetRow.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+        targetRow.classList.add('drag-over-top');
+    } else {
+        targetRow.classList.add('drag-over-bottom');
+    }
+});
+
+list && list.addEventListener('drop', e => {
+    if (!dragSourceRow || !document.body.classList.contains('admin')) return;
+    e.preventDefault();
+
+    const targetRow = e.target.closest('.status-row');
+    if (!targetRow || targetRow === dragSourceRow) return;
+
+    // Clear indicators
+    list.querySelectorAll('.status-row').forEach(r => {
+        r.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+
+    const rect = targetRow.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+        // Insert before target
+        list.insertBefore(dragSourceRow, targetRow);
+    } else {
+        // Insert after target
+        list.insertBefore(dragSourceRow, targetRow.nextSibling);
+    }
+
+    dragSourceRow = null;
+});
+
+// ── Helpers ───────────────────────────────────────────────────────
+function sendReorder() {
+    if (!document.body.classList.contains('admin')) return;
+    const order = {};
+    list.querySelectorAll('.status-row').forEach((row, i) => {
+        order[row.dataset.id] = i;
+    });
+    fetch('/api/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order })
+    }).catch(() => location.reload());
+}
+
+function escHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+}
+
+// ── Overall badge ─────────────────────────────────────────────────
+function updateBadge() {
+    var total = document.querySelectorAll('.status-row').length;
+    var reds = document.querySelectorAll('.status-dot.red').length;
+    var degraded = document.querySelectorAll('.status-dot.degraded').length;
+    var b = document.getElementById('overallBadge');
+    if (!b) return;
+    if (reds === 0 && degraded === 0) {
+        b.textContent = 'All Systems Operational \u2014 ' + total + ' services';
+        b.className = 'overall-badge';
+    } else if (reds > 0) {
+        b.textContent = reds + ' outage(s), ' + degraded + ' degraded of ' + total + ' services';
+        b.className = 'overall-badge red';
+    } else {
+        b.textContent = degraded + ' service(s) degraded of ' + total + ' services';
+        b.className = 'overall-badge degraded';
+    }
+}
+updateBadge();
+
+// ── Show notes for non-green rows on page load ───────────────────
+document.querySelectorAll('.status-row').forEach(function(row) {
+    var dot = row.querySelector('.status-dot');
+    if (dot && (dot.classList.contains('degraded') || dot.classList.contains('red'))) {
+        row.classList.add('show-notes');
+    }
+});
