@@ -5,7 +5,7 @@
 ## ✨ Features
 
 - **3-State Status System**: Click services to cycle 🟢 Operational → 🟡 Degraded → 🔴 Outage
-- **Smart Notes**: Auto-show hidden notes only for degraded/outage states, auto-hide on green
+- **Smart Notes**: Auto-show hidden notes only for degraded/outage states, auto-hide on green  
 - **Status History**: Every toggle and notes update is timestamped — open the 🕙 history panel per service to see the full change timeline
 - **Dark Theme UI**: Responsive layout (≤640px & ≤425px breakpoints), mobile-first CSS with proper touch targets
 - **Admin Controls**: Session-based auth, drag-and-drop reorder, inline rename, add/delete items, auto-saving notes
@@ -13,34 +13,231 @@
 - **Auto-Archival**: Pre-reset DB snapshots (JSON into `archives/`) saved on every restart so state survives seeding
 - **YAML Backup Rotation**: Last 5 versions of `config.yaml` preserved automatically before each runtime save
 
-## 🚀 Quick start
+---
+
+## 📋 Prerequisites
+
+| Requirement | Minimum Version | Notes |
+|-------------|-----------------|-------|
+| Python | 3.10+ | Tested on 3.12–3.14 with CPython |
+| pip | Any recent version | Used only for `requirements.txt` (flask, pyyaml) |
+| SQLite | Bundled with Python | Database lives in `instance/status.db` (WAL mode auto) |
+| Optional: gunicorn | 20+ | Production WSGI server (used by `install.sh`) |
+
+**OS support:** Any Linux distro (Ubuntu, Debian, Fedora, RHEL, Arch, etc.) and macOS. The install script detects `apt`, `dnf`, or `yum` package managers automatically.
+
+---
+
+## 🚀 Installation
+
+### Option 1: Local development
+
+The quickest path — ideal for testing on your own machine or a VPS before production deploy.
 
 ```bash
-# Clone & setup
+# 1️⃣  Clone the repository
 git clone https://github.com/notsimar/status-my-page.git
 cd status-my-page
 
-# Install dependencies
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# 2️⃣  Create a virtual environment and install deps
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt     # installs flask + pyyaml
 
-# Generate a password hash (NEVER commit plaintext passwords)
-python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
+# 3️⃣  Generate a password hash
+#    (NEVER store plaintext passwords in config.yaml or commit them to git)
+python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('my-secure-pw'))"
 
-# Copy config.yaml.example → config.yaml and edit your services, then:
-STATUS_ADMIN_PASS_HASH=<hash> ./start.sh
-open http://localhost:8920  # Default user: admin
+# 📌 Copy the output — it looks like: scrypt$72816...
 ```
 
-> **⚠️ Change the default password** via `STATUS_ADMIN_PASS_HASH` environment variable before exposing!
+**Edit `config.yaml`** to list your services:
+
+```yaml
+items:
+  - Slack
+  - Glean
+  - Azure
+  - ServiceNow
+  # ... add all the services you want to monitor
+
+admin:
+  user: admin                        # ← or override via STATUS_ADMIN_USER env var
+
+server:
+  host: "0.0.0.0"
+  port: 8920
+```
+
+> **Note:** Do not put a plaintext password in `config.yaml`. Use the `STATUS_ADMIN_PASS_HASH` environment variable instead (see below).
+
+**Start the server:**
+
+```bash
+# Set your credentials via env vars, then run:
+export STATUS_ADMIN_PASS_HASH="scrypt$72816$..."   # from step 3 above
+
+./start.sh
+```
+
+The server launches on `http://localhost:8920`. Admin user is the value from `config.yaml` under `admin.user` (default: `admin`).
+
+### Option 2: One-command production install (`install.sh`)
+
+For a fresh Linux server (Ubuntu, Debian, Fedora, RHEL), the wizard handles everything:
+
+```bash
+# Clone into any directory (e.g. your home)
+git clone https://github.com/notsimar/status-my-page.git ~/status-my-page
+cd ~/status-my-page
+
+# Run the install script as root — it will:
+#   • Install python3, venv, gunicorn system packages
+#   • Create a dedicated 'statuspage' system user
+#   • Deploy files to /opt/status-page (default)
+#   • Create Python venv + install dependencies
+#   • Seed the SQLite database from config.yaml
+#   • Prompt for admin credentials (stored in /etc/status-page/env, mode 0640)
+#   • Install & enable a systemd service (status-page.service)
+#   • Start Gunicorn on 127.0.0.1:8920 behind systemd
+sudo ./install.sh
+```
+
+**Choose a custom install path:**
+
+```bash
+sudo ./install.sh /srv/status-dashboard
+```
+
+**What the wizard asks during installation:**
+
+```
+=== Setting admin credentials ===
+Admin username [admin]: ?
+Admin password: ?       ← typed silently, hashed as scrypt, stored in /etc/status-page/env
+
+Credentials set: user=?
+
+=== Installing systemd service (status-page.service) ===
+Service enabled. Starting…
+
+=== Verification ===
+✅ status-page.service is running
+✅ Status page responding (HTTP 200)
+
+  Deployment complete!
+  URL: http://<server-ip>:8920/
+```
+
+**After-install management:**
+
+```bash
+systemctl status status-page          # check if running
+sudo systemctl restart status-page    # apply config changes
+sudo journalctl -u status-page -f     # live logs
+./cleanup.sh list                     # view archived snapshots
+```
+
+### Option 3: Manual systemd (no root / custom path)
+
+If you can't or don't want to use `install.sh`, here's a manual example for **Ubuntu 22.04+**:
+
+```bash
+# Install system deps
+sudo apt update && sudo apt install -y python3 python3-venv gunicorn
+
+# Clone + setup the app
+git clone https://github.com/notsimar/status-my-page.git /opt/status-page
+cd /opt/status-page
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Create a service user (optional but recommended)
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin statuspage
+sudo chown -R statuspage:statuspage /opt/status-page/{instance,logs,archives} 2>/dev/null || true
+
+# Write credentials to env file
+mkdir -p /etc/status-page
+sudo tee /etc/status-page/env > /dev/null <<EOF
+STATUS_ADMIN_PASS_HASH=scrypt$72816$...   # your hash here
+STATUS_ADMIN_USER=admin
+PYTHONUNBUFFERED=1
+EOF
+sudo chmod 0640 /etc/status-page/env
+
+# Create systemd unit
+sudo tee /etc/systemd/system/status-page.service > /dev/null <<'EOF'
+[Unit]
+Description=Status Page Web App
+After=network.target
+
+[Service]
+Type=simple
+User=statuspage
+Group=statuspage
+WorkingDirectory=/opt/status-page
+ExecStart=/opt/status-page/.venv/bin/gunicorn \
+    --bind 127.0.0.1:8920 \
+    --workers 2 \
+    --timeout 30 \
+    app:app
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/etc/status-page/env
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now status-page
+sudo systemctl status status-page
+```
+
+### 🔁 Behind a reverse proxy (recommended for production)
+
+The app binds to `127.0.0.1:8920` — put Nginx or Caddy in front to serve over HTTPS:
+
+**Nginx example:**
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name status.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/status.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/status.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8920;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;  # so Flask sets secure cookies
+    }
+}
+```
+
+**Caddy example (shorter):**
+
+```caddy
+status.example.com {
+    reverse_proxy 127.0.0.1:8920
+}
+```
+
+> **Important:** Make sure `X-Forwarded-Proto` is set so Flask knows the request is HTTPS — session cookies are marked `Secure` in that case.
+
+---
 
 ## 📱 Status states at a glance
 
-| State     | Emoji           | Notes behavior                                |
-|-----------|-----------------|-----------------------------------------------|
-| Operational | 🟢 Green      | Hidden automatically                          |
-| Degraded  | 🟡 Yellow      | Visible — admin can add context notes         |
-| Outage    | 🔴 Red         | Always visible with pulsing red glow          |
+| State | Emoji | Notes behavior |
+|-------|-------|----------------|
+| Operational | 🟢 Green | Hidden automatically |
+| Degraded | 🟡 Yellow | Visible — admin can add context notes |
+| Outage | 🔴 Red | Always visible with pulsing red glow |
 
 *Click any service as admin to cycle through states ♪*
 
@@ -54,65 +251,80 @@ Every mutation (status toggle, notes update) is recorded in a `status_history` S
 
 ## 🔧 Configuration
 
-Everything lives in `config.yaml`:
+### `config.yaml` structure
 
 ```yaml
 items:
-  - Slack
+  - Slack           # ← add your services here
+  - Glean
   - Azure
-  # ...your services
+  # Every restart, the DB is synced to this list
 
 admin:
-  user: admin
+  user: admin       # ← can be overridden by STATUS_ADMIN_USER env var
+  # Do NOT put plaintext passwords here — use STATUS_ADMIN_PASS_HASH instead
 
 server:
   host: "0.0.0.0"
   port: 8920
-```
-
-**Production override:** set credentials via environment variables (preferred):
-
-```bash
-STATUS_ADMIN_USER=you
-STATUS_ADMIN_PASS_HASH=scrypt:...   # generated above
-./start.sh
+  secret_key_env: STATUS_SECRET_KEY   # Flask session signing key
 ```
 
 ### Environment variables
 
-| Variable | Purpose |
-|----------|---------|
-| `STATUS_ADMIN_USER` | Override admin username from config.yaml |
-| `STATUS_ADMIN_PASS_HASH` | Password hash (required for production — plaintext fallback is rejected) |
-| `STATUS_SECRET_KEY` | Flask session encryption key (auto-generated per-session if unset) |
-| `STATUS_NO_ARCHIVE=1` | Skip DB archival on restart (useful during development/testing) |
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `STATUS_ADMIN_USER` | Override admin username from config.yaml | `john` |
+| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production) | `scrypt$72816$...` |
+| `STATUS_SECRET_KEY` | Flask session signing key (auto-generated if unset) | Any random string |
+| `STATUS_NO_ARCHIVE=1` | Skip DB archival on restart (dev/testing only) | — |
+
+**Generate a hash:**
+
+```bash
+python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('my-secure-pw'))"
+```
 
 ### Runtime persistence & backups
 
 Admin changes (status, notes, reorder) are persisted back to `config.yaml` under a `_runtime` section so they survive DB resets. On every save:
 
-1. Current `config.yaml` is rotated into `.bak1`
+1. Current `config.yaml` → `.bak1`
 2. Existing backups shift up (`.bak1` → `.bak2` … → `.bak5`)
-3. The new config is written atomically (`tempfile` + `os.replace`)
+3. New config written atomically (`tempfile` + `os.replace`)
 
-Backup files are excluded from git via `.gitignore`.
+Backup files are excluded from git via `.gitignore`. You can recover:
 
-## 📁 Scripts & deployment
+```bash
+# Restore from the most recent backup
+cp config.yaml.bak1 config.yaml
+./restart.sh
+```
 
-| Script | Purpose |
-|--------|---------|
-| `start.sh` | Launch development server (PID tracking, logs to file) |
-| `stop.sh` | Clean shutdown via PID file |
-| `restart.sh` | Kill + start without reinstalling deps |
-| `rebuild.sh` | Full dep install + DB migrations + restart |
-| `install.sh` | Systemd production deploy wizard |
-| `cleanup.sh` | Manage `archives/`: `list`, `show <file>`, `prune [--keep N]`, `report` |
+---
 
-**Production install:** Copy the project directory, then `sudo ./install.sh [/opt/status-page]`:
-- Provisions Python3 venv + dedicated `statuspage` user + systemd unit
-- Runs Gunicorn behind `127.0.0.1:8920` on 2 workers
-- Manages via `systemctl status/restart status-page`
-- Credentials live in `/etc/status-page/env` (mode 0640)
+## 🛠 Scripts reference
+
+| Script | Purpose | Example usage |
+|--------|---------|---------------|
+| `start.sh` | Launch dev server (PID tracking, logs → `logs/server.log`) | `./start.sh` |
+| `stop.sh` | Graceful shutdown via PID file | `./stop.sh` |
+| `restart.sh` | Kill + start without reinstalling deps | `./restart.sh` |
+| `rebuild.sh` | Full dep install + DB migrations + restart | `./rebuild.sh` |
+| `install.sh` | Production deploy wizard (systemd, user, gunicorn) | `sudo ./install.sh[/path]` |
+| `cleanup.sh` | Archive manager for `archives/` JSON snapshots | See commands below |
+
+### `cleanup.sh` commands
+
+```bash
+./cleanup.sh list                 # List all archive snapshots (newest first)
+./cleanup.sh show 20260811_091523   # Pretty-print a specific snapshot
+./cleanup.sh report               # Historical outage summary across archives
+./cleanup.sh prune                # Keep last 2, delete the rest
+./cleanup.sh prune --keep 10      # Keep last 10 snapshots instead
+```
+
+---
 
 ## 🗂 File structure
 
@@ -128,22 +340,22 @@ status-my-page/
 ├── templates/index.html     # Jinja2-rendered UI with login & history modals
 ├── start.sh / stop.sh / restart.sh / rebuild.sh / install.sh
 ├── tests/
-│   ├── test_history.py      # Automated API/DB history test suite
+│   ├── test_history.py      # Automated API/DB history test suite (18 assertions)
 │   └── test_health.sh       # Quick health-check script
 ├── License.md               # MIT © 2026 Simar Sahni
 └── .venv/                   # (excluded from git/deploy)
 ```
 
-## 🔒 Security
+## 🔒 Security checklist
 
-| Feature | Detail |
-|---------|--------|
-| Auth session | Flask signed sessions only — no plaintext admin cookie fallback |
-| CSRF | per-request token, rotated on every successful mutation, 3-strike wipe |
-| Login rate-limit | 5 attempts / IP before 30s lockout |
-| Password hashing | werkzeug `scrypt` (timing-safe compare) |
-| CSP header | `default-src 'self'`, inline CSS only (`'unsafe-inline'` on style-src) |
-| Other headers | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, Permissions-Policy |
+| Feature | Implementation |
+|---------|---------------|
+| **Authentication** | Flask signed sessions only — no plaintext cookie fallback |
+| **CSRF protection** | Per-request secret token, rotated on every successful mutation; 3-strike session wipe |
+| **Login rate-limit** | 5 failed attempts per IP → 30-second lockout |
+| **Password storage** | werkzeug `scrypt` hashing with timing-safe comparison |
+| **Content Security Policy** | `default-src 'self'`; inline CSS via `'unsafe-inline'` on style-src only |
+| **Additional headers** | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, Permissions-Policy |
 
 ## 💻 API endpoints
 
@@ -151,14 +363,31 @@ status-my-page/
 |-------|--------|------|--------|
 | `/` | `GET` | Public | Render full status page |
 | `/api/history/<id>` | `GET` | Public | Return change timeline for a service |
-| `/api/toggle/<id>` | `POST` | 🔒 Admin | Cycle: green → degraded → red |
-| `/api/notes/<id>` | `POST` | 🔒 Admin | Save/update freeform note text |
-| `/api/add` | `POST` | 🔒 Admin | Create new service item |
-| `/api/delete/<id>` | `POST` | 🔒 Admin | Remove service + compact DB positions + prune history |
-| `/api/rename/<id>` | `POST` | 🔒 Admin | Update service display name |
-| `/api/reorder` | `POST` | 🔒 Admin | Apply drag-drop position map |
+| `/api/toggle/<id>` | `POST` | 🔒 Admin+CSRF | Cycle: green → degraded → red |
+| `/api/notes/<id>` | `POST` | 🔒 Admin+CSRF | Save/update freeform note text |
+| `/api/add` | `POST` | 🔒 Admin+CSRF | Create new service item |
+| `/api/delete/<id>` | `POST` | 🔒 Admin+CSRF | Remove service + compact positions + prune history |
+| `/api/rename/<id>` | `POST` | 🔒 Admin+CSRF | Update service display name |
+| `/api/reorder` | `POST` | 🔒 Admin+CSRF | Apply drag-drop position map |
 | `/api/csrf-token` | `GET` | 🔒 Admin | Fetch fresh CSRF token |
 | `/login` / `/logout` / `/auth-check` | — | Public | Session management |
+
+### Quick curl examples
+
+```bash
+# View history for service id=1 (no auth needed)
+curl http://localhost:8920/api/history/1 | jq
+
+# Login to get a session cookie, then toggle status
+TOKEN=$(curl -s http://localhost:8920 | grep -o 'csrf_token[^"]*"[^"]*"' | head -1 | awk -F'"' '{print $4}')
+curl -b cookies.json -s -X POST http://localhost:8920/login \
+  -d '{"user":"admin","pass":"your-password"}'
+
+# Toggle service #1
+export CSRF_TOKEN=...   # from page or /api/csrf-token
+curl -X POST http://localhost:8920/api/toggle/1 \
+  -H "X-CSRF-Token: $CSRF_TOKEN"
+```
 
 ## 📜 License
 
