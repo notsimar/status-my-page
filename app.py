@@ -26,6 +26,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
 DB_PATH = BASE_DIR / "instance" / "status.db"
+ARCHIVES_DIR = BASE_DIR / "archives"
 
 
 # ── Config ─────────────────────────────────────────────────────────
@@ -184,7 +185,69 @@ def close_db(exc):
         db.close()
 
 
+def _archive_db_snapshot():
+    """Take a timestamped JSON snapshot of current DB state before init_db() resets it.
+
+    Archives are stored in `archives/YYYYMMDD_HHMMSS.json` and can be restored
+    manually or programmatically.  Set env var STATUS_NO_ARCHIVE=1 to skip
+    (useful during testing).
+    """
+    if os.environ.get("STATUS_NO_ARCHIVE"):
+        return
+    if not DB_PATH.exists():
+        return
+
+    try:
+        archive_db = sqlite3.connect(str(DB_PATH))
+        archive_db.row_factory = sqlite3.Row
+    except sqlite3.OperationalError:
+        return
+
+    try:
+        rows = list(archive_db.execute(
+            "SELECT id, name, status, notes, position FROM status_items ORDER BY position"
+        ).fetchall())
+    except sqlite3.OperationalError:
+        archive_db.close()
+        return
+
+    if not rows:
+        archive_db.close()
+        return
+
+    ARCHIVES_DIR.mkdir(exist_ok=True)
+    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    filename = ARCHIVES_DIR / f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+    snapshot_data = {
+        "timestamp": ts,
+        "items": [{"id": r["id"], "name": r["name"], "status": r["status"],
+                    "notes": r["notes"], "position": r["position"]} for r in rows],
+    }
+
+    archive_db.close()
+
+    # Write atomically so partial restarts don't corrupt archives
+    fd, tmp_path = tempfile.mkstemp(dir=str(ARCHIVES_DIR), prefix=".archive_", suffix=".tmp")
+    with os.fdopen(fd, "w") as fh:
+        json.dump(snapshot_data, fh, indent=2)
+    os.replace(tmp_path, str(filename))
+
+    reds = sum(1 for r in snapshot_data["items"] if r["status"] == "red")
+    total = len(snapshot_data["items"])
+    print(f"Archived {total} items ({reds} red) -> {filename.name}")
+
+
 def init_db():
+    """Initialize/migrate DB tables and seed items from config.yaml.
+
+    Takes a timestamped JSON snapshot of the live DB state (into archives/)
+    before seeding so admin changes survive across restarts. Archive can be
+    disabled for testing with STATUS_NO_ARCHIVE=1.
+    """
+    # ── Pre-reset archival — save current DB state before init_db() wipes it ──
+    _archive_db_snapshot()
+
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(DB_PATH))
 
