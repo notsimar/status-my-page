@@ -25,6 +25,7 @@
                     </span>
                 </div>
                 <textarea class="notes-input" placeholder="Add status notes…" data-id="{{ item.id }}">{{ item.notes }}</textarea>
+                <button class="btn-history" title="View history" data-id="{{ item.id }}">🕙</button>
                 <button class="btn-delete" title="Delete this item" data-id="{{ item.id }}">✕</button>
             </div>
             {% endfor %}
@@ -59,6 +60,17 @@
                 <button type="button" id="cancelLogin" class="btn-cancel">Cancel</button>
                 <button type="submit" form="loginForm" id="submitLogin" class="btn-submit">Login</button>
             </div>
+        </div>
+    </div>
+
+    <!-- History modal -->
+    <div id="historyModal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <div class="history-header">
+                <h2 id="historyTitle">Service History</h2>
+                <button type="button" id="closeHistory" class="btn-close-modal">✕</button>
+            </div>
+            <div id="historyTimeline" class="history-timeline"></div>
         </div>
     </div>
 

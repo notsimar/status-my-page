@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Tiny status page — Flask + SQLite + YAML config."""
 
+import datetime as dt
 import hashlib
-import tempfile
-import threading
 import hmac
 import json
 import os
 import secrets
+import shutil          # for config.yaml backup rotation
 import sqlite3
+import tempfile
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -58,22 +60,33 @@ _NUM_BACKUPS = 5  # How many old versions of config.yaml to keep
 
 
 def _rotate_backups():
-    """Rotate backup files: current → bak1, bak1→bak2, ... bak4→bak5, drop bak5."""
-    cfg_base = CONFIG_PATH
+    """Rotate backup files: current → bak1, bak1→bak2, ..., bakN-1→bakN.
+    
+    Preserves the last N versions of config.yaml on disk so you can recover
+    from bad automation or accidental changes.  All file ops run under the
+    _CONFIG_LOCK (held by callers) for thread safety.
+    """
+    cfg_base = CONFIG_PATH          # e.g. /path/to/config.yaml
     if not cfg_base.exists():
         return
     
-    # Delete the oldest backup if it exists (beyond our retention count)
-    oldest = cfg_base.parent / f"{cfg_base.name}.bak{_NUM_BACKUPS}"
+    backup_dir = cfg_base.parent
+    
+    # ── 1. Delete oldest rotation candidate (beyond retention count) ──
+    oldest = backup_dir / f"{cfg_base.name}.bak{_NUM_BACKUPS}"
     if oldest.exists():
         oldest.unlink()
     
-    # Shift existing backups: bak{N-1}→bakN, bak{N-2}→bak{N-1}, ..., bak1→bak2
+    # ── 2. Shift existing backups upward: bak4→bak5, bak3→bak4, …, bak1→bak2 ──
     for i in range(_NUM_BACKUPS - 1, 0, -1):
-        src = cfg_base.parent / f"{cfg_base.name}.bak{i}"
-        dst = cfg_base.parent / f"{cfg_base.name}.bak{i+1}"
+        src = backup_dir / f"{cfg_base.name}.bak{i}"
+        dst = backup_dir / f"{cfg_base.name}.bak{i+1}"
         if src.exists():
             src.rename(dst)
+    
+    # ── 3. Save current config.yaml as bak1 (before the new write overwrites it) ──
+    bak1 = backup_dir / f"{cfg_base.name}.bak1"
+    shutil.copy2(str(cfg_base), str(bak1))
 
 
 def _load_runtime():
@@ -287,6 +300,25 @@ def init_db():
         action += f", {inserted_count} added"
     print(action)
 
+    # ── History table — tracks every status/notes change ──────────
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS status_history (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id    INTEGER NOT NULL REFERENCES status_items(id),
+            event_type TEXT    NOT NULL DEFAULT 'status',
+            old_value  TEXT    DEFAULT '',
+            new_value  TEXT    DEFAULT '',
+            occurred   TEXT    NOT NULL
+        )"""
+    )
+
+    # Backfill `occurred` column for pre-existing databases
+    try:
+        db.execute("ALTER TABLE status_history ADD COLUMN occurred TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'")
+        db.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     db.commit()
     db.close()
 
@@ -296,6 +328,15 @@ def get_all_items():
     return get_db().execute(
         "SELECT * FROM status_items ORDER BY CASE status WHEN 'red' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END, position"
     ).fetchall()
+
+
+def _record_history(item_id: int, event_type: str, old_value: str, new_value: str):
+    """Insert a history row. Called inside the same transaction as the mutation."""
+    db = get_db()
+    db.execute(
+        "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
+        (item_id, event_type, old_value, new_value, dt.datetime.utcnow().isoformat() + "Z"),
+    )
 
 
 STATUS_CYCLE = ["green", "degraded", "red"]
@@ -313,6 +354,9 @@ def toggle_item(item_id: int) -> str:
         "UPDATE status_items SET status=? WHERE id=?",
         (new_status, item_id),
     )
+
+    # Record history
+    _record_history(item_id, "status", current, new_status)
 
     # Persist config-item status changes to yaml _runtime.status
     row_name = db.execute(
@@ -354,15 +398,21 @@ def reorder_items(order_map: dict[int, int]):
 
 def set_notes(item_id: int, notes: str):
     db = get_db()
-    # Persist config-item notes to yaml _runtime.notes (config items only)
-    row_name = db.execute(
-        "SELECT name FROM status_items WHERE id=? AND user_added=0", (item_id,)
-    ).fetchone()
+    # Get current notes for history tracking
+    current_row = db.execute("SELECT id, name, notes FROM status_items WHERE id=?", (item_id,)).fetchone()
+    old_notes = ""
+    if current_row:
+        old_notes = current_row["notes"] or ""
 
-    if row_name and notes.strip():
+    # Record history if notes actually changed
+    if old_notes != notes:
+        _record_history(item_id, "notes", old_notes, notes)
+
+    # Persist config-item notes to yaml _runtime.notes (config items only)
+    if current_row and notes.strip():
         rt = _load_runtime()
         items_list = cfg.get("items", [])
-        item_name = row_name["name"]
+        item_name = current_row["name"]
         if item_name in items_list:
             rt.setdefault("notes", {})[item_name] = notes
             _save_runtime(rt)
@@ -532,6 +582,37 @@ def api_notes(item_id):
     notes = data.get("notes", "").strip()
     set_notes(item_id, notes)
     return jsonify(ok=True)
+
+
+@app.route("/api/history/<int:item_id>")
+def api_history(item_id):
+    """Return history for a service. Public read — anyone can see status timeline."""
+    db = get_db()
+    # Verify item exists (and get its name)
+    row = db.execute(
+        "SELECT id, name FROM status_items WHERE id=?", (item_id,)
+    ).fetchone()
+    if not row:
+        abort(404)
+
+    entries = db.execute(
+        "SELECT event_type, old_value, new_value, occurred "
+        "FROM status_history WHERE item_id = ? ORDER BY id DESC",
+        (item_id,),
+    ).fetchall()
+
+    return jsonify({
+        "service": row["name"],
+        "entries": [
+            {
+                "event_type": e["event_type"],
+                "old_value": e["old_value"],
+                "new_value": e["new_value"],
+                "occurred": e["occurred"],
+            }
+            for e in entries
+        ]
+    })
 
 
 @app.route("/api/add", methods=["POST"])

@@ -419,3 +419,161 @@ body.admin .btn-delete { display: flex; }
     /* Notes take full width below the main strip */
     textarea.notes-input { padding: 0.6rem 0.75rem; font-size: 15px; }
 }
+
+/* ── History button (always visible — public read) ─────────────── */
+.btn-history {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.btn-history:hover {
+    background: rgba(91, 141, 239, 0.08);
+    color: var(--accent);
+}
+
+/* ── History modal ─────────────────────────────────────────────── */
+.modal-wide {
+    max-width: 560px;
+    width: calc(100vw - 3rem);
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.25rem;
+}
+
+.history-header h2 {
+    font-size: 1.1rem;
+}
+
+.btn-close-modal {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.btn-close-modal:hover {
+    background: rgba(244, 79, 91, 0.1);
+    color: var(--red);
+}
+
+/* ── Timeline ───────────────────────────────────────────────────── */
+.history-timeline {
+    max-height: 60vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-right: 0.25rem;
+}
+
+/* Scrollbar styling */
+.history-timeline::-webkit-scrollbar {
+    width: 6px;
+}
+.history-timeline::-webkit-scrollbar-track {
+    background: transparent;
+}
+.history-timeline::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
+.history-entry {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 100%;
+}
+
+.history-entry:hover {
+    border-color: #333750;
+}
+
+.history-icon {
+    flex-shrink: 0;
+    font-size: 0.6rem;
+    margin-top: 0.25rem;
+}
+
+.history-icon.status {
+    color: var(--green);
+}
+
+.history-entry[data-event="red"] .history-icon.status,
+.history-icon.status.red-change {
+    color: var(--red);
+}
+
+.history-icon.notes {
+    color: var(--accent);
+}
+
+.history-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.history-label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.history-notes-text {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+.history-time {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    color: #555a6e;
+    white-space: nowrap;
+    margin-left: auto;
+}
+
+/* Empty state */
+.history-empty {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+/* ── History modal responsive ───────────────────────────────────── */
+@media (max-width: 640px) {
+    .history-entry {
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+    .history-time {
+        margin-left: 0;
+        margin-top: 0.25rem;
+    }
+}

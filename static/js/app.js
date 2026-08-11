@@ -46,8 +46,8 @@ const STATUS_LABELS = { green: 'Operational', degraded: 'Degraded', red: 'Outage
 list && list.addEventListener('click', async e => {
     const main = e.target.closest('.status-main');
     if (!main || !document.body.classList.contains('admin')) return;
-    // Don't toggle if clicking the drag handle
-    if (e.target.closest('.drag-handle') || e.target.closest('.btn-delete')) return;
+    // Don't toggle if clicking the drag handle, delete, or history buttons
+    if (e.target.closest('.drag-handle') || e.target.closest('.btn-delete') || e.target.closest('.btn-history')) return;
 
     const row = main.closest('.status-row');
     const id = row.dataset.id;
@@ -128,6 +128,7 @@ if (addItemForm) {
                     <span class="status-label green">Operational</span>
                 </div>
                 <textarea class="notes-input" placeholder="Add status notes…" data-id="${item.id}">${escHtml(item.notes || '')}</textarea>
+                <button class="btn-history" title="View history" data-id="${item.id}">🕙</button>
                 <button class="btn-delete" title="Delete this item" data-id="${item.id}">✕</button>
             `;
             list.appendChild(row);
@@ -284,6 +285,86 @@ function updateBadge() {
     }
 }
 updateBadge();
+
+// ── History modal (always visible — public read) ───────────────
+const historyModal = document.getElementById('historyModal');
+const historyTitle = document.getElementById('historyTitle');
+const historyTimeline = document.getElementById('historyTimeline');
+const closeHistory = document.getElementById('closeHistory');
+
+async function openHistory(itemId) {
+    try {
+        const res = await fetch('/api/history/' + itemId);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        historyTitle.textContent = data.service + ' — History';
+        historyTimeline.innerHTML = '';
+
+        if (data.entries.length === 0) {
+            historyTimeline.innerHTML = '<div class="history-empty">No history yet</div>';
+        } else {
+            data.entries.forEach(entry => {
+                const el = document.createElement('div');
+                el.className = 'history-entry';
+
+                // Status or notes icon + label
+                const eventIcon = entry.event_type === 'status' ? '<span class="history-icon status">●</span>' : '<span class="history-icon notes">✎</span>';
+                const label = entry.event_type === 'status'
+                    ? `${entry.old_value} → ${entry.new_value}`
+                    : `Notes updated`;
+
+                // Format the ISO timestamp into a friendly string
+                const d = new Date(entry.occurred + (entry.occurred.endsWith('Z') ? '' : 'Z'));
+                const timeStr = d.toLocaleString(undefined, {
+                    year: 'numeric', month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                });
+
+                el.innerHTML = `
+                    ${eventIcon}
+                    <div class="history-details">
+                        <span class="history-label">${label}</span>
+                        ${entry.event_type === 'notes' && entry.new_value ? '<span class="history-notes-text">' + escHtml(entry.new_value) + '</span>' : ''}
+                    </div>
+                    <time class="history-time">${timeStr}</time>
+                `;
+
+                historyTimeline.appendChild(el);
+            });
+        }
+
+        historyModal.classList.remove('hidden');
+    } catch (err) {
+        console.error('Failed to load history:', err);
+    }
+}
+
+function closeHistoryModal() {
+    historyModal.classList.add('hidden');
+    historyTimeline.innerHTML = '';
+}
+
+// Close on button, backdrop click, Escape key
+closeHistory && closeHistory.addEventListener('click', closeHistoryModal);
+historyModal && historyModal.addEventListener('click', e => {
+    if (e.target === historyModal) closeHistoryModal();
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !historyModal.classList.contains('hidden')) {
+        closeHistoryModal();
+    }
+});
+
+// Delegate click on history button via the status list
+list && list.addEventListener('click', async e => {
+    const btn = e.target.closest('.btn-history');
+    if (!btn) return;
+    e.stopPropagation();
+    const id = btn.dataset.id;
+    openHistory(id);
+});
+
 
 // ── Show notes for non-green rows on page load ───────────────────
 document.querySelectorAll('.status-row').forEach(function(row) {
