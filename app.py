@@ -54,6 +54,27 @@ SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
 
 _CONFIG_LOCK = threading.Lock()
 
+_NUM_BACKUPS = 5  # How many old versions of config.yaml to keep
+
+
+def _rotate_backups():
+    """Rotate backup files: current → bak1, bak1→bak2, ... bak4→bak5, drop bak5."""
+    cfg_base = CONFIG_PATH
+    if not cfg_base.exists():
+        return
+    
+    # Delete the oldest backup if it exists (beyond our retention count)
+    oldest = cfg_base.parent / f"{cfg_base.name}.bak{_NUM_BACKUPS}"
+    if oldest.exists():
+        oldest.unlink()
+    
+    # Shift existing backups: bak{N-1}→bakN, bak{N-2}→bak{N-1}, ..., bak1→bak2
+    for i in range(_NUM_BACKUPS - 1, 0, -1):
+        src = cfg_base.parent / f"{cfg_base.name}.bak{i}"
+        dst = cfg_base.parent / f"{cfg_base.name}.bak{i+1}"
+        if src.exists():
+            src.rename(dst)
+
 
 def _load_runtime():
     """Return {status: {name→state}, notes: {name→text}} from config.yaml."""
@@ -65,8 +86,15 @@ def _load_runtime():
 
 
 def _save_runtime(data):
-    """Atomically write runtime overrides into config.yaml._runtime."""
+    """Atomically write runtime overrides into config.yaml._runtime.
+    
+    Before each write, rotates existing backups (current → bak1 → bak2 → ... → bak5),
+    keeping the last 5 versions so you can recover from bad automation or accidental changes.
+    """
     with _CONFIG_LOCK:
+        # Rotate backups before writing new version
+        _rotate_backups()
+        
         cfg_data = load_config()
         if not isinstance(cfg_data, dict):
             cfg_data = {"items": list(ITEM_NAMES), "_base": {}}
