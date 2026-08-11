@@ -333,9 +333,10 @@ def get_all_items():
 def _record_history(item_id: int, event_type: str, old_value: str, new_value: str):
     """Insert a history row. Called inside the same transaction as the mutation."""
     db = get_db()
+    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     db.execute(
         "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
-        (item_id, event_type, old_value, new_value, dt.datetime.utcnow().isoformat() + "Z"),
+        (item_id, event_type, old_value, new_value, ts),
     )
 
 
@@ -482,7 +483,7 @@ def security_headers(response):
 @app.route("/")
 def status_page():
     items = get_all_items()
-    is_admin = session.get("admin", False) or request.cookies.get("_admin") == "1"
+    is_admin = session.get("admin", False)
     csrf = _get_csrf() if is_admin else ""
     return render_template(
         "index.html", items=items, session_admin=is_admin, csrf_token=csrf
@@ -491,8 +492,7 @@ def status_page():
 
 @app.route("/api/csrf-token")
 def api_csrf():
-    is_admin = session.get("admin") or request.cookies.get("_admin") == "1"
-    if not is_admin:
+    if not session.get("admin"):
         abort(403)
     return jsonify(token=_get_csrf())
 
@@ -546,12 +546,7 @@ def logout():
 
 @app.route("/auth-check")
 def auth_check():
-    is_admin = session.get("admin", False) or request.cookies.get("_admin") == "1"
-    if request.cookies.get("_admin") == "1" and not session.get("admin"):
-        # Re-sync cookie into session for convenience
-        session["admin"] = True
-        is_admin = True
-    return jsonify(admin=is_admin)
+    return jsonify(admin=session.get("admin", False))
 
 
 @app.route("/api/toggle/<int:item_id>", methods=["POST"])
@@ -646,6 +641,7 @@ def api_delete(item_id):
     if not row:
         return jsonify(error="Not found"), 404
     name = row["name"]
+    db.execute("DELETE FROM status_history WHERE item_id = ?", (item_id,))
     db.execute("DELETE FROM status_items WHERE id = ?", (item_id,))
     # Re-index positions to fill the gap
     remaining = db.execute("SELECT id, position FROM status_items ORDER BY position").fetchall()
@@ -667,7 +663,7 @@ def api_reorder():
 
 
 def _not_admin() -> bool:
-    return not (session.get("admin") or request.cookies.get("_admin") == "1")
+    return not session.get("admin")
 
 
 # ── Main ───────────────────────────────────────────────────────────
