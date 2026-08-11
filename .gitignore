@@ -11,6 +11,10 @@ instance/
 logs/
 archives/
 .server.pid
+.env
+
+# Test stubs (leave untracked to avoid cluttering working directory)
+test_fixes.*
 
 # OS
 .DS_Store

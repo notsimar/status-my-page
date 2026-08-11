@@ -2,6 +2,8 @@
 """Tiny status page — Flask + SQLite + YAML config."""
 
 import hashlib
+import tempfile
+import threading
 import hmac
 import json
 import os
@@ -42,6 +44,45 @@ SERVER_PORT = cfg.get("server", {}).get("port", 8920)
 
 # Secret key: env var or generate a per-session random key.
 SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
+
+
+
+# ── YAML runtime persistence ────────────────────────────────────────
+# Admin actions on the page persist back to config.yaml under a _runtime
+# section so they survive restarts.  The _CONFIG_LOCK makes concurrent
+# saves safe.
+
+_CONFIG_LOCK = threading.Lock()
+
+
+def _load_runtime():
+    """Return {status: {name→state}, notes: {name→text}} from config.yaml."""
+    try:
+        data = load_config()
+        return data.get("_runtime", {}) or {}
+    except Exception:
+        return {}
+
+
+def _save_runtime(data):
+    """Atomically write runtime overrides into config.yaml._runtime."""
+    with _CONFIG_LOCK:
+        cfg_data = load_config()
+        if not isinstance(cfg_data, dict):
+            cfg_data = {"items": list(ITEM_NAMES), "_base": {}}
+
+        # Preserve known top-level keys under _base during a rewrite
+        for section in ("admin", "server"):
+            if section in cfg_data and f"_base.{section}" not in str(cfg_data.get("_base", {})):
+                cfg_data.setdefault("_base", {})[section] = (cfg_data.pop(section, {}))
+
+        cfg_data["_runtime"] = data
+
+        path = CONFIG_PATH  # module-level variable
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
+        with os.fdopen(fd, "w") as fh:
+            yaml.dump(cfg_data, fh, default_flow_style=False, sort_keys=False)
+        os.replace(tmp_path, path)
 
 
 # ── App factory ────────────────────────────────────────────────────
@@ -166,7 +207,52 @@ def init_db():
                 (i, row[0])
             )
 
-    action = f"Rebuilt {len(seed_items)} items from config.yaml"
+    # ── Restore runtime overrides from YAML after seeding ──────────
+    try:
+        rt = _load_runtime()
+        # Status overrides: {item_name: "degraded"|"red"}
+        for item_name, new_state in rt.get("status", {}).items():
+            if item_name not in seed_set or new_state in ("green", ""):
+                continue
+            row = db.execute(
+                "SELECT id FROM status_items WHERE name = ?", [item_name]
+            ).fetchone()
+            if row:
+                db.execute(
+                    "UPDATE status_items SET status=? WHERE id=?",
+                    (new_state, row["id"]),
+                )
+
+        # Notes overrides: {item_name: note_text}
+        for item_name, note_text in rt.get("notes", {}).items():
+            if item_name not in seed_set or not note_text.strip():
+                continue
+            row = db.execute(
+                "SELECT id FROM status_items WHERE name = ?", [item_name]
+            ).fetchone()
+            if row:
+                db.execute(
+                    "UPDATE status_items SET notes=? WHERE id=?",
+                    (note_text, row["id"]),
+                )
+
+        # Reorder overrides: [name, name, ...]
+        reorder_list = rt.get("reorder", None)
+        if reorder_list and isinstance(reorder_list, list):
+            for i, item_name in enumerate(reorder_list):
+                row = db.execute(
+                    "SELECT id FROM status_items WHERE name = ?", [item_name]
+                ).fetchone()
+                if row:
+                    db.execute(
+                        "UPDATE status_items SET position=? WHERE id=?",
+                        (i + 1, row["id"]),
+                    )
+
+    except Exception:
+        pass
+
+    action = f'Rebuilt {len(seed_items)} config items from config.yaml'
     if deleted_count:
         action += f" ({deleted_count} removed)"
     if inserted_count:
@@ -187,18 +273,35 @@ def get_all_items():
 STATUS_CYCLE = ["green", "degraded", "red"]
 
 def toggle_item(item_id: int) -> str:
-    """Cycle: green → degraded → red → green"""
+    """Cycle: green → degraded → red → green (also persists to yaml)."""
     db = get_db()
     row = db.execute(
-        "SELECT status FROM status_items WHERE id = ?", (item_id,)
+        "SELECT id, status FROM status_items WHERE id=?", (item_id,)
     ).fetchone()
     current = row["status"]
     next_idx = (STATUS_CYCLE.index(current) + 1) % len(STATUS_CYCLE)
     new_status = STATUS_CYCLE[next_idx]
     db.execute(
-        "UPDATE status_items SET status = ? WHERE id = ?",
+        "UPDATE status_items SET status=? WHERE id=?",
         (new_status, item_id),
     )
+
+    # Persist config-item status changes to yaml _runtime.status
+    row_name = db.execute(
+        "SELECT name FROM status_items WHERE id=?", (item_id,)
+    ).fetchone()
+    if row_name:
+        rt = _load_runtime()
+        items_list = cfg.get("items", [])  # current config items list
+        item_name = row_name["name"]
+        if item_name in items_list:
+            rt_status = rt.setdefault("status", {})
+            if new_status != "green":
+                rt_status[item_name] = new_status
+            else:
+                rt_status.pop(item_name, None)
+            _save_runtime(rt)
+
     db.commit()
     return new_status
 
@@ -223,6 +326,19 @@ def reorder_items(order_map: dict[int, int]):
 
 def set_notes(item_id: int, notes: str):
     db = get_db()
+    # Persist config-item notes to yaml _runtime.notes (config items only)
+    row_name = db.execute(
+        "SELECT name FROM status_items WHERE id=? AND user_added=0", (item_id,)
+    ).fetchone()
+
+    if row_name and notes.strip():
+        rt = _load_runtime()
+        items_list = cfg.get("items", [])
+        item_name = row_name["name"]
+        if item_name in items_list:
+            rt.setdefault("notes", {})[item_name] = notes
+            _save_runtime(rt)
+
     db.execute(
         "UPDATE status_items SET notes = ? WHERE id = ?",
         (notes, item_id),
