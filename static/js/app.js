@@ -226,9 +226,26 @@ list && list.addEventListener('drop', e => {
 });
 
 // ── Helpers ───────────────────────────────────────────────
+/** Read CSRF token from <meta> tag (never stored in JS globals). */
+function _csrfToken() {
+    const el = document.querySelector('meta[name="csrf-token"]');
+    return el ? el.getAttribute('content') || '' : '';
+}
+
+/** Update CSRF token in <meta> tag after rotation. */
+function _setCsrfToken(token) {
+    let el = document.querySelector('meta[name="csrf-token"]');
+    if (!el) {
+        el = document.createElement('meta');
+        el.name = 'csrf-token';
+        document.head.appendChild(el);
+    }
+    el.setAttribute('content', token);
+}
+
 /** CSRF-protected fetch — adds X-CSRF-Token header; rotates token on success. */
 async function csrfFetch(url, options = {}) {
-    const token = window.__CSRF__ || '';
+    const token = _csrfToken();
     if (!options.headers) options.headers = {};
     if (token) options.headers['X-CSRF-Token'] = token;
     const res = await fetch(url, options);
@@ -239,7 +256,7 @@ async function csrfFetch(url, options = {}) {
             const tokRes = await fetch('/api/csrf-token');
             if (tokRes.ok) {
                 const data = await tokRes.json();
-                if (data.token) window.__CSRF__ = data.token;
+                if (data.token) _setCsrfToken(data.token);
             }
         } catch (_) { /* non-critical — token will refresh on next page load */ }
     }

@@ -80,6 +80,9 @@ echo ""
 echo "=== Deploying to $INSTALL_DIR ==="
 mkdir -p "$INSTALL_DIR"/{instance,logs,archives}
 
+# Restrict archive dir (contains JSON snapshots with service state/notes)
+chmod 0700 "$INSTALL_DIR/archives"
+
 # Copy everything from current directory (where this script lives)
 cp -r app.py config.yaml requirements.txt templates/ static/ \
       start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md \

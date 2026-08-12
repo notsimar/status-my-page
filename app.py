@@ -137,6 +137,26 @@ LOCKOUT_SECONDS = 30            # how long to block that IP
 
 _failed_logins: dict[str, list[float]] = defaultdict(list)
 
+# Mutation rate-limit: max N mutations per IP within a window
+MUTATION_MAX = 60               # requests per window
+MUTATION_WINDOW = 60            # seconds
+_mutation_rates: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_mutation_rate(ip: str) -> bool:
+    """Return True if IP is allowed to mutate; False if throttled."""
+    now = time.time()
+    cutoff = now - MUTATION_WINDOW
+    _mutation_rates[ip] = [t for t in _mutation_rates[ip] if t > cutoff]
+    if len(_mutation_rates[ip]) >= MUTATION_MAX:
+        return False
+    _mutation_rates[ip].append(now)
+    # Purge stale keys
+    for k in list(_mutation_rates):
+        if not _mutation_rates[k] or _mutation_rates[k][-1] < cutoff - 60:
+            del _mutation_rates[k]
+    return True
+
 
 def _record_attempt(ip: str):
     now = time.time()
@@ -175,6 +195,8 @@ def get_db() -> sqlite3.Connection:
     if "db" not in g:
         g.db = sqlite3.connect(str(DB_PATH))
         g.db.row_factory = sqlite3.Row
+        # WAL mode for better concurrent read/write performance (2+ workers)
+        g.db.execute("PRAGMA journal_mode=WAL")
     return g.db
 
 
@@ -393,13 +415,23 @@ def get_all_items():
     ).fetchall()
 
 
+MAX_HISTORY_PER_ITEM = 100      # prune older entries per item to bound table growth
+
+
 def _record_history(item_id: int, event_type: str, old_value: str, new_value: str):
-    """Insert a history row. Called inside the same transaction as the mutation."""
+    """Insert a history row and prune old entries. Called inside same transaction as mutation."""
     db = get_db()
     ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     db.execute(
         "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
         (item_id, event_type, old_value, new_value, ts),
+    )
+    # Prune oldest entries beyond retention limit for this item
+    db.execute(
+        "DELETE FROM status_history WHERE id NOT IN ("
+        "  SELECT id FROM status_history WHERE item_id = ? ORDER BY id DESC LIMIT ?"
+        ")",
+        (item_id, MAX_HISTORY_PER_ITEM),
     )
 
 
@@ -583,15 +615,6 @@ def login():
         session["admin"] = True
         session.permanent = True
         response = jsonify(ok=True)
-        is_https = request.headers.get("X-Forwarded-Proto") == "https" or request.is_secure
-        response.set_cookie(
-            "_admin", "1",
-            httponly=True,
-            secure=is_https,          # Secure when behind HTTPS proxy
-            samesite="Strict",
-            max_age=86400,
-            path="/",
-        )
         _failed_logins.clear()       # unlock on success
         return response
 
@@ -614,7 +637,8 @@ def auth_check():
 
 @app.route("/api/toggle/<int:item_id>", methods=["POST"])
 def api_toggle(item_id):
-    if _not_admin() or not _check_csrf():
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
     status = toggle_item(item_id)
     return jsonify(status=status)
@@ -622,7 +646,8 @@ def api_toggle(item_id):
 
 @app.route("/api/rename/<int:item_id>", methods=["POST"])
 def api_rename(item_id):
-    if _not_admin() or not _check_csrf():
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
@@ -634,7 +659,8 @@ def api_rename(item_id):
 
 @app.route("/api/notes/<int:item_id>", methods=["POST"])
 def api_notes(item_id):
-    if _not_admin() or not _check_csrf():
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
     data = request.get_json(silent=True) or {}
     notes = data.get("notes", "").strip()
