@@ -404,6 +404,25 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # ── Restore history from _runtime.history (survives restarts) ──
+    try:
+        rt = _load_runtime()
+        for item_name, entries in rt.get("history", {}).items():
+            row = db.execute(
+                "SELECT id FROM status_items WHERE name = ?", [item_name]
+            ).fetchone()
+            if not row:
+                continue
+            for entry in entries:
+                db.execute(
+                    "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
+                    (row["id"], entry.get("event_type", "status"),
+                     entry.get("old_value", ""), entry.get("new_value", ""),
+                     entry.get("occurred", "1970-01-01T00:00:00Z")),
+                )
+    except Exception:
+        pass
+
     db.commit()
     db.close()
 
@@ -416,6 +435,7 @@ def get_all_items():
 
 
 MAX_HISTORY_PER_ITEM = 100      # prune older entries per item to bound table growth
+HISTORY_RUNTIME_CAP = 25        # history entries persisted to config.yaml per item (survives restarts)
 
 
 def _record_history(item_id: int, event_type: str, old_value: str, new_value: str):
@@ -433,6 +453,24 @@ def _record_history(item_id: int, event_type: str, old_value: str, new_value: st
         ")",
         (item_id, MAX_HISTORY_PER_ITEM),
     )
+
+    # ── Persist to YAML _runtime.history so it survives restarts ──
+    row_name = db.execute(
+        "SELECT name FROM status_items WHERE id=?", (item_id,)
+    ).fetchone()
+    if row_name:
+        rt = _load_runtime()
+        hist = rt.setdefault("history", {})
+        item_hist = hist.setdefault(row_name["name"], [])
+        item_hist.append({
+            "event_type": event_type,
+            "old_value": old_value,
+            "new_value": new_value,
+            "occurred": ts,
+        })
+        # Keep only the most recent HISTORY_RUNTIME_CAP entries per item in YAML
+        hist[row_name["name"]] = item_hist[-HISTORY_RUNTIME_CAP:]
+        _save_runtime(rt)
 
 
 STATUS_CYCLE = ["green", "degraded", "red"]
