@@ -272,6 +272,7 @@ def init_db():
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(DB_PATH))
+    db.row_factory = sqlite3.Row
 
     # Use config-driven item names for seeding
     seed_items = [n.strip() for n in ITEM_NAMES if n.strip()] or [
