@@ -12,10 +12,10 @@ We use MC/DC to verify "Guard" logic where multiple conditions determine whether
 
 The following table maps every critical compound decision in `app.py` to its corresponding test cases. To satisfy MC/DC, we must prove that each condition $\text{C}_n$ can independently change the outcome of the decision.
 
-### D1: Runtime Status Restore (L341)
+### D1: Runtime Status Restore (app.py L342)
 **Expression:** `if item_name not in seed_set or new_state in ('green', ''): continue`
 
-| Test Method | C1 (In Seed) | C2 (Valid State) | Outcome | Proof |
+| Test Method | C1 (In Seed) | C2 (Valid State) | Outcome | Proof 
 | :--- | :---: | :---: | :---: | :--- |
 | `test_C1_false_C2_false__restores_degraded` | $\text{T}$ | $\text{F}$ | **Restore** | Baseline (Success) |
 | `test_C1_true_unknown_item__skipped` | $\text{F}$ | $\text{X}$ | **Skip** | $\text{C}_1$ independently gates |
