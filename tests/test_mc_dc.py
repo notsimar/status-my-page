@@ -1,4 +1,60 @@
-"""MC/DC tests for status-my-page."""
+"""Modified Condition/Decision Coverage (MC/DC) tests for status-my-page.
+
+This suite proves that every guard condition independently determines the
+outcome of compound boolean expressions in three critical code paths:
+
+  1. YAML runtime state restoration — status overrides from _runtime.status,
+     notes overrides from _runtime.notes (app.py L341–L365)
+  2. Mutation API security gate — auth → CSRF → rate-limit trio on every
+     protected endpoint (app.py L679/689/701)
+
+Each class tests one compound decision by varying exactly one condition per
+test while holding all others constant, demonstrating that each condition is
+**independent** (i.e. changing it alone can flip the outcome). Together these
+tests certify that no guard in a compound expression is redundant — removing
+any single condition would allow an attack or data-loss scenario.
+
+Test matrix:
+  ┌─────────────┬──────────────────────┬────────┬───────────┐
+  │Class        │ Guard                │ D-ID   │ Conditions│
+  ├─────────────┼──────────────────────┼────────┼───────────┤
+  │Test_D1_     │ _runtime.status      │ D1 (L341)│ C1: item  │
+  │RestoreStatus│ override             │        │ in seed?  │
+  │             │                      │        │ C2: color │
+  │             │                      │        │ ∈ {green} │
+  ├─────────────┼──────────────────────┼────────┼───────────┤
+  │Test_D2_     │ _runtime.notes       │ D2 (L354)│ C1: item  │
+  │NotesRestore │ override             │        │ in seed?  │
+  │             │                      │        │ C2: note  │
+  │             │                      │        │ stripped? │
+  ├─────────────┼──────────────────────┼────────┼───────────┤
+  │Test_D3_     │ protected-endpoint   │ D3 (L679)│ C1: is-
+  │SecurityGuard│ security gate        │+L689 + admin       │
+  │             │                      │ L701   │ C2: valid │
+  │             │                      │        │ CSRF?     │
+  │             │                      │        │ C3: under │
+  │             │                      │        │ rate lim. │
+  └─────────────┴──────────────────────┴────────┴───────────┘
+
+Prerequisites (automated by session-scoped fixture A):
+  - A fresh temp SQLite DB (separate from the live instance)
+  - 2 seeded items: SvcA, SvcB
+  - STATUS_ADMIN_PASS_HASH set to werkzeug hash of "testpass"
+  - app module patched with modified CONFIG_PATH, DB_PATH, etc.
+
+Usage:
+    pytest tests/test_mc_dc.py -v       # run all MC/DC tests
+    pytest tests/test_mc_dc.py::Test_D1_RestoreStatus -v  # guard D1 only
+
+Note on isolation:
+  The session fixture A uses a temp directory with isolated config.yaml,
+  DB_PATH, and archives_dir so that runtime state from one test class
+  does not leak into another. Tests within a class share the same temp DB
+  but cleanup is explicit (see _load_runtime/_save_runtime calls).
+
+See README_MCDC.md for the full proof matrices mapping every assertion to
+a specific condition in decision D1, D2, D3 and their true/false variants.
+"""
 import datetime as dt
 import sqlite3
 import yaml

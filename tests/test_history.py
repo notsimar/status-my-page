@@ -1,20 +1,42 @@
 #!/usr/bin/env python3
-"""Test suite for the status history feature.
+"""Functional test suite for the Status History feature.
 
-Verifies:
-  - GET /api/history/<id> returns JSON with service name + entries array
-  - Empty history before any mutations gives an empty entries list
-  - Toggle status creates a history record (event_type='status')
-  - Update notes creates a history record (event_type='notes')
-  - Each entry has event_type, old_value, new_value, occurred fields
-  - Entries returned newest-first (DESC order)
-  - Non-existent item_id returns 404
-  - Multiple toggles all recorded with correct transitions
-  - History endpoint is publicly accessible without auth
+Validates that every mutation to a service's state is recorded with full
+fidelity — capturing pre/post values, timestamps, and event type — and that
+the persistence layer survives across multiple operations including notes
+updates, multi-step state cycles, cleanup, and public read access.
+
+Test matrix (T0–T11 + Cleanup):
+  ┌─────┬───────────────────────────────────────────────────┐
+  │ID   │ What it validates                                │
+  ├─────┼───────────────────────────────────────────────────┤
+  │ T0  │ Server is reachable via HTTP                     │
+  │ T1  │ Admin login succeeds; CSRF token extracted       │
+  │ T2  │ Adding a unique test service creates an item     │
+  │ T3  │ Fresh item starts with empty history list        │
+  │ T4  │ Status toggle records (event_type=status) entry  │
+  │ T5  │ History entry contains all 4 required fields     │
+  │     │   + valid ISO-8601 UTC timestamp                 │
+  │ T6  │ Notes update records (event_type=notes) entry    │
+  │ T7  │ Entries returned newest-first (DESC by occurred) │
+  │ T8  │ Multiple toggles each produce unique transitions │
+  │     │   (green→degraded, degraded→red, red→green)      │
+  │ T9  │ Non-existent item_id → HTTP 404                  │
+  │ T10 │ Old vs new notes values differ in history       │
+  │ T11 │ History endpoint works without authentication    │
+  │ ──  ├───────────────────────────────────────────────────┤
+  │CL   │ Created test service is deleted after tests      │
+  └─────┴───────────────────────────────────────────────────┘
 
 Usage:
-    # Server must be running on http://localhost:8920
+    # Server must be running on http://localhost:8920 first (see README).
     cd /home/ssahni/Developer/status-my-page && python3 tests/test_history.py [http://URL]
+    cd /home/ssahni/Developer/status-my-page && python3 tests/test_history.py http://my-server:8920
+
+Notes:
+  - Auto-login as admin/changeme. If credentials changed, edit the hardcoded login call below.
+  - Test services are created with unique names (timestamp-suffixed) to avoid collisions.
+  - The test creates and removes a temporary service — it does not modify existing items.
 """
 
 import datetime as dt
