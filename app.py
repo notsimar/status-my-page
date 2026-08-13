@@ -654,7 +654,7 @@ def login():
         session["admin"] = True
         session.permanent = True
         response = jsonify(ok=True)
-        _failed_logins.clear()       # unlock on success
+        _failed_logins.pop(ip, None)       # unlock current IP on success
         return response
 
     _record_attempt(ip)
@@ -665,7 +665,6 @@ def login():
 def logout():
     session.clear()
     resp = jsonify(ok=True)
-    resp.delete_cookie("_admin", path="/")
     return resp
 
 
@@ -740,7 +739,8 @@ def api_history(item_id):
 
 @app.route("/api/add", methods=["POST"])
 def api_add():
-    if _not_admin() or not _check_csrf():
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
@@ -762,7 +762,8 @@ def api_add():
 
 @app.route("/api/delete/<int:item_id>", methods=["POST"])
 def api_delete(item_id):
-    if _not_admin() or not _check_csrf():
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
     db = get_db()
     row = db.execute("SELECT name FROM status_items WHERE id = ?", (item_id,)).fetchone()
@@ -781,7 +782,8 @@ def api_delete(item_id):
 
 @app.route("/api/reorder", methods=["POST"])
 def api_reorder():
-    if _not_admin() or not _check_csrf():
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
     data = request.get_json(silent=True) or {}
     raw_order = data.get("order", {})

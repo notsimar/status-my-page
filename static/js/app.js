@@ -315,7 +315,7 @@ async function openHistory(itemId) {
         if (!res.ok) return;
         const data = await res.json();
 
-        historyTitle.textContent = data.service + ' — History';
+        historyTitle.textContent = escHtml(data.service) + ' — History';
         historyTimeline.innerHTML = '';
 
         if (data.entries.length === 0) {
@@ -325,27 +325,41 @@ async function openHistory(itemId) {
                 const el = document.createElement('div');
                 el.className = 'history-entry';
 
-                // Status or notes icon + label
-                const eventIcon = entry.event_type === 'status' ? '<span class="history-icon status">●</span>' : '<span class="history-icon notes">✎</span>';
-                const label = entry.event_type === 'status'
-                    ? `${entry.old_value} → ${entry.new_value}`
-                    : `Notes updated`;
+                // Icon element (server-controlled, safe to innerHTML)
+                const iconHtml = entry.event_type === 'status'
+                    ? '<span class="history-icon status">&#x25cf;</span>'
+                    : '<span class="history-icon notes">&#xE74B;</span>';
+                el.innerHTML = iconHtml;
 
-                // Format the ISO timestamp into a friendly string
+                // Details container (created via DOM to ensure textContent for user-controlled values)
+                const details = document.createElement('div');
+                details.className = 'history-details';
+
+                const labelSpan = document.createElement('span');
+                labelSpan.className = 'history-label';
+                if (entry.event_type === 'status') {
+                    labelSpan.textContent = escHtml(entry.old_value) + ' \u2192 ' + escHtml(entry.new_value);
+                } else {
+                    labelSpan.textContent = 'Notes updated';
+                    details.appendChild(labelSpan);
+
+                    const notesSpan = document.createElement('span');
+                    notesSpan.className = 'history-notes-text';
+                    if (entry.new_value) notesSpan.textContent = entry.new_value;  // textContent auto-escapes
+                    details.appendChild(notesSpan);
+                }
+
+                el.appendChild(details);
+
+                // Time element (timestamp from server, but still sanitize for display)
+                const timeEl = document.createElement('time');
+                timeEl.className = 'history-time';
                 const d = new Date(entry.occurred + (entry.occurred.endsWith('Z') ? '' : 'Z'));
-                const timeStr = d.toLocaleString(undefined, {
+                timeEl.textContent = d.toLocaleString(undefined, {
                     year: 'numeric', month: 'short', day: 'numeric',
                     hour: '2-digit', minute: '2-digit'
                 });
-
-                el.innerHTML = `
-                    ${eventIcon}
-                    <div class="history-details">
-                        <span class="history-label">${label}</span>
-                        ${entry.event_type === 'notes' && entry.new_value ? '<span class="history-notes-text">' + escHtml(entry.new_value) + '</span>' : ''}
-                    </div>
-                    <time class="history-time">${timeStr}</time>
-                `;
+                el.appendChild(timeEl);
 
                 historyTimeline.appendChild(el);
             });
