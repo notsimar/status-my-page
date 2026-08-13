@@ -326,6 +326,46 @@ cp config.yaml.bak1 config.yaml
 
 ---
 
+
+## 🧪 Testing & Quality Assurance
+
+### Functional Testing
+- **API History** (`tests/test_history.py`): Comprehensive test suite with 10+ assertions verifying the status timeline, history recording (status toggles + notes), newest-first ordering, field presence, public accessibility, and proper cleanup of test artifacts.
+- **Health Check** (`tests/test_health.sh`): Quick shell-based smoke test that pings the root `/` endpoint and verifies an HTTP 200 response — ideal for CI pipelines or post-deploy validation.
+
+To run all tests:
+
+```bash
+# Start the server first (see Installation above)
+./start.sh
+
+# In a separate terminal, run the functional tests
+python3 tests/test_history.py
+bash tests/test_health.sh
+```
+
+Or with pytest:
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+### Structural Verification (MC/DC)
+This project employs **Modified Condition/Decision Coverage** to prove that critical security guards and restoration filters are logically sound. 
+- **Coverage Target**: Every condition in compound boolean expressions independently affects the outcome.
+- **Verified Guards**: Admin authentication, CSRF validation, Rate limiting, and YAML runtime restoration logic.
+- **Documentation**: See [README_MCDC.md](./README_MCDC.md) for the full mapping table and proof matrices.
+
+**Run structural tests:**
+
+```bash
+# Run MC/DC structural coverage (requires pytest + running server)
+pytest tests/test_mc_dc.py -v
+```
+
+The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, YAML restoration filters, and `_runtime` key filtering). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
+
 ## 🗂 File structure
 
 ```
@@ -341,6 +381,7 @@ status-my-page/
 ├── start.sh / stop.sh / restart.sh / rebuild.sh / install.sh
 ├── tests/
 │   ├── test_history.py      # Automated API/DB history test suite (18 assertions)
+│   ├── test_mc_dc.py        # Structural coverage for critical guards
 │   └── test_health.sh       # Quick health-check script
 ├── License.md               # MIT © 2026 Simar Sahni
 └── .venv/                   # (excluded from git/deploy)
