@@ -13,6 +13,12 @@
 - **Auto-Archival**: Pre-reset DB snapshots (JSON into `archives/`) saved on every restart so state survives seeding
 - **YAML Backup Rotation**: Last 5 versions of `config.yaml` preserved automatically before each runtime save
 
+## 📸 Preview
+
+![Application Status Dashboard](screenshots/dashboard.png)
+
+A dark-themed, mobile-responsive dashboard showing all monitored services with colored status indicators (🟢 Operational, 🟡 Degraded, 🔴 Outage), per-service notes, and a summary pill at the top.
+
 ---
 
 ## 📋 Prerequisites
