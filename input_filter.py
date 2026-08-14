@@ -179,6 +179,7 @@ class NameChars(Enum):
     STRICT = auto()       # alphanumeric, spaces, hyphens, underscores only
     RELAXED = auto()      # above + dots, slashes, parens, @
 
+
 _NAME_PATTERNS = {
     NameChars.STRICT: re.compile(r'^[a-zA-Z0-9 _\-]+$'),
     NameChars.RELAXED: re.compile(r'^[a-zA-Z0-9 _\-\./@()\']+$'),
@@ -218,8 +219,8 @@ def validate_name(raw: str, field: str = "name",
     pat = _NAME_PATTERNS[charset]
     if not pat.match(raw):
         raise InputRejected(
-            f"contains invalid characters (allowed: letters, digits, space, hyphen, underscore)" +
-            ("., /, @, (), '" if charset == NameChars.RELAXED else ""),
+            "contains invalid characters (allowed: letters, digits, space, hyphen, underscore)"
+            + ("., /, @, (), '" if charset == NameChars.RELAXED else ""),
             field,
         )
 

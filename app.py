@@ -22,7 +22,7 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from input_filter import (
     InputRejected, validate_name, validate_notes,
-    validate_user_input, validate_json_data, sanitize_text,
+    validate_user_input, validate_json_data,
     validate_int_param,
 )
 
@@ -53,7 +53,6 @@ SERVER_PORT = cfg.get("server", {}).get("port", 8920)
 SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
 
 
-
 # ── YAML runtime persistence ────────────────────────────────────────
 # Admin actions on the page persist back to config.yaml under a _runtime
 # section so they survive restarts.  The _CONFIG_LOCK makes concurrent
@@ -66,7 +65,7 @@ _NUM_BACKUPS = 5  # How many old versions of config.yaml to keep
 
 def _rotate_backups():
     """Rotate backup files: current → bak1, bak1→bak2, ..., bakN-1→bakN.
-    
+
     Preserves the last N versions of config.yaml on disk so you can recover
     from bad automation or accidental changes.  All file ops run under the
     _CONFIG_LOCK (held by callers) for thread safety.
@@ -74,21 +73,21 @@ def _rotate_backups():
     cfg_base = CONFIG_PATH          # e.g. /path/to/config.yaml
     if not cfg_base.exists():
         return
-    
+
     backup_dir = cfg_base.parent
-    
+
     # ── 1. Delete oldest rotation candidate (beyond retention count) ──
     oldest = backup_dir / f"{cfg_base.name}.bak{_NUM_BACKUPS}"
     if oldest.exists():
         oldest.unlink()
-    
+
     # ── 2. Shift existing backups upward: bak4→bak5, bak3→bak4, …, bak1→bak2 ──
     for i in range(_NUM_BACKUPS - 1, 0, -1):
         src = backup_dir / f"{cfg_base.name}.bak{i}"
-        dst = backup_dir / f"{cfg_base.name}.bak{i+1}"
+        dst = backup_dir / f"{cfg_base.name}.bak{i + 1}"
         if src.exists():
             src.rename(dst)
-    
+
     # ── 3. Save current config.yaml as bak1 (before the new write overwrites it) ──
     bak1 = backup_dir / f"{cfg_base.name}.bak1"
     shutil.copy2(str(cfg_base), str(bak1))
@@ -105,14 +104,14 @@ def _load_runtime():
 
 def _save_runtime(data):
     """Atomically write runtime overrides into config.yaml._runtime.
-    
+
     Before each write, rotates existing backups (current → bak1 → bak2 → ... → bak5),
     keeping the last 5 versions so you can recover from bad automation or accidental changes.
     """
     with _CONFIG_LOCK:
         # Rotate backups before writing new version
         _rotate_backups()
-        
+
         cfg_data = load_config()
         if not isinstance(cfg_data, dict):
             cfg_data = {"items": list(ITEM_NAMES), "_base": {}}
@@ -140,6 +139,7 @@ app.secret_key = os.environ.get(SECRET_ENV) or secrets.token_hex(32)
 @app.errorhandler(InputRejected)
 def handle_input_rejected(err: InputRejected):
     return jsonify(error=err.reason), 400
+
 
 # ── Rate-limiter state ─────────────────────────────────────────────
 MAX_LOGIN_ATTEMPTS = 5          # failures before lockout
@@ -254,7 +254,7 @@ def _archive_db_snapshot():
     snapshot_data = {
         "timestamp": ts,
         "items": [{"id": r["id"], "name": r["name"], "status": r["status"],
-                    "notes": r["notes"], "position": r["position"]} for r in rows],
+                   "notes": r["notes"], "position": r["position"]} for r in rows],
     }
 
     archive_db.close()
@@ -315,7 +315,6 @@ def init_db():
 
     deleted_count = 0
     inserted_count = 0
-    updated_count = 0
 
     # Delete items no longer in config
     for name in list(existing_rows):
@@ -485,6 +484,7 @@ def _record_history(item_id: int, event_type: str, old_value: str, new_value: st
 
 
 STATUS_CYCLE = ["green", "degraded", "red"]
+
 
 def toggle_item(item_id: int) -> str:
     """Cycle: green → degraded → red → green (also persists to yaml)."""
