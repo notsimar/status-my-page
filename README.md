@@ -18,7 +18,7 @@
 
 ![Application Status Dashboard](screenshots/dashboard.png)
 
-A dark-themed, mobile-responsive dashboard showing all monitored services with colored status indicators (🟢 Operational, 🟡 Degraded, 🔴 Outage), per-service notes, and a summary pill at the top.
+A dark-themed, mobile-responsive dashboard showing monitored services with colored status indicators (🟢 Operational, 🟡 Degraded, 🔴 Outage), per-service notes, and a summary pill at the top.
 
 ---
 
