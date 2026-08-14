@@ -12,6 +12,7 @@
 - **Config-Driven**: `config.yaml` controls everything — service names, credentials, server settings
 - **Auto-Archival**: Pre-reset DB snapshots (JSON into `archives/`) saved on every restart so state survives seeding
 - **YAML Backup Rotation**: Last 5 versions of `config.yaml` preserved automatically before each runtime save
+- **Input Sanitization**: Every user-supplied field is validated through a dedicated filter layer — blocks XSS payloads, SQL injection patterns, path traversal, shell metacharacters, and fuzzing attacks
 
 ## 📸 Preview
 
@@ -335,17 +336,20 @@ cp config.yaml.bak1 config.yaml
 
 ## 🧪 Testing & Quality Assurance
 
-### Functional Testing
+### Functional testing
+- **Input Filter** (`tests/test_input_filter.py`): 80 assertions covering XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing (null bytes, control chars, oversized input), and safe-string passthrough for all validator functions.
+- **Structural Tests** (`tests/test_structural.py`): Per-route mutation logic — note persistence guards, empty/whitespace handling, reorder behaviour, and YAML runtime save conditions.
 - **API History** (`tests/test_history.py`): Comprehensive test suite with 10+ assertions verifying the status timeline, history recording (status toggles + notes), newest-first ordering, field presence, public accessibility, and proper cleanup of test artifacts.
 - **Health Check** (`tests/test_health.sh`): Quick shell-based smoke test that pings the root `/` endpoint and verifies an HTTP 200 response — ideal for CI pipelines or post-deploy validation.
 
 To run all tests:
 
 ```bash
-# Start the server first (see Installation above)
-./start.sh
+# Unit + structural (no server needed)
+.venv/bin/pytest tests/test_input_filter.py tests/test_structural.py tests/test_mc_dc.py -v
 
-# In a separate terminal, run the functional tests
+# Functional API tests (requires running server)
+./start.sh
 python3 tests/test_history.py
 bash tests/test_health.sh
 ```
@@ -377,6 +381,7 @@ The structural test suite uses fixture-based HTTP clients to simulate authentica
 ```
 status-my-page/
 ├── config.yaml              # Service names, admin creds, server cfg, runtime overrides
+├── input_filter.py          # Centralized input validation (XSS, SQLi, fuzzing sanitization)
 ├── app.py                   # Flask routes + SQLite DB logic (history, archival, auth)
 ├── cleanup.sh               # Archive manager: list / show / prune / report
 ├── requirements.txt         # flask, pyyaml only!
@@ -386,9 +391,12 @@ status-my-page/
 ├── templates/index.html     # Jinja2-rendered UI with login & history modals
 ├── start.sh / stop.sh / restart.sh / rebuild.sh / install.sh
 ├── tests/
-│   ├── test_history.py      # Automated API/DB history test suite (18 assertions)
-│   ├── test_mc_dc.py        # Structural coverage for critical guards
-│   └── test_health.sh       # Quick health-check script
+│   ├── conftest.py            # Shared fixtures (temp DB, admin auth, CSRF)
+│   ├── test_input_filter.py   # 80 assertions: XSS, SQLi, fuzzing, sanitization
+│   ├── test_structural.py     # Per-route mutation logic & YAML persistence
+│   ├── test_history.py        # Automated API/DB history test suite
+│   ├── test_mc_dc.py          # MC/DC structural coverage for critical guards
+│   └── test_health.sh         # Quick health-check script
 ├── License.md               # MIT © 2026 Simar Sahni
 └── .venv/                   # (excluded from git/deploy)
 ```
@@ -400,7 +408,9 @@ status-my-page/
 | **Authentication** | Flask signed sessions only — no plaintext cookie fallback |
 | **CSRF protection** | Per-request secret token, rotated on every successful mutation; 3-strike session wipe |
 | **Login rate-limit** | 5 failed attempts per IP → 30-second lockout |
-| **Password storage** | werkzeug `scrypt` hashing with timing-safe comparison |
+| **Mutation rate-limit** | 60 mutations per IP per 60-second window |
+| **Password storage** | werkzeug `scrypt` hashing with timing-safe HMAC comparison |
+| **Input sanitization** | Centralized `input_filter.py` layer — blocks XSS, SQLi, path traversal, shell injection, null bytes, and oversized payloads on every mutation route |
 | **Content Security Policy** | `default-src 'self'`; inline CSS via `'unsafe-inline'` on style-src only |
 | **Additional headers** | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, Permissions-Policy |
 
