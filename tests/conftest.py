@@ -73,7 +73,10 @@ def db_conn(A):
     """Open a raw sqlite3 connection to the current DB_PATH."""
     c = sqlite3.connect(str(A.DB_PATH))
     c.row_factory = sqlite3.Row
-    return c
+    try:
+        return c
+    finally:
+        pass
 
 
 @pytest.fixture()

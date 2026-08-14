@@ -495,8 +495,11 @@ def toggle_item(item_id: int) -> str:
     """Cycle: green → degraded → red → green (also persists to yaml)."""
     db = get_db()
     row = db.execute(
-        "SELECT id, status FROM status_items WHERE id=?", (item_id,)
+        "SELECT id, name, status FROM status_items WHERE id=?", (item_id,)
     ).fetchone()
+    if not row:
+        return "green"
+
     current = row["status"]
     next_idx = (STATUS_CYCLE.index(current) + 1) % len(STATUS_CYCLE)
     new_status = STATUS_CYCLE[next_idx]
@@ -509,20 +512,16 @@ def toggle_item(item_id: int) -> str:
     _record_history(item_id, "status", current, new_status)
 
     # Persist config-item status changes to yaml _runtime.status
-    row_name = db.execute(
-        "SELECT name FROM status_items WHERE id=?", (item_id,)
-    ).fetchone()
-    if row_name:
-        rt = _load_runtime()
-        items_list = cfg.get("items", [])  # current config items list
-        item_name = row_name["name"]
-        if item_name in items_list:
-            rt_status = rt.setdefault("status", {})
-            if new_status != "green":
-                rt_status[item_name] = new_status
-            else:
-                rt_status.pop(item_name, None)
-            _save_runtime(rt)
+    item_name = row["name"]
+    rt = _load_runtime()
+    items_list = cfg.get("items", [])  # current config items list
+    if item_name in items_list:
+        rt_status = rt.setdefault("status", {})
+        if new_status != "green":
+            rt_status[item_name] = new_status
+        else:
+            rt_status.pop(item_name, None)
+        _save_runtime(rt)
 
     db.commit()
     return new_status
@@ -762,18 +761,18 @@ def api_add():
     if row:
         return jsonify(error="Item already exists"), 409
     max_pos = db.execute("SELECT COALESCE(MAX(position), 0) FROM status_items").fetchone()[0]
-    db.execute(
+    cursor = db.execute(
         "INSERT INTO status_items (name, status, position) VALUES (?, 'green', ?)",
         (name, max_pos + 1),
     )
+    new_id = cursor.lastrowid
     db.commit()
     # Persist item names to _runtime.items so they survive restarts
     all_names = [r["name"] for r in db.execute("SELECT name FROM status_items ORDER BY position").fetchall()]
     rt = _load_runtime()
     rt["items"] = all_names
     _save_runtime(rt)
-    new_row = db.execute("SELECT * FROM status_items WHERE name = ?", [name]).fetchone()
-    return jsonify(item={"id": new_row["id"], "name": new_row["name"], "status": "green", "notes": "", "position": max_pos + 1})
+    return jsonify(item={"id": new_id, "name": name, "status": "green", "notes": "", "position": max_pos + 1})
 
 
 @app.route("/api/delete/<int:item_id>", methods=["POST"])

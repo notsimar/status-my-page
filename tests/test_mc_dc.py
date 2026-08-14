@@ -70,9 +70,10 @@ from pathlib import Path
 #     C1 = item_name not in seed_set    (F => item IS seeded, T => skipped)
 #     C2 = new_state in ('green', '')   (T => skip, F => proceed with restore)
 class Test_D1_RestoreStatus:
-    def _db(self, A):
-        c = sqlite3.connect(str(A.DB_PATH))
-        c.row_factory = sqlite3.Row; return c
+    def _query(self, A, sql, params=()):
+        with sqlite3.connect(str(A.DB_PATH)) as c:
+            c.row_factory = sqlite3.Row
+            return c.execute(sql, params).fetchone()
 
     def test_C1_False_C2_False__restores_degraded(self, A):
         """Baseline seeded + degraded -> enters block -> status restored (C1=F, C2=F)."""
@@ -81,8 +82,8 @@ class Test_D1_RestoreStatus:
 
         with A.app.test_request_context():
             A.init_db() 
-        st = self._db(A).execute("SELECT status FROM status_items WHERE name='SvcA'").fetchone()["status"]
-        assert st == "degraded"
+        row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
+        assert row is not None and row["status"] == "degraded"
 
     def test_C1_True__skipped(self, A):
         """GHOST_SVC not in seed -> continue (C1=T alone causes skip, C2=N)."""
@@ -91,7 +92,7 @@ class Test_D1_RestoreStatus:
 
         with A.app.test_request_context():
             A.init_db()
-        row = self._db(A).execute("SELECT id FROM status_items WHERE name='GHOST_SVC'").fetchone()
+        row = self._query(A, "SELECT id FROM status_items WHERE name='GHOST_SVC'")
         assert row is None
 
     def test_C2_True__skipped(self, A):
@@ -101,8 +102,8 @@ class Test_D1_RestoreStatus:
 
         with A.app.test_request_context():
             A.init_db() 
-        st = self._db(A).execute("SELECT status FROM status_items WHERE name='SvcA'").fetchone()["status"]
-        assert st == "green"
+        row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
+        assert row is not None and row["status"] == "green"
 
     def test_C2_True_empty_string__skipped(self, A):
         """new_state='' also triggers skip (subset of C2=T case for full MC/DC pair coverage)."""
@@ -111,18 +112,19 @@ class Test_D1_RestoreStatus:
 
         with A.app.test_request_context():
             A.init_db() 
-        st = self._db(A).execute("SELECT status FROM status_items WHERE name='SvcA'").fetchone()["status"]
+        row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
         # '' not in seed_set (it's the initial value set at C342) — should be skipped, staying as 'green'
-        assert st == "green"
+        assert row is not None and row["status"] == "green"
 
 # D2 (L355): if item_name not in seed_set or not note_text.strip(): continue
 #   MC/DC conditions — expressed from the *code* side so labels map 1:1 to source:
 #     C1 = item_name not in seed_set      (T => skip, F => proceed with restore)
 #     C2 = not note_text.strip()          (T => skip, F => proceed with restore)
 class Test_D2_NotesRestore:
-    def _db(self, A):
-        c = sqlite3.connect(str(A.DB_PATH))
-        c.row_factory = sqlite3.Row; return c
+    def _query(self, A, sql, params=()):
+        with sqlite3.connect(str(A.DB_PATH)) as c:
+            c.row_factory = sqlite3.Row
+            return c.execute(sql, params).fetchone()
 
     def test_C1_False_C2_False__restores_notes(self, A):
         """Baseline: item in seed + note has text -> enters block -> notes restored."""
@@ -131,8 +133,8 @@ class Test_D2_NotesRestore:
 
         with A.app.test_request_context():
             A.init_db()
-        nt = self._db(A).execute("SELECT notes FROM status_items WHERE name='SvcA'").fetchone()["notes"]
-        assert nt == "Maintenance planned"
+        row = self._query(A, "SELECT notes FROM status_items WHERE name='SvcA'")
+        assert row is not None and row["notes"] == "Maintenance planned"
 
     def test_C1_True__skipped(self, A):
         """GHOST_SVC not in seed -> continue (C1=T alone causes skip)."""
@@ -141,7 +143,7 @@ class Test_D2_NotesRestore:
 
         with A.app.test_request_context():
             A.init_db()
-        row = self._db(A).execute("SELECT id FROM status_items WHERE name='GHOST_SVC'").fetchone()
+        row = self._query(A, "SELECT id FROM status_items WHERE name='GHOST_SVC'")
         assert row is None
 
     def test_C2_True__skipped(self, A):
@@ -151,8 +153,8 @@ class Test_D2_NotesRestore:
 
         with A.app.test_request_context():
             A.init_db()
-        nt = self._db(A).execute("SELECT notes FROM status_items WHERE name='SvcA'").fetchone()["notes"]
-        assert nt == ""
+        row = self._query(A, "SELECT notes FROM status_items WHERE name='SvcA'")
+        assert row is not None and row["notes"] == ""
 
 # D3 (L680/690/752): if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip): abort(403)
 #   Guards checked on every protected endpoint: /api/toggle, /api/add, /api/delete, /api/reorder

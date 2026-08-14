@@ -177,7 +177,11 @@ class TestSanitizeText:
 
     def test_rejects_non_string(self):
         with pytest.raises(InputRejected, match="expected string"):
-            sanitize_text(42, field="int-test")
+            sanitize_text(123)
+
+    def test_rejects_shell_injection(self):
+        with pytest.raises(InputRejected, match="shell metacharacters"):
+            sanitize_text("service_$(whoami)")
 
     def test_escapes_html_entities(self):
         result = sanitize_text("<b>bold</b>", field="html-test")
@@ -212,12 +216,27 @@ class TestValidateName:
     def test_relaxed_allows_dots_slashes_parens(self):
         assert validate_name("v1.2/api", charset=NameChars.RELAXED) == "v1.2/api"
 
+    def test_strict_rejects_special_chars(self):
+        with pytest.raises(InputRejected, match="invalid characters"):
+            validate_name("API / Gateway", charset=NameChars.STRICT)
+
+    def test_strict_allows_alphanumeric_and_dash(self):
+        assert validate_name("Web-Server_01", charset=NameChars.STRICT) == "Web-Server_01"
+
+    def test_rejects_non_string(self):
+        with pytest.raises(InputRejected, match="expected string"):
+            validate_name(12345)  # type: ignore
+
 
 # ─── validate_notes ─────────────────────────────────────────────────
 
 class TestValidateNotes:
     def test_valid_notes(self):
         assert validate_notes("Service restored after 5 min") == "Service restored after 5 min"
+
+    def test_rejects_non_string(self):
+        with pytest.raises(InputRejected, match="expected string"):
+            validate_notes(12345)  # type: ignore
 
     def test_empty_after_strip_is_allowed(self):
         # Notes can be empty — clearing notes is valid
@@ -242,6 +261,10 @@ class TestValidateNotes:
 class TestValidateUserInput:
     def test_valid_username(self):
         assert validate_user_input("admin", "user") == "admin"
+
+    def test_rejects_non_string(self):
+        with pytest.raises(InputRejected, match="expected string"):
+            validate_user_input(12345, "user")  # type: ignore
 
     def test_over_length_rejected(self):
         with pytest.raises(InputRejected, match="max length"):

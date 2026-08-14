@@ -65,17 +65,39 @@ list && list.addEventListener('click', async e => {
 
 // ── Notes auto-save on blur (admin only), debounce 800ms ─────────
 var timers = {};
-document.querySelectorAll('textarea.notes-input').forEach(function(ta) {
-    ta.addEventListener('blur', async function() {
-        if (!document.body.classList.contains('admin')) return;
-        var id = ta.dataset.id;
-        if (timers[id]) clearTimeout(timers[id]);
-        timers[id] = setTimeout(async function() {
-            try { await csrfFetch('/api/notes/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
-        }, 800);
+if (list) {
+    // Delegated auto-grow on input
+    list.addEventListener('input', e => {
+        if (e.target.matches('textarea.notes-input')) {
+            e.target.style.height = 'auto';
+            e.target.style.height = e.target.scrollHeight + 'px';
+        }
     });
-    ta.addEventListener('input', function() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
-    ta.dispatchEvent(new Event('input'));
+
+    // Delegated auto-save on focusout (blur)
+    list.addEventListener('focusout', e => {
+        if (!document.body.classList.contains('admin')) return;
+        if (e.target.matches('textarea.notes-input')) {
+            const ta = e.target;
+            const id = ta.dataset.id;
+            if (timers[id]) clearTimeout(timers[id]);
+            timers[id] = setTimeout(async () => {
+                try {
+                    await csrfFetch('/api/notes/' + id, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ notes: ta.value })
+                    });
+                } catch (_) {}
+            }, 800);
+        }
+    });
+}
+
+// Initial height adjustment for existing textareas on load
+document.querySelectorAll('textarea.notes-input').forEach(ta => {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
 });
 
 // ── Delete item (admin only) ─────────────────────────────────────
@@ -132,18 +154,6 @@ if (addItemForm) {
                 <button class="btn-delete" title="Delete this item" data-id="${item.id}">✕</button>
             `;
             list.appendChild(row);
-
-            // Attach notes auto-save to the new textarea
-            const ta = row.querySelector('textarea.notes-input');
-            ta.addEventListener('blur', async function() {
-                if (!document.body.classList.contains('admin')) return;
-                const tid = ta.dataset.id;
-                if (timers[tid]) clearTimeout(timers[tid]);
-                timers[tid] = setTimeout(async function() {
-                    try { await csrfFetch('/api/notes/' + tid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: ta.value }) }); } catch (err) {}
-                }, 800);
-            });
-            ta.addEventListener('input', function() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
 
             input.value = '';
             updateBadge();
@@ -339,6 +349,7 @@ async function openHistory(itemId) {
                 labelSpan.className = 'history-label';
                 if (entry.event_type === 'status') {
                     labelSpan.textContent = entry.old_value + ' \u2192 ' + entry.new_value;
+                    details.appendChild(labelSpan);
                 } else {
                     labelSpan.textContent = 'Notes updated';
                     details.appendChild(labelSpan);
