@@ -84,8 +84,8 @@ mkdir -p "$INSTALL_DIR"/{instance,logs,archives}
 chmod 0700 "$INSTALL_DIR/archives"
 
 # Copy everything from current directory (where this script lives)
-cp -r app.py config.yaml requirements.txt templates/ static/ \
-      start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md \
+cp -r app.py input_filter.py config.yaml requirements.txt templates/ static/ \
+      tests/ docs/ start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md \
       "$INSTALL_DIR/"
 
 # Make scripts executable
@@ -132,9 +132,8 @@ PASS_HASH=$(echo "$ADMIN_PASS_INPUT" | "$VENV_DIR/bin/python3" -c "from werkzeug
 
 # Write new admin user into config.yaml — use env vars to avoid shell injection
 export _SP_INSTALL_USER="$ADMIN_USER"
+export INSTALL_DIR                                          # needed by the Python snippet below
 "$VENV_DIR/bin/python3" -c "import yaml,os; cfg=yaml.safe_load(open(os.environ['INSTALL_DIR']+'/config.yaml')); cfg['admin']['user']=os.environ['_SP_INSTALL_USER']; yaml.dump(cfg, open(os.environ['INSTALL_DIR']+'/config.yaml','w'), default_flow_style=False)"
-
-rm -f /tmp/_status_pass_hash.txt
 
 echo "Credentials set: user=$ADMIN_USER"
 
