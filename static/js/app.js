@@ -315,7 +315,7 @@ async function openHistory(itemId) {
         if (!res.ok) return;
         const data = await res.json();
 
-        historyTitle.textContent = escHtml(data.service) + ' — History';
+        historyTitle.textContent = data.service + ' — History';
         historyTimeline.innerHTML = '';
 
         if (data.entries.length === 0) {
@@ -338,7 +338,7 @@ async function openHistory(itemId) {
                 const labelSpan = document.createElement('span');
                 labelSpan.className = 'history-label';
                 if (entry.event_type === 'status') {
-                    labelSpan.textContent = escHtml(entry.old_value) + ' \u2192 ' + escHtml(entry.new_value);
+                    labelSpan.textContent = entry.old_value + ' \u2192 ' + entry.new_value;
                 } else {
                     labelSpan.textContent = 'Notes updated';
                     details.appendChild(labelSpan);

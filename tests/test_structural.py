@@ -254,7 +254,7 @@ class Test_D5_SetNotesGuard:
     """
 
     # ── C1 fails: item not found → YAML persist skipped ───────────────
-    def test_C1_row_missing__yaml_skipped(self, client, token, A):
+    def test_C1_row_missing__yaml_skipped(self, admin, token, A):
         """C1=False (item_id=999 not found) independently blocks YAML persistence.
 
         Even with valid CSRF and good note text ("Test note"), there is no DB row
@@ -264,7 +264,7 @@ class Test_D5_SetNotesGuard:
         DB UPDATE still runs (affects 0 rows) — that's correct behavior, just not
         what MC/DC is testing here. We verify YAML state, not side-effects of L555-559.
         """
-        r = client.post(
+        r = admin.post(
             "/api/notes/999",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
@@ -282,12 +282,12 @@ class Test_D5_SetNotesGuard:
             notes_rt.get("SvcA") != "This note has nowhere to go in YAML", \
             f"C1=False shouldn't persist notes to YAML. Runtime: {rt}"
 
-    def test_C1_negative_id__yaml_skipped(self, client, token, A):
+    def test_C1_negative_id__yaml_skipped(self, admin, token, A):
         """C1=False (negative/invalid id) also skips YAML persistence.
 
         Verifies the gate works for any non-matching ID value — no row means C1=False.
         """
-        client.post(
+        admin.post(
             "/api/notes/-1",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
@@ -300,7 +300,7 @@ class Test_D5_SetNotesGuard:
             f"No row for -1 → YAML skip. Runtime: {rt}"
 
     # ── C2 fails: empty/whitespace note → YAML persist skipped ────────
-    def test_C2_empty_text__yaml_skipped(self, client, token, A):
+    def test_C2_empty_text__yaml_skipped(self, admin, token, A):
         """C2=False (notes='') independently blocks YAML persist when row exists.
 
         With a valid item_id and empty note text, notes.strip() returns '' which is 
@@ -317,7 +317,7 @@ class Test_D5_SetNotesGuard:
         db_file.close()
         assert row is not None, "Fixture item SvcA must exist"
 
-        client.post(
+        admin.post(
             f"/api/notes/{row['id']}",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
@@ -329,7 +329,7 @@ class Test_D5_SetNotesGuard:
         assert notes_rt.get(row["name"]) != "", \
             f"C2=False should skip YAML persist. Runtime: {rt}"
 
-    def test_C2_whitespace_only__yaml_skipped(self, client, token, A):
+    def test_C2_whitespace_only__yaml_skipped(self, admin, token, A):
         """C2=False (notes='   \\n\\t  ') — whitespace stripped to empty.
 
         Stripping all whitespace yields '' → C2=False. Proves the gate rejects 
@@ -342,7 +342,7 @@ class Test_D5_SetNotesGuard:
         ).fetchone()
         db_file.close()
 
-        client.post(
+        admin.post(
             f"/api/notes/{row['id']}",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
@@ -354,7 +354,7 @@ class Test_D5_SetNotesGuard:
         assert notes_rt.get(row["name"]) != "   \n\t  ", \
             f"C2=False (whitespace) should skip YAML. Runtime: {rt}"
 
-    def test_C2_tab_chars_only__yaml_skipped(self, client, token, A):
+    def test_C2_tab_chars_only__yaml_skipped(self, admin, token, A):
         """C2=False (notes='\\t\\t\\t') — tab characters stripped to empty.
 
         Additional coverage: tabs alone treated as blank text → C2=False → YAML skip.
@@ -366,7 +366,7 @@ class Test_D5_SetNotesGuard:
         ).fetchone()
         db_file.close()
 
-        client.post(
+        admin.post(
             f"/api/notes/{row['id']}",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
@@ -378,7 +378,7 @@ class Test_D5_SetNotesGuard:
         assert notes_rt.get(row["name"]) != "\\t\\t\\t", \
             f"C2=False (tabs) should skip YAML. Runtime: {rt}"
 
-    def test_C1_True_C2_True__baseline_note_saved(self, client, token, A):
+    def test_C1_True_C2_True__baseline_note_saved(self, admin, token, A):
         """Baseline: valid row AND non-empty note → note persisted to YAML successfully.
 
         C1=T (valid item exists in DB) AND C2=T (note.strip() truthy) → gate at L547 
@@ -392,7 +392,7 @@ class Test_D5_SetNotesGuard:
         ).fetchone()
         db_file.close()
 
-        r = client.post(
+        r = admin.post(
             f"/api/notes/{row['id']}",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
@@ -407,7 +407,7 @@ class Test_D5_SetNotesGuard:
         assert notes_rt.get(row["name"]) == "Service is under maintenance", \
             f"Note should be persisted to _runtime.notes when C1=T and C2=T. Runtime: {rt}"
 
-    def test_C1_True_C2_False_with_existing_note__not_overwritten(self, client, token, A):
+    def test_C1_True_C2_False_with_existing_note__not_overwritten(self, admin, token, A):
         """C1=True, C2=F with an existing note — verifies the gate truly skips (idempotent).
 
         Sets a valid note first (baseline), then sends empty text. The YAML 
@@ -422,25 +422,32 @@ class Test_D5_SetNotesGuard:
         db_file.close()
 
         # Baseline: set a real note
-        client.post(
+        r1 = admin.post(
             f"/api/notes/{row['id']}",
             headers={"X-CSRF-Token": token},
             content_type="application/json",
             data='{"notes": "Initial valid note"}',
         )
+        assert r1.status_code == 200
 
         rt_before = A._load_runtime()
         initial_note = rt_before.get("notes", {}).get(row["name"])
         assert initial_note == "Initial valid note", \
             f"Baseline note not set. Runtime: {rt_before}"
 
+        # Get fresh CSRF token after rotation
+        tok_res = admin.get("/api/csrf-token")
+        assert tok_res.status_code == 200
+        token2 = tok_res.get_json()["token"]
+
         # Now try to overwrite with blank text (C1=T, C2=F)
-        client.post(
+        r2 = admin.post(
             f"/api/notes/{row['id']}",
-            headers={"X-CSRF-Token": token},
+            headers={"X-CSRF-Token": token2},
             content_type="application/json",
             data='{"notes": ""}',  # C2=False — block should skip YAML write
         )
+        assert r2.status_code == 200
 
         rt_after = A._load_runtime()
         final_note = rt_after.get("notes", {}).get(row["name"])

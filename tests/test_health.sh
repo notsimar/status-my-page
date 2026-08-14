@@ -120,18 +120,25 @@ curl --silent -c "$COOKIES" -X POST "${BASE_URL}/login" \
     --header 'Content-Type: application/json' \
     --data-raw "{\"user\":\"${HEALTH_USER}\",\"pass\":\"${HEALTH_PASS}\"}" > /dev/null 2>&1
 
+get_csrf() {
+    curl --silent -b "$COOKIES" "${BASE_URL}/api/csrf-token" 2>/dev/null | grep -oP '"token":\s*"\K[a-f0-9]+' || echo ""
+}
+
 FIRST_ID=$(echo "$BODY" | grep -oP 'data-id="\K[0-9]+' | head -1)
 
 if [[ -z "${FIRST_ID:-}" ]]; then
     fail_fail "Could not extract an item data-id from page HTML";
 else
-    S1=$(curl --silent -b "$COOKIES" -X POST \
+    TOK=$(get_csrf)
+    S1=$(curl --silent -b "$COOKIES" -H "X-CSRF-Token: $TOK" -X POST \
         "${BASE_URL}/api/toggle/${FIRST_ID}" 2>/dev/null | sed 's/.*"status": *"\([^"]*\)".*/\1/')
 
-    S2=$(curl --silent -b "$COOKIES" -X POST \
+    TOK=$(get_csrf)
+    S2=$(curl --silent -b "$COOKIES" -H "X-CSRF-Token: $TOK" -X POST \
         "${BASE_URL}/api/toggle/${FIRST_ID}" 2>/dev/null | sed 's/.*"status": *"\([^"]*\)".*/\1/')
 
-    S3=$(curl --silent -b "$COOKIES" -X POST \
+    TOK=$(get_csrf)
+    S3=$(curl --silent -b "$COOKIES" -H "X-CSRF-Token: $TOK" -X POST \
         "${BASE_URL}/api/toggle/${FIRST_ID}" 2>/dev/null | sed 's/.*"status": *"\([^"]*\)".*/\1/')
 
     if [[ "$S1" == "degraded" && "$S2" == "red" && "$S3" == "green" ]]; then
@@ -142,7 +149,8 @@ else
 fi
 
 # ───────────── H7. Notes API accepts admin input ───────────
-NOTES_RESP=$(curl --silent -b "$COOKIES" -X POST "${BASE_URL}/api/notes/${FIRST_ID}" \
+TOK=$(get_csrf)
+NOTES_RESP=$(curl --silent -b "$COOKIES" -H "X-CSRF-Token: $TOK" -X POST "${BASE_URL}/api/notes/${FIRST_ID}" \
     --header 'Content-Type: application/json' \
     --data-raw '{"notes":"health-check verification"}' 2>/dev/null) || NOTES_RESP=''
 

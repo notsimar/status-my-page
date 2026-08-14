@@ -19,27 +19,12 @@ import pytest
 
 
 @pytest.fixture()
-def restart_app():
+def restart_app(A):
     """Session-scoped fix from conftest is reused — we only need the app module."""
-    # Patch sys.path (idempotent) and import a *fresh* app.
-    if str(Path(__file__).resolve().parent.parent) not in sys.path:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-    from werkzeug.security import generate_password_hash
-    if "STATUS_ADMIN_PASS_HASH" not in os.environ or not os.environ["STATUS_ADMIN PASS_HASH"]:
-        os.environ["STATUS_ADMIN_PASS_HASH"] = generate_password_hash("testpass")
-    else:
-        # Ensure it's valid scrypt — the env might have a stale hash.
-        pass
-
-    import app as m
-
-    # Clear rate-limit / lock state so tests don't interfere.
-    m._failed_logins.clear()
-    m._mutation_rates.clear()
-    m._csrf_failures.clear()
-
-    yield m
+    A._failed_logins.clear()
+    A._mutation_rates.clear()
+    A._csrf_failures.clear()
+    yield A
 
 
 def test_add_item_survives_restart(restart_app):
@@ -109,9 +94,16 @@ def test_delete_runtime_item_doesnt_corrupt(restart_app):
     token = csrf_match.group(1)
 
     # Add then immediately remove
-    new_name = "TempDeleteMe"
-    client.post("/api/add", data=json.dumps({"name": new_name}),
-                content_type="application/json", headers={"X-CSRF-Token": token})
+    import time
+    new_name = f"TempDeleteMe_{int(time.time() * 1000)}"
+    add_res = client.post("/api/add", data=json.dumps({"name": new_name}),
+                          content_type="application/json", headers={"X-CSRF-Token": token})
+    assert add_res.status_code == 200
+
+    # Grab rotated CSRF token
+    tok_res = client.get("/api/csrf-token")
+    assert tok_res.status_code == 200
+    token = tok_res.get_json()["token"]
 
     # Grab item ID and delete
     db = sqlite3.connect(str(A.DB_PATH))

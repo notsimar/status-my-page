@@ -793,6 +793,19 @@ def api_delete(item_id):
     for i, r in enumerate(remaining):
         db.execute("UPDATE status_items SET position = ? WHERE id = ?", (i, r["id"]))
     db.commit()
+
+    # Update runtime config to prune deleted item
+    rt = _load_runtime()
+    if "items" in rt and name in rt["items"]:
+        rt["items"] = [n for n in rt["items"] if n != name]
+    if "status" in rt:
+        rt["status"].pop(name, None)
+    if "notes" in rt:
+        rt["notes"].pop(name, None)
+    if "history" in rt:
+        rt["history"].pop(name, None)
+    _save_runtime(rt)
+
     return jsonify(ok=True, name=name)
 
 

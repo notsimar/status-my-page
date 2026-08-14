@@ -47,6 +47,8 @@ import re
 import sys
 import time
 import urllib.request
+import urllib.error
+import urllib.parse
 from typing import Any, Optional
 
 
@@ -121,7 +123,9 @@ def get_csrf_from_page() -> str:
     """Extract CSRF token from the rendered page HTML."""
     _status, html_raw = request("GET", "/")
     if isinstance(html_raw, str):
-        match = re.search(r'window\.__CSRF__\s*=\s*["\x27]([a-f0-9]+)["\x27]', html_raw)
+        match = re.search(r'<meta\s+name=["\']csrf-token["\']\s+content=["\']([a-f0-9]+)["\']', html_raw)
+        if not match:
+            match = re.search(r'content=["\']([a-f0-9]+)["\']\s+name=["\']csrf-token["\']', html_raw)
         return match.group(1) if match else ""
     return ""
 
@@ -161,166 +165,172 @@ def check(condition: bool, label: str) -> None:
 # Main test flow
 # ════════════════════════════════════════════════════════════════════
 
-print("\n" + "=" * 58)
-print("  Status History Feature — Test Suite")
-print("=" * 58)
-print(f"Target: {BASE}\n")
+def main():
+    global _CSRF_TOKEN
+    print("\n" + "=" * 58)
+    print("  Status History Feature — Test Suite")
+    print("=" * 58)
+    print(f"Target: {BASE}\n")
 
 
-# ── T0: Server reachable ────────────────────────────────────────────
-status, _ = request("GET", "/")
-check(status == 200, "T0: Server responds with HTTP 200")
+    # ── T0: Server reachable ────────────────────────────────────────────
+    status, _ = request("GET", "/")
+    check(status == 200, "T0: Server responds with HTTP 200")
 
-# ── T1: Login ───────────────────────────────────────────────────────
-if not login("admin", "changeme"):
-    print("\n\u26a0 Cannot proceed — login failed.")
-    sys.exit(1)
-check(True, "T1: Admin login successful")
+    # ── T1: Login ───────────────────────────────────────────────────────
+    if not login("admin", "changeme"):
+        print("\n\u26a0 Cannot proceed — login failed.")
+        sys.exit(1)
+    check(True, "T1: Admin login successful")
 
-# Capture CSRF token
-_CSRF_TOKEN = get_csrf_from_page()
-check(bool(_CSRF_TOKEN), "T1b: CSRF token extracted from page")
+    # Capture CSRF token
+    _CSRF_TOKEN = get_csrf_from_page()
+    check(bool(_CSRF_TOKEN), "T1b: CSRF token extracted from page")
 
-# ── T2: Add a unique test service ───────────────────────────────────
-_status, _body = request("POST", "/api/add", {"name": ADDED_SERVICE})
-# Use the API return value directly — more reliable than re-parsing HTML
-item_id = None
-if isinstance(_body, dict) and "item" in _body:
-    item_id = _body["item"]["id"]
-check(item_id is not None, f"T2: Added test service '{ADDED_SERVICE}' (id={item_id})")
+    # ── T2: Add a unique test service ───────────────────────────────────
+    _status, _body = request("POST", "/api/add", {"name": ADDED_SERVICE})
+    # Use the API return value directly — more reliable than re-parsing HTML
+    item_id = None
+    if isinstance(_body, dict) and "item" in _body:
+        item_id = _body["item"]["id"]
+    check(item_id is not None, f"T2: Added test service '{ADDED_SERVICE}' (id={item_id})")
 
-if item_id is None:
-    print("\n\u26a0 Cannot proceed — service was not added.")
-    sys.exit(1)
+    if item_id is None:
+        print("\n\u26a0 Cannot proceed — service was not added.")
+        sys.exit(1)
 
-# ── T3: Initial history is empty ────────────────────────────────────
-status, data = request("GET", f"/api/history/{item_id}")
-check(status == 200, "T3a: History endpoint returns 200")
-is_dict = isinstance(data, dict)
-entries: list[dict[str, str]] = data.get("entries", []) if is_dict else []
-check(is_dict and data.get("service") == ADDED_SERVICE,
-      "T3b: Response contains correct service name")
-check(isinstance(entries, list) and len(entries) == 0,
-      "T3c: No history entries before any mutations")
+    # ── T3: Initial history is empty ────────────────────────────────────
+    status, data = request("GET", f"/api/history/{item_id}")
+    check(status == 200, "T3a: History endpoint returns 200")
+    is_dict = isinstance(data, dict)
+    entries: list[dict[str, str]] = data.get("entries", []) if is_dict else []
+    check(is_dict and data.get("service") == ADDED_SERVICE,
+          "T3b: Response contains correct service name")
+    check(isinstance(entries, list) and len(entries) == 0,
+          "T3c: No history entries before any mutations")
 
-# ── T4: Toggle status creates a record ─────────────────────────────
-time.sleep(0.15)
-request("POST", f"/api/toggle/{item_id}")  # green -> degraded
-status, data = request("GET", f"/api/history/{item_id}")
-entries = data.get("entries", []) if isinstance(data, dict) else []
+    # ── T4: Toggle status creates a record ─────────────────────────────
+    time.sleep(0.15)
+    request("POST", f"/api/toggle/{item_id}")  # green -> degraded
+    status, data = request("GET", f"/api/history/{item_id}")
+    entries = data.get("entries", []) if isinstance(data, dict) else []
 
-has_toggle = any(
-    e.get("event_type") == "status"
-    and e.get("old_value") == "green"
-    and e.get("new_value") == "degraded"
-    for e in entries
-)
-check(has_toggle, "T4: Toggle created status history record (green->degraded)")
+    has_toggle = any(
+        e.get("event_type") == "status"
+        and e.get("old_value") == "green"
+        and e.get("new_value") == "degraded"
+        for e in entries
+    )
+    check(has_toggle, "T4: Toggle created status history record (green->degraded)")
 
-# ── T5: Entry has all required fields + valid timestamp ────────────
-first_entry = next((e for e in entries if e.get("event_type") == "status"), None)
-if first_entry:
-    required = ["event_type", "old_value", "new_value", "occurred"]
-    all_present = all(k in first_entry for k in required)
-    check(all_present,
-          f"T5a: Entry has all required fields {required}")
+    # ── T5: Entry has all required fields + valid timestamp ────────────
+    first_entry = next((e for e in entries if e.get("event_type") == "status"), None)
+    if first_entry:
+        required = ["event_type", "old_value", "new_value", "occurred"]
+        all_present = all(k in first_entry for k in required)
+        check(all_present,
+              f"T5a: Entry has all required fields {required}")
 
-    raw_ts = first_entry.get("occurred", "")
+        raw_ts = first_entry.get("occurred", "")
+        try:
+            parsed_dt = dt.datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            check(parsed_dt.year >= 2024, f"T5b: Valid ISO-8601 timestamp ({raw_ts})")
+        except (ValueError, TypeError):
+            check(False, f"T5b: Invalid timestamp format '{raw_ts}'")
+
+    # ── T6: Notes update creates a record ───────────────────────────────
+    time.sleep(0.15)
+    test_note = "High latency reported, investigating"
+    request("POST", f"/api/notes/{item_id}", {"notes": test_note})
+    status, data = request("GET", f"/api/history/{item_id}")
+    entries = data.get("entries", []) if isinstance(data, dict) else []
+
+    has_notes_entry = any(
+        e.get("event_type") == "notes"
+        and e.get("new_value") == test_note
+        for e in entries
+    )
+    check(has_notes_entry, "T6: Notes update created history record")
+
+    # ── T7: Entries ordered newest-first ────────────────────────────────
+    if len(entries) >= 2:
+        ts_newer = dt.datetime.fromisoformat(entries[0]["occurred"].replace("Z", "+00:00"))
+        ts_older = dt.datetime.fromisoformat(entries[1]["occurred"].replace("Z", "+00:00"))
+        check(ts_newer >= ts_older, "T7: Entries returned newest-first (DESC order)")
+
+    # ── T8: Multiple toggles all recorded with correct transitions ───────
+    time.sleep(0.15)
+    request("POST", f"/api/toggle/{item_id}")  # degraded -> red
+    request("POST", f"/api/toggle/{item_id}")  # red -> green
+    status, data = request("GET", f"/api/history/{item_id}")
+    entries = data.get("entries", []) if isinstance(data, dict) else []
+
+    status_entries = [e for e in entries if e.get("event_type") == "status"]
+    check(len(status_entries) == 3,
+          f"T8a: All 3 toggles recorded (got {len(status_entries)})")
+
+    transitions = set(
+        (e["old_value"], e["new_value"]) for e in status_entries
+    )
+    expected = {("green", "degraded"), ("degraded", "red"), ("red", "green")}
+    check(transitions == expected,
+          f"T8b: Correct state transitions captured")
+
+    # ── T9: Non-existent item returns 404 ───────────────────────────────
+    status, _ = request("GET", "/api/history/99999")
+    check(status == 404, "T9: Non-existent item_id returns 404")
+
+    # ── T10: Notes history stores distinct old/new values ───────────────
+    notes_entries = [e for e in entries if e.get("event_type") == "notes"]
+    if notes_entries:
+        ne = notes_entries[0]
+        check(ne["old_value"] != ne["new_value"],
+              "T10: Notes history records distinct old vs new values")
+
+    # ── T11: History endpoint is public (no auth required) ─────────────
+    fresh_cj = http.cookiejar.CookieJar()
+    fresh_opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(fresh_cj)
+    )
+
+    furl = BASE + f"/api/history/{item_id}"
+    req2 = urllib.request.Request(furl, method="GET")
     try:
-        parsed_dt = dt.datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
-        check(parsed_dt.year >= 2024, f"T5b: Valid ISO-8601 timestamp ({raw_ts})")
-    except (ValueError, TypeError):
-        check(False, f"T5b: Invalid timestamp format '{raw_ts}'")
+        with fresh_opener.open(req2, timeout=10) as resp2:
+            fstatus = resp2.status
+            fraw = resp2.read().decode()
+            fdata = json.loads(fraw) if "json" in resp2.headers.get("Content-Type", "") else {}
+    except urllib.error.HTTPError as e:
+        fstatus = e.code
+        fraw = e.read().decode()
+        try:
+            fdata = json.loads(fraw)
+        except Exception:
+            fdata = {}
 
-# ── T6: Notes update creates a record ───────────────────────────────
-time.sleep(0.15)
-test_note = "High latency reported, investigating"
-request("POST", f"/api/notes/{item_id}", {"notes": test_note})
-status, data = request("GET", f"/api/history/{item_id}")
-entries = data.get("entries", []) if isinstance(data, dict) else []
-
-has_notes_entry = any(
-    e.get("event_type") == "notes"
-    and e.get("new_value") == test_note
-    for e in entries
-)
-check(has_notes_entry, "T6: Notes update created history record")
-
-# ── T7: Entries ordered newest-first ────────────────────────────────
-if len(entries) >= 2:
-    ts_newer = dt.datetime.fromisoformat(entries[0]["occurred"].replace("Z", "+00:00"))
-    ts_older = dt.datetime.fromisoformat(entries[1]["occurred"].replace("Z", "+00:00"))
-    check(ts_newer >= ts_older, "T7: Entries returned newest-first (DESC order)")
-
-# ── T8: Multiple toggles all recorded with correct transitions ───────
-time.sleep(0.15)
-request("POST", f"/api/toggle/{item_id}")  # degraded -> red
-request("POST", f"/api/toggle/{item_id}")  # red -> green
-status, data = request("GET", f"/api/history/{item_id}")
-entries = data.get("entries", []) if isinstance(data, dict) else []
-
-status_entries = [e for e in entries if e.get("event_type") == "status"]
-check(len(status_entries) == 3,
-      f"T8a: All 3 toggles recorded (got {len(status_entries)})")
-
-transitions = set(
-    (e["old_value"], e["new_value"]) for e in status_entries
-)
-expected = {("green", "degraded"), ("degraded", "red"), ("red", "green")}
-check(transitions == expected,
-      f"T8b: Correct state transitions captured")
-
-# ── T9: Non-existent item returns 404 ───────────────────────────────
-status, _ = request("GET", "/api/history/99999")
-check(status == 404, "T9: Non-existent item_id returns 404")
-
-# ── T10: Notes history stores distinct old/new values ───────────────
-notes_entries = [e for e in entries if e.get("event_type") == "notes"]
-if notes_entries:
-    ne = notes_entries[0]
-    check(ne["old_value"] != ne["new_value"],
-          "T10: Notes history records distinct old vs new values")
-
-# ── T11: History endpoint is public (no auth required) ─────────────
-fresh_cj = http.cookiejar.CookieJar()
-fresh_opener = urllib.request.build_opener(
-    urllib.request.HTTPCookieProcessor(fresh_cj)
-)
-
-furl = BASE + f"/api/history/{item_id}"
-req2 = urllib.request.Request(furl, method="GET")
-try:
-    with fresh_opener.open(req2, timeout=10) as resp2:
-        fstatus = resp2.status
-        fraw = resp2.read().decode()
-        fdata = json.loads(fraw) if "json" in resp2.headers.get("Content-Type", "") else {}
-except urllib.error.HTTPError as e:
-    fstatus = e.code
-    fraw = e.read().decode()
-    try:
-        fdata = json.loads(fraw)
-    except Exception:
-        fdata = {}
-
-fentries = fdata.get("entries", []) if isinstance(fdata, dict) else []
-check(fstatus == 200 and len(fentries) > 0,
-      "T11: History accessible without admin auth (public read)")
+    fentries = fdata.get("entries", []) if isinstance(fdata, dict) else []
+    check(fstatus == 200 and len(fentries) > 0,
+          "T11: History accessible without admin auth (public read)")
 
 
-# ── Cleanup ─────────────────────────────────────────────────────────
-print("\n--- Cleanup ---")
-request("POST", f"/api/delete/{item_id}")
-remaining_id = get_id_by_name(ADDED_SERVICE)
-check(remaining_id is None, "Cleanup: Test service removed successfully")
+    # ── Cleanup ─────────────────────────────────────────────────────────
+    print("\n--- Cleanup ---")
+    request("POST", f"/api/delete/{item_id}")
+    remaining_id = get_id_by_name(ADDED_SERVICE)
+    check(remaining_id is None, "Cleanup: Test service removed successfully")
 
 
-# ════════ Summary ════════
-total = passed + failed
-print(f"\n{'=' * 58}")
-if failed:
-    print(f"Results: {passed}/{total} passed, {failed} FAILED \u274c")
-else:
-    print(f"Results: {passed}/{total} passed \u2705 ALL PASSED")
-print(f"{'=' * 58}\n")
+    # ════════ Summary ════════
+    total = passed + failed
+    print(f"\n{'=' * 58}")
+    if failed:
+        print(f"Results: {passed}/{total} passed, {failed} FAILED \u274c")
+    else:
+        print(f"Results: {passed}/{total} passed \u2705 ALL PASSED")
+    print(f"{'=' * 58}\n")
 
-sys.exit(1 if failed else 0)
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
