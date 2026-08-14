@@ -14,11 +14,6 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 echo "Starting…"
-# Archive current DB state BEFORE init_db() resets everything, then prune old snapshots
-if [ -f instance/status.db ]; then
-    .venv/bin/python3 archiver.py 2>/dev/null || true
-    bash cleanup.sh prune >/dev/null 2>&1 || true
-fi
 
 # Load env vars from project-local .env (set by install.sh), not a hardcoded system path.
 if [ -f .env ]; then
