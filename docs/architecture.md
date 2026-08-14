@@ -16,56 +16,56 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Client Browser                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │   HTML UI    │  │ Vanilla JS   │  │ EventSource  │  │
-│  │ (Jinja2      │  │ (app.js)     │  │ (SSE push)   │  │
-│  │  templates)  │  │ DOM-manip    │  │ /events      │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                    Client Browser                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │   HTML UI    │  │ Vanilla JS   │  │ EventSource  │   │
+│  │ (Jinja2      │  │ (app.js)     │  │ (SSE push)   │   │
+│  │  templates)  │  │ DOM-manip    │  │ /events      │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘   │
 └─────────────────────────┬───────────────────────────────┘
                           │ HTTP / WebSocket over TCP
                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Flask Application Server                │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              URL Router (Flask)                   │   │
-│  │  GET    /        → render index.html             │   │
-│  │  GET    /events    → SSE broadcast stream         │   │
-│  │  POST   /login     → session auth                 │   │
-│  │  GET/POST /api/*   → CRUD operations              │   │
-│  └──────────┬───────────────────────────────────────┘   │
-│             │                                            │
-│  ┌──────────▼───────────────────────────────────────┐   │
-│  │           Request Validation Layer                │   │
-│  │  • CSRF token verification                        │   │
-│  │  • Authentication check (_not_admin)              │   │
+┌───────────────────────────────────────────────────────────┐
+│                  Flask Application Server                 │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │              URL Router (Flask)                    │   │
+│  │  GET    /        → render index.html               │   │
+│  │  GET    /events    → SSE broadcast stream (beta)   │   │
+│  │  POST   /login     → session auth                  │   │
+│  │  GET/POST /api/*   → CRUD operations               │   │
+│  └──────────┬─────────────────────────────────────────┘   │
+│             │                                             │
+│  ┌──────────▼─────────────────────────────────────────┐   │
+│  │           Request Validation Layer                 │   │
+│  │  • CSRF token verification                         │   │
+│  │  • Authentication check (_not_admin)               │   │
 │  │  • Rate-limiting (_check_mutation_rate)            │   │
-│  └──────────┬───────────────────────────────────────┘   │
-│             │                                            │
-│  ┌──────────▼───────────────────────────────────────┐   │
-│  │           Business Logic Layer                    │   │
-│  │  • toggle_item()          → cycles status         │   │
-│  │  • rename_item()          → updates name          │   │
-│  │  • delete_item()          → removes + compacts    │   │
+│  └──────────┬─────────────────────────────────────────┘   │
+│             │                                             │
+│  ┌──────────▼─────────────────────────────────────────┐   │
+│  │           Business Logic Layer                     │   │
+│  │  • toggle_item()          → cycles status          │   │
+│  │  • rename_item()          → updates name           │   │
+│  │  • delete_item()          → removes + compacts     │   │
 │  │  • set_notes()            → writes notes + YAML    │   │
 │  │  • reorder_items()        → applies position map   │   │
 │  │  • _record_mutation()     → inserts history row    │   │
-│  └──────────┬───────────────────────────────────────┘   │
-│             │                                            │
-│  ┌──────────▼───────────────────────────────────────┐   │
+│  └──────────┬─────────────────────────────────────────┘   │
+│             │                                             │
+│  ┌──────────▼─────────────────────────────────────────┐   │
 │  │           Persistence Layer                        │   │
-│  │  • SQLite (WAL mode, status.db)                   │   │
+│  │  • SQLite (WAL mode, status.db)                    │   │
 │  │  • YAML config.yaml (_runtime section)             │   │
 │  │  • archives/ JSON snapshots                        │   │
-│  └──────────┬───────────────────────────────────────┘   │
-│             │                                            │
-│  ┌──────────▼───────────────────────────────────────┐   │
-│  │           Event Broadcasting Layer                 │   │
-│  │  • _sse_subscribers (thread-safe list)            │   │
-│  │  • broadcast_reload() → flushes SSE events      │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+│  └──────────┬─────────────────────────────────────────┘   │
+│             │                                             │
+│  ┌──────────▼───────────────────────────────────────┐     │
+│  │           Event Broadcasting Layer (experimental)│     │
+│  │  • _sse_subscribers (thread-safe list)           │     │
+│  │  • broadcast_reload() → flushes SSE events       │     │
+│  └──────────────────────────────────────────────────┘     │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ### 1.2 Tier Breakdown
@@ -226,20 +226,20 @@ Each mutation endpoint (`/api/toggle/*`, `/api/rename/*`, `/api/delete/*`, `/api
 ```
 Incoming POST /api/mutation/*
         │
-  ┌─────▼──────────┐   False  ┌──────────────┐
+  ┌─────▼──────────┐   False  ┌──────────────────┐
   │ _not_admin()   ├─────────>│ 401 Unauthorized │  (Response)
-  │  Auth?         │             └──────────────┘
+  │  Auth?         │          └──────────────────┘
   └──────┬─────────┘
          │ True
-  ┌──────▼──────────┐   Mismatch  ┌──────────────┐
-  │ _check_csrf()   ├───────────>│ 403 Forbidden   │  (+ strike++ )
-  │ Token match?    │              └──────────────┘
+  ┌──────▼──────────┐   Mismatch ┌───────────────┐
+  │ _check_csrf()   ├───────────>│ 403 Forbidden │  (+ strike++ )
+  │ Token match?    │            └───────────────┘
   └──────┬──────────┘
          │ Match
-  ┌──────▼──────────────────────┐ True (rate exceeded)  ┌────────────┐
-  │ _check_mutation_rate(ip)?   ├─────────────────────>│ 429 Too Many│
-  │ Within rate limit?          │                      │  Requests   │
-  └──────┬──────────────────────┘                      └────────────┘
+  ┌──────▼──────────────────────┐ True (rate exceeded)  ┌─────────────┐
+  │ _check_mutation_rate(ip)?   ├─────────────────────> │ 429 Too Many│
+  │ Within rate limit?          │                       │  Requests   │
+  └──────┬──────────────────────┘                       └─────────────┘
          │ Pass
   ┌──────▼──────────────────────┐
   │ Execute Domain Function     │
