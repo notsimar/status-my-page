@@ -62,10 +62,15 @@ python3 -c "from werkzeug.security import generate_password_hash; print(generate
 
 ```yaml
 items:
+  - Primary Internet
+  - Secondary Internet
+  - Router
+  - Primary NAS
+  - Secondary NAS
+  - DNS
+  - Core Switch
+  - Google workspace
   - Slack
-  - Glean
-  - Azure
-  - ServiceNow
   # ... add all the services you want to monitor
 
 admin:
@@ -262,9 +267,15 @@ Every mutation (status toggle, notes update) is recorded in a `status_history` S
 
 ```yaml
 items:
-  - Slack           # ← add your services here
-  - Glean
-  - Azure
+  - Primary Internet      # ← add your services here
+  - Secondary Internet
+  - Router
+  - Primary NAS
+  - Secondary NAS
+  - DNS
+  - Core Switch
+  - Google workspace
+  - Slack
   # Every restart, the DB is synced to this list
 
 admin:
