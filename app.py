@@ -284,8 +284,13 @@ def init_db():
     db = sqlite3.connect(str(DB_PATH))
     db.row_factory = sqlite3.Row
 
-    # Use config-driven item names for seeding
-    seed_items = [n.strip() for n in ITEM_NAMES if n.strip()] or [
+    # Use config-driven item names for seeding, merged with runtime-persisted list.
+    rt = _load_runtime()
+    runtime_items: list[str] = rt.get("items", [])
+    seed_items = list(dict.fromkeys(
+        [n.strip() for n in ITEM_NAMES if n.strip()] +
+        [n.strip() for n in runtime_items if n.strip()]
+    )) or [
         "Web Server", "Database", "API Gateway", "CDN", "Auth Service",
         "Payment Processing", "Email Service", "Storage", "Cache Layer",
         "Message Queue", "Search Engine", "ML Pipeline", "Monitoring",
@@ -762,6 +767,11 @@ def api_add():
         (name, max_pos + 1),
     )
     db.commit()
+    # Persist item names to _runtime.items so they survive restarts
+    all_names = [r["name"] for r in db.execute("SELECT name FROM status_items ORDER BY position").fetchall()]
+    rt = _load_runtime()
+    rt["items"] = all_names
+    _save_runtime(rt)
     new_row = db.execute("SELECT * FROM status_items WHERE name = ?", [name]).fetchone()
     return jsonify(item={"id": new_row["id"], "name": new_row["name"], "status": "green", "notes": "", "position": max_pos + 1})
 
