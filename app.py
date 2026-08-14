@@ -20,7 +20,11 @@ from flask import (
     Flask, g, render_template, request, jsonify, session, abort
 )
 from werkzeug.security import generate_password_hash, check_password_hash
-
+from input_filter import (
+    InputRejected, validate_name, validate_notes,
+    validate_user_input, validate_json_data, sanitize_text,
+    validate_int_param,
+)
 
 # ── Paths ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
@@ -130,6 +134,12 @@ def _save_runtime(data):
 # ── App factory ────────────────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.environ.get(SECRET_ENV) or secrets.token_hex(32)
+
+
+# ── Global error handler for input validation failures ────────────
+@app.errorhandler(InputRejected)
+def handle_input_rejected(err: InputRejected):
+    return jsonify(error=err.reason), 400
 
 # ── Rate-limiter state ─────────────────────────────────────────────
 MAX_LOGIN_ATTEMPTS = 5          # failures before lockout
@@ -639,9 +649,9 @@ def login():
     if _is_locked(ip):
         return jsonify(ok=False, error="Too many attempts. Wait 30s."), 429
 
-    data = request.get_json(silent=True) or {}
-    user_supplied = data.get("user", "")
-    pass_supplied = data.get("pass", "")
+    data = validate_json_data(request.get_json(silent=True))
+    user_supplied = validate_user_input(data.get("user", ""), "user")
+    pass_supplied = validate_user_input(data.get("pass", ""), "pass")
 
     # Timing-safe: hash both username and password-hash-result together to prevent user enumeration.
     # Use fixed-length hex string 'true' (4 chars) for the boolean to avoid length-based leaks.
@@ -687,10 +697,8 @@ def api_rename(item_id):
     ip = request.remote_addr or ""
     if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
-    data = request.get_json(silent=True) or {}
-    name = data.get("name", "").strip()
-    if not name:
-        return jsonify(error="Name required"), 400
+    data = validate_json_data(request.get_json(silent=True))
+    name = validate_name(data.get("name", ""), "name")
     update_item_name(item_id, name)
     return jsonify(ok=True)
 
@@ -700,8 +708,8 @@ def api_notes(item_id):
     ip = request.remote_addr or ""
     if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
-    data = request.get_json(silent=True) or {}
-    notes = data.get("notes", "").strip()
+    data = validate_json_data(request.get_json(silent=True))
+    notes = validate_notes(data.get("notes", ""), "notes")
     set_notes(item_id, notes)
     return jsonify(ok=True)
 
@@ -742,10 +750,8 @@ def api_add():
     ip = request.remote_addr or ""
     if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
-    data = request.get_json(silent=True) or {}
-    name = data.get("name", "").strip()
-    if not name:
-        return jsonify(error="Name required"), 400
+    data = validate_json_data(request.get_json(silent=True))
+    name = validate_name(data.get("name", ""), "name")
     db = get_db()
     row = db.execute("SELECT id FROM status_items WHERE name = ?", [name]).fetchone()
     if row:
@@ -785,9 +791,11 @@ def api_reorder():
     ip = request.remote_addr or ""
     if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
-    data = request.get_json(silent=True) or {}
+    data = validate_json_data(request.get_json(silent=True))
     raw_order = data.get("order", {})
-    order_map = {int(k): int(v) for k, v in raw_order.items()}
+    if not isinstance(raw_order, dict):
+        raise InputRejected("order must be an object", "order")
+    order_map = {validate_int_param(k, "key"): validate_int_param(v, "value") for k, v in raw_order.items()}
     reorder_items(order_map)
     return jsonify(ok=True)
 
