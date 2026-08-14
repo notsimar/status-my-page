@@ -20,8 +20,8 @@ Test matrix (T0–T11 + Cleanup):
   │ T6  │ Notes update records (event_type=notes) entry    │
   │ T7  │ Entries returned newest-first (DESC by occurred) │
   │ T8  │ Multiple toggles each produce unique transitions │
-  │     │   (green→degraded, degraded→red, red→green)      │
-  │ T9  │ Non-existent item_id → HTTP 404                  │
+  │     │   (green-degraded, degraded-red, red-green)      │
+  │ T9  │ Non-existent item_id - HTTP 404                  │
   │ T10 │ Old vs new notes values differ in history       │
   │ T11 │ History endpoint works without authentication    │
   │ ──  ├───────────────────────────────────────────────────┤
@@ -52,16 +52,16 @@ from typing import Any, Optional
 
 BASE: str = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8920"
 HOST: str = BASE.replace("http://", "").split("/")[0].split(":")[0] or "localhost"
-PORT: int = int(BASE.split(":")[2].split("/")[0]) if ":" in BASE.split("//")[1] and not BASE.split(":")[2].startswith("/") else 8920
-# Simpler host/port extraction
-host_port = BASE.replace("http://", "").rstrip("/")
-if ":" in host_port:
-    parts = host_port.rsplit(":", 1)
-    HOST = parts[0]
-    PORT = int(parts[1])
-else:
-    HOST = host_port if host_port else "localhost"
+# Simple safe URL parsing - fall back to defaults if not a valid URL
+import urllib.parse
+try:
+    parsed = urllib.parse.urlparse(BASE)
+    HOST = parsed.hostname or "localhost"
+    PORT = parsed.port or 8920
+except Exception:
+    HOST = "localhost"
     PORT = 8920
+
 
 ADDED_SERVICE = "TestHistorySvc_" + str(int(time.time()))
 _CSRF_TOKEN: str = ""
