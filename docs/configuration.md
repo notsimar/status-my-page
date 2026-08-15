@@ -85,10 +85,11 @@ features:
 
 #### `healthchecks` (optional)
 - **Type:** Dictionary keyed by service name
-- **Purpose:** Automated background health checking via HTTP (`curl`) or ICMP (`ping`).
+- **Purpose:** Automated background health checking via HTTP (`curl`), ICMP (`ping`), or SOAP endpoints.
 - **Supported types:**
   - `curl` (default): Performs an HTTP/HTTPS GET request using `curl`.
   - `ping` / `icmp`: Performs ICMP ping check using `ping -c 1`.
+  - `soap`: POSTs a SOAP XML payload via `curl` and optionally validates the response body against an expected string.
 
 **Example:**
 ```yaml
@@ -106,7 +107,25 @@ healthchecks:
     interval: 15
     timeout: 2
     retries: 2
+  Legacy API:
+    type: soap
+    url: https://api.example.com/webservice.asmx
+    soap_action: "http://tempuri.org/GetStatus"
+    body: "<ns:GetStatus xmlns:ns='http://tempuri.org/'/>"
+    expected_string: "<return>OK</return>"
+    healthy_codes: [200]
+    interval: 60
+    timeout: 15
+    retries: 3
 ```
+
+**SOAP options:**
+| Key | Description | Default |
+|---|---|---|
+| `url` | REQUIRED; the SOAP endpoint URL (http/https only) | — |
+| `soap_action` | The `SOAPAction` header value | *(optional)* |
+| `body` | Custom XML payload to POST | Minimal SOAP envelope with empty `<Body/>` |
+| `expected_string` | String that must appear in the response body for healthy status | *(none — 200 is enough)* |
 
 ---
 

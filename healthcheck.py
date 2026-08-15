@@ -95,6 +95,15 @@ def _safe_url(url: str) -> bool:
         return False
 
 
+DEFAULT_SOAP_ENVELOPE = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+    'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+    'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+    '<soap:Body/></soap:Envelope>'
+)
+
+
 def _parse_healthchecks() -> dict[str, dict]:
     """Reload healthchecks from config.yaml on every call so edits take effect."""
     try:
@@ -122,10 +131,15 @@ def _parse_healthchecks() -> dict[str, dict]:
         check_type = str(details.get("type", "")).strip().lower()
         url = details.get("url")
         host = details.get("host")
+        soap_action = details.get("soap_action", details.get("action", ""))
+        soap_body = details.get("body", details.get("envelope", ""))
+        expected_string = details.get("expected_string", details.get("expected", ""))
 
         # Auto-detect check_type if not explicitly set
         if not check_type:
-            if host:
+            if soap_action or soap_body:
+                check_type = "soap"
+            elif host:
                 check_type = "ping"
             elif url:
                 check_type = "curl"
@@ -161,7 +175,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                 "timeout": max(timeout_val, 1),
                 "retries": max(retries, 1),
             }
-        elif check_type == "curl":
+        elif check_type in ("curl", "soap"):
             if not url or not isinstance(url, str) or not url.strip():
                 continue
             if not _safe_url(url.strip()):
@@ -177,14 +191,27 @@ def _parse_healthchecks() -> dict[str, dict]:
             if not codes:
                 codes = {200}
 
-            healthchecks[name.strip()] = {
-                "type": "curl",
-                "url": url.strip(),
-                "interval": max(interval, 1),
-                "timeout": max(timeout_val, 1),
-                "retries": max(retries, 1),
-                "healthy_codes": codes,
-            }
+            if check_type == "soap":
+                healthchecks[name.strip()] = {
+                    "type": "soap",
+                    "url": url.strip(),
+                    "soap_action": str(soap_action).strip() if soap_action else "",
+                    "body": str(soap_body) if soap_body else "",
+                    "expected_string": str(expected_string).strip() if expected_string else "",
+                    "interval": max(interval, 1),
+                    "timeout": max(timeout_val, 1),
+                    "retries": max(retries, 1),
+                    "healthy_codes": codes,
+                }
+            else:
+                healthchecks[name.strip()] = {
+                    "type": "curl",
+                    "url": url.strip(),
+                    "interval": max(interval, 1),
+                    "timeout": max(timeout_val, 1),
+                    "retries": max(retries, 1),
+                    "healthy_codes": codes,
+                }
 
     return healthchecks
 
@@ -201,6 +228,73 @@ def _run_ping_check(host: str, timeout: int) -> bool:
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
+
+
+def _run_soap_check(
+    url: str,
+    timeout: int,
+    soap_action: str = "",
+    body: str = "",
+    healthy_codes: set[int] | None = None,
+    expected_string: str = "",
+) -> tuple[bool, int | None]:
+    """Run a SOAP POST request via curl and return (is_healthy, status_code)."""
+    if healthy_codes is None:
+        healthy_codes = {200}
+
+    payload = body.strip() if (body and isinstance(body, str) and body.strip()) else DEFAULT_SOAP_ENVELOPE
+
+    cmd = [
+        "curl", "-s", "-w", "\n%{http_code}",
+        "-X", "POST",
+        "-H", "Content-Type: text/xml; charset=utf-8",
+    ]
+    if soap_action and isinstance(soap_action, str) and soap_action.strip():
+        clean_action = re.sub(r'[\r\n]', '', soap_action.strip())
+        cmd.extend(["-H", f"SOAPAction: {clean_action}"])
+
+    cmd.extend([
+        "-d", "@-",
+        "--proto-default", "http",
+        "--proto-redir", "-all,http,https",
+        "--max-time", str(timeout),
+        "--max-redirs", str(CURL_MAX_REDIRS),
+        "-L", "--", url
+    ])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout + 5, CURL_MAX_REDIRS * 2 + 5),
+        )
+        stdout = result.stdout
+        if not stdout or "\n" not in stdout:
+            return False, None
+
+        parts = stdout.rsplit("\n", 1)
+        resp_body = parts[0]
+        code_str = parts[1].strip()
+
+        if not code_str.isdigit():
+            return False, None
+
+        code = int(code_str)
+        if code == 0 or code > 599:
+            return False, None
+
+        if code not in healthy_codes:
+            return False, code
+
+        if expected_string and isinstance(expected_string, str) and expected_string.strip():
+            if expected_string.strip() not in resp_body:
+                return False, code
+
+        return True, code
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False, None
 
 
 def _run_curl_check(url: str, timeout: int) -> int | None:
@@ -322,6 +416,15 @@ def _healthcheck_worker():
             if hc.get("type") == "ping":
                 is_healthy = _run_ping_check(hc["host"], hc["timeout"])
                 check_info = f"ping {hc['host']}"
+            elif hc.get("type") == "soap":
+                is_healthy, code = _run_soap_check(
+                    url=hc["url"], timeout=hc["timeout"],
+                    soap_action=hc.get("soap_action", ""),
+                    body=hc.get("body", ""),
+                    healthy_codes=hc.get("healthy_codes"),
+                    expected_string=hc.get("expected_string", ""),
+                )
+                check_info = f"soap code={code}"
             else:
                 code = _run_curl_check(hc["url"], hc["timeout"])
                 is_healthy = (code is not None and code in hc.get("healthy_codes", {200}))
@@ -369,6 +472,15 @@ def run_healthchecks_once() -> dict[str, dict]:
         if hc.get("type") == "ping":
             healthy = _run_ping_check(hc["host"], hc["timeout"])
             results[name] = {"type": "ping", "host": hc["host"], "healthy": healthy}
+        elif hc.get("type") == "soap":
+            is_healthy, code = _run_soap_check(
+                url=hc["url"], timeout=hc["timeout"],
+                soap_action=hc.get("soap_action", ""),
+                body=hc.get("body", ""),
+                healthy_codes=hc.get("healthy_codes"),
+                expected_string=hc.get("expected_string", ""),
+            )
+            results[name] = {"type": "soap", "status_code": code, "healthy": is_healthy}
         else:
             code = _run_curl_check(hc["url"], hc["timeout"])
             healthy = (code is not None and code in hc.get("healthy_codes", {200}))

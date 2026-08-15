@@ -316,6 +316,195 @@ class TestRunCurlCheck:
         assert result is None
 
 
+# ─── SOAP healthchecks ──────────────────────────────────────────
+
+class TestParseSoapHealthcheck:
+    """SOAP type detection, parsing, and sanitisation."""
+
+    def test_explicit_soap_type(self, A):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "type": "soap",
+                            "url": "http://localhost:9000/soap",
+                            "soap_action": "GetStatus",
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert "SvcA" in hcs
+        assert hcs["SvcA"]["type"] == "soap"
+        assert hcs["SvcA"]["soap_action"] == "GetStatus"
+
+    def test_auto_detect_soap_from_soap_action(self, A):
+        """If soap_action is present but type is omitted → auto-detect SOAP."""
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "url": "http://localhost:9000/soap",
+                            "soap_action": "HealthCheck",
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert hcs["SvcA"]["type"] == "soap"
+
+    def test_auto_detect_soap_from_body(self, A):
+        """If body is present but type is omitted → auto-detect SOAP."""
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "url": "http://localhost:9000/soap",
+                            "body": "<soap:Body><ping xmlns='urn:svc'/></soap:Body>",
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert hcs["SvcA"]["type"] == "soap"
+
+    def test_soap_body_preserved(self, A):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "type": "soap",
+                            "url": "http://localhost:9000/soap",
+                            "body": "<ns:GetStatus xmlns:ns='urn:svc'/>",
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert hcs["SvcA"]["body"] == "<ns:GetStatus xmlns:ns='urn:svc'/>"
+
+    def test_soap_expected_string_preserved(self, A):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "type": "soap",
+                            "url": "http://localhost:9000/soap",
+                            "expected_string": "<Status>OK</Status>",
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert hcs["SvcA"]["expected_string"] == "<Status>OK</Status>"
+
+    def test_soap_missing_url_skipped(self, A):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {"type": "soap", "soap_action": "X"}
+                    },
+                },
+                f,
+            )
+        assert A._parse_healthchecks() == {}
+
+    def test_soap_invalid_url_scheme_rejected(self, A):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {"type": "soap", "url": "ftp://evil.com/wsdl", "soap_action": "X"}
+                    },
+                },
+                f,
+            )
+        assert A._parse_healthchecks() == {}
+
+    def test_soap_custom_healthy_codes(self, A):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "type": "soap",
+                            "url": "http://localhost:9000/soap",
+                            "healthy_codes": [200, 204],
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert hcs["SvcA"]["healthy_codes"] == {200, 204}
+
+    def test_soap_default_envelope_when_no_body(self, A):
+        """No body set → should default to DEFAULT_SOAP_ENVELOPE."""
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {
+                            "type": "soap",
+                            "url": "http://localhost:9000/soap",
+                        }
+                    },
+                },
+                f,
+            )
+        hcs = A._parse_healthchecks()
+        assert "body" in hcs["SvcA"]
+        # body is empty string; DEFAULT_SOAP_ENVELOPE is used at runtime
+
+
+class TestRunSoapCheck:
+    """SOAP POST probing via curl."""
+
+    def test_connection_refused_returns_unhealthy(self, A):
+        healthy, code = A._run_soap_check(
+            url="http://127.0.0.1:19981/nope",
+            timeout=2,
+        )
+        assert healthy is False
+
+    def test_timeout_returns_unhealthy(self, A, monkeypatch):
+        """Force curl to fail via nonexistent host."""
+        healthy, code = A._run_soap_check(
+            url="http://nonexistent.invalid.host.xzy/ws",
+            timeout=2,
+        )
+        assert healthy is False
+
+
 # ─── run_healthchecks_once ────────────────────────────────────────
 
 class TestRunHealthchecksOnce:
