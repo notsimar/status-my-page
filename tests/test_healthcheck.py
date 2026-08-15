@@ -59,6 +59,38 @@ class TestSafeUrl:
         assert A._safe_url("http://") is False
 
 
+# ─── _safe_host ─────────────────────────────────────────────────
+
+class TestSafeHost:
+    """Host / IP validation for ping check to prevent command/option injection."""
+
+    def test_ipv4_allowed(self, A):
+        assert A._safe_host("127.0.0.1") is True
+        assert A._safe_host("192.168.10.1") is True
+
+    def test_ipv6_allowed(self, A):
+        assert A._safe_host("::1") is True
+        assert A._safe_host("2001:db8::1") is True
+
+    def test_hostname_allowed(self, A):
+        assert A._safe_host("localhost") is True
+        assert A._safe_host("router.home") is True
+        assert A._safe_host("dns.google.com") is True
+
+    def test_option_injection_rejected(self, A):
+        assert A._safe_host("-c") is False
+        assert A._safe_host("--help") is False
+
+    def test_command_injection_rejected(self, A):
+        assert A._safe_host("127.0.0.1; id") is False
+        assert A._safe_host("127.0.0.1 && reboot") is False
+        assert A._safe_host("`id`") is False
+
+    def test_empty_host_rejected(self, A):
+        assert A._safe_host("") is False
+        assert A._safe_host("   ") is False
+
+
 # ─── _parse_healthchecks ──────────────────────────────────────────
 
 class TestParseHealthchecks:
@@ -215,6 +247,53 @@ class TestParseHealthchecks:
 
         monkeypatch.setattr(A, "load_config", bad_load)
         assert A._parse_healthchecks() == {}
+
+    def test_ping_healthcheck_explicit_type(self, A):
+        self._write(
+            A,
+            {
+                "items": ["Router"],
+                "_runtime": {},
+                "healthchecks": {
+                    "Router": {"type": "ping", "host": "192.168.10.1", "interval": 15, "timeout": 2}
+                },
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "Router" in hc
+        assert hc["Router"]["type"] == "ping"
+        assert hc["Router"]["host"] == "192.168.10.1"
+        assert hc["Router"]["interval"] == 15
+        assert hc["Router"]["timeout"] == 2
+
+    def test_ping_healthcheck_auto_detect_from_host(self, A):
+        self._write(
+            A,
+            {
+                "items": ["Gateway"],
+                "_runtime": {},
+                "healthchecks": {
+                    "Gateway": {"host": "10.0.0.1"}
+                },
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "Gateway" in hc
+        assert hc["Gateway"]["type"] == "ping"
+        assert hc["Gateway"]["host"] == "10.0.0.1"
+
+
+# ─── _run_ping_check ──────────────────────────────────────────────
+
+class TestRunPingCheck:
+    """Real ping invocation + failure modes."""
+
+    def test_localhost_ping_succeeds(self, A):
+        assert A._run_ping_check("127.0.0.1", timeout=1) is True
+
+    def test_unreachable_ping_fails(self, A):
+        # 192.0.2.1 is reserved for documentation (TEST-NET-1) — non-routable
+        assert A._run_ping_check("192.0.2.1", timeout=1) is False
 
 
 # ─── _run_curl_check ──────────────────────────────────────────────

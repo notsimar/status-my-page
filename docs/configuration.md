@@ -83,6 +83,31 @@ features:
 - **Purpose:** Feature toggles for optional functionality
 - Currently exposed flags: `drag_drop_reorder`, `notes_enabled`, `history_enabled`. Future versions may add more.
 
+#### `healthchecks` (optional)
+- **Type:** Dictionary keyed by service name
+- **Purpose:** Automated background health checking via HTTP (`curl`) or ICMP (`ping`).
+- **Supported types:**
+  - `curl` (default): Performs an HTTP/HTTPS GET request using `curl`.
+  - `ping` / `icmp`: Performs ICMP ping check using `ping -c 1`.
+
+**Example:**
+```yaml
+healthchecks:
+  Web Server:
+    type: curl
+    url: http://localhost:8920/
+    interval: 30
+    timeout: 5
+    healthy_codes: [200, 204]
+    retries: 2
+  Gateway Router:
+    type: ping
+    host: 192.168.10.1
+    interval: 15
+    timeout: 2
+    retries: 2
+```
+
 ---
 
 ## 2. Environment Variables
