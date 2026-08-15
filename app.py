@@ -80,8 +80,8 @@ HEALTHCHECK_RETRIES_DEFAULT  = 2
 
 
 def _parse_healthchecks() -> dict[str, dict]:
-    """Return {service_name: config_dict} from config.yaml healthchecks section."""
-    hc_raw = cfg.get("healthchecks", {}) or {}
+    """Reload healthchecks from config.yaml on every call so edits take effect."""
+    hc_raw = load_config().get("healthchecks", {}) or {}
     healthchecks: dict[str, dict] = {}
 
     for name, details in hc_raw.items():
@@ -148,20 +148,47 @@ def _run_curl_check(url: str, timeout: int) -> int | None:
         return None
 
 
+def _healthcheck_run_once() -> dict[str, dict]:
+    """Run all healthchecks once. Returns {name: {healthy, status_code}}."""
+    healthchecks = _parse_healthchecks()
+    results: dict[str, dict] = {}
+
+    for name, hc in healthchecks.items():
+        code = _run_curl_check(hc["url"], hc["timeout"])
+        results[name] = {"status_code": code, "healthy": (code in hc["healthy_codes"])}
+
+    return results
+
+
 def _healthcheck_worker():
-    """Background thread that polls healthcheck URLs and flips DB status."""
+    """Background thread that polls each service on its own interval."""
     healthchecks = _parse_healthchecks()
     if not healthchecks:
         return
 
     # Track consecutive failures per service (for retry/backoff)
     fail_count: dict[str, int] = {name: 0 for name in healthchecks}
+    # next_fire: when each check should fire next (epoch seconds)
+    now = time.time()
+    next_fire: dict[str, float] = {name: now for name in healthchecks}
 
     print(f"Healthcheck worker started for {len(healthchecks)} service(s)")
 
     while True:
         now = time.time()
-        for name, hc in healthchecks.items():
+        # Find the soonest next-fire across all services
+        min_next = min(next_fire.values())
+        sleep_dt = max(0.5, min_next - now)
+
+        # Only check services whose next-fire has passed
+        due = {name for name, nf in next_fire.items() if now >= nf}
+        if not due:
+            for _ in range(int(sleep_dt * 2)):
+                time.sleep(0.5)
+            continue
+
+        for name in due:
+            hc = healthchecks[name]
             code = _run_curl_check(hc["url"], hc["timeout"])
 
             if code is not None and code in hc["healthy_codes"]:
@@ -170,13 +197,11 @@ def _healthcheck_worker():
                     print(f"Healthcheck OK [{name}] {code} (recovered)")
                 fail_count[name] = 0
 
-                # Set status to green if it's not currently green
                 _set_health_status(name, "green")
 
             else:
                 # Unhealthy — increment counter
-                prev = fail_count.get(name, 0)
-                fail_count[name] = prev + 1
+                fail_count[name] += 1
                 attempts = fail_count[name]
                 threshold = hc["retries"]
 
@@ -186,9 +211,19 @@ def _healthcheck_worker():
                     print(f"Healthcheck FAIL [{name}] attempt={attempts}/{threshold} "
                           f"code={code} -> {status}")
 
-        # Sleep with interrupts so shutdown is prompt
-        for _ in range(HEALTHCHECK_INTERVAL_DEFAULT * 2):
+            # Schedule next check for this service on its own interval
+            next_fire[name] = time.time() + hc["interval"]
+
+        # Sleep until the next service is due (in small increments for clean shutdown)
+        min_next = min(next_fire.values())
+        sleep_dt = max(0.5, min_next - time.time())
+        for _ in range(max(1, int(sleep_dt * 2))):
             time.sleep(0.5)
+
+
+def run_healthchecks_once() -> dict[str, dict]:
+    """Public entry-point: runs all healthchecks once, returns results."""
+    return _healthcheck_run_once()
 
 
 def _set_health_status(name: str, desired_status: str):
@@ -1009,11 +1044,7 @@ def api_healthcheck_run():
     if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
         abort(403)
 
-    results = {}
-    for name, hc in _parse_healthchecks().items():
-        code = _run_curl_check(hc["url"], hc["timeout"])
-        healthy = (code is not None and code in hc["healthy_codes"]) if code is not None else False
-        results[name] = {"status_code": code, "healthy": healthy}
+    results: dict[str, dict] = run_healthchecks_once()
     return jsonify(results)
 
 
