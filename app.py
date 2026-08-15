@@ -9,6 +9,7 @@ import os
 import secrets
 import shutil          # for config.yaml backup rotation
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import time
@@ -51,6 +52,192 @@ SERVER_PORT = cfg.get("server", {}).get("port", 8920)
 
 # Secret key: env var or generate a per-session random key.
 SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
+
+
+# ── Healthcheck ────────────────────────────────────────────────────
+# Optional per-service healthchecks configured in config.yaml under a
+# healthchecks: section.  Each entry is keyed by service name (must match
+# an item name) and can include:
+#   url          — REQUIRED; the HTTP(S) endpoint to curl
+#   interval     — seconds between checks (default 60)
+#   timeout      — max seconds for curl to wait (default 10)
+#   healthy_codes — list of HTTP codes considered healthy (default [200])
+#   retries      — consecutive failures before flipping status (default 2)
+#
+# Example:
+#   healthchecks:
+#     Web Server:
+#       url: http://localhost:8920/
+#       interval: 30
+#       timeout: 5
+#     API Gateway:
+#       url: https://api.example.com/health
+#       healthy_codes: [200, 204]
+
+HEALTHCHECK_INTERVAL_DEFAULT = 60
+HEALTHCHECK_TIMEOUT_DEFAULT  = 10
+HEALTHCHECK_RETRIES_DEFAULT  = 2
+
+
+def _parse_healthchecks() -> dict[str, dict]:
+    """Return {service_name: config_dict} from config.yaml healthchecks section."""
+    hc_raw = cfg.get("healthchecks", {}) or {}
+    healthchecks: dict[str, dict] = {}
+
+    for name, details in hc_raw.items():
+        if not isinstance(details, dict):
+            continue
+        url = details.get("url")
+        if not url or not isinstance(url, str) or not url.strip():
+            continue
+
+        interval = details.get("interval", HEALTHCHECK_INTERVAL_DEFAULT)
+        timeout_val = details.get("timeout", HEALTHCHECK_TIMEOUT_DEFAULT)
+        retries = details.get("retries", HEALTHCHECK_RETRIES_DEFAULT)
+        healthy_codes = details.get("healthy_codes", [200])
+
+        # Sanitize numerics (reject non-int/float or negatives)
+        try:
+            interval = int(interval)
+            timeout_val = int(timeout_val)
+            retries = int(retries)
+        except (TypeError, ValueError):
+            continue
+
+        if interval <= 0 or timeout_val <= 0 or retries <= 0:
+            continue
+
+        # Normalize healthy_codes to a set of ints
+        codes = set()
+        for c in healthy_codes:
+            try:
+                codes.add(int(c))
+            except (TypeError, ValueError):
+                pass
+        if not codes:
+            codes = {200}
+
+        healthchecks[name.strip()] = {
+            "url": url.strip(),
+            "interval": max(interval, 1),
+            "timeout": max(timeout_val, 1),
+            "retries": max(retries, 1),
+            "healthy_codes": codes,
+        }
+
+    return healthchecks
+
+
+def _run_curl_check(url: str, timeout: int) -> int | None:
+    """Run curl and return the HTTP status code, or None on failure."""
+    try:
+        result = subprocess.run(
+            ["curl", "-o", "/dev/null", "-s", "-w", "%{http_code}",
+             "--max-time", str(timeout), "-L", url],
+            capture_output=True, text=True, timeout=timeout + 5,
+        )
+        code_str = result.stdout.strip()
+        if not code_str:
+            return None
+        code = int(code_str)
+        # curl returns 000 on connection errors
+        if code == 0 or code > 599:
+            return None
+        return code
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def _healthcheck_worker():
+    """Background thread that polls healthcheck URLs and flips DB status."""
+    healthchecks = _parse_healthchecks()
+    if not healthchecks:
+        return
+
+    # Track consecutive failures per service (for retry/backoff)
+    fail_count: dict[str, int] = {name: 0 for name in healthchecks}
+
+    print(f"Healthcheck worker started for {len(healthchecks)} service(s)")
+
+    while True:
+        now = time.time()
+        for name, hc in healthchecks.items():
+            code = _run_curl_check(hc["url"], hc["timeout"])
+
+            if code is not None and code in hc["healthy_codes"]:
+                # Healthy — reset fail counter
+                if fail_count.get(name, 0) > 0:
+                    print(f"Healthcheck OK [{name}] {code} (recovered)")
+                fail_count[name] = 0
+
+                # Set status to green if it's not currently green
+                _set_health_status(name, "green")
+
+            else:
+                # Unhealthy — increment counter
+                prev = fail_count.get(name, 0)
+                fail_count[name] = prev + 1
+                attempts = fail_count[name]
+                threshold = hc["retries"]
+
+                if attempts >= threshold:
+                    status = "red" if attempts >= threshold * 3 else "degraded"
+                    _set_health_status(name, status)
+                    print(f"Healthcheck FAIL [{name}] attempt={attempts}/{threshold} "
+                          f"code={code} -> {status}")
+
+        # Sleep with interrupts so shutdown is prompt
+        for _ in range(HEALTHCHECK_INTERVAL_DEFAULT * 2):
+            time.sleep(0.5)
+
+
+def _set_health_status(name: str, desired_status: str):
+    """Set a DB item's status to match the healthcheck result (green/degraded/red).
+
+    Only changes if the DB value differs from desired — avoids unnecessary writes.
+    Green is special: only applied when called directly by the healthcheck worker,
+    i.e. the service actually came back online.
+    """
+    db = get_db()
+    row = db.execute("SELECT id, status FROM status_items WHERE name = ?", [name]).fetchone()
+    if not row:
+        return
+
+    current = row["status"]
+    if current == desired_status:
+        return  # no-op
+
+    old_ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    db.execute("UPDATE status_items SET status = ? WHERE id = ?", [desired_status, row["id"]])
+
+    # Record history
+    try:
+        db.execute(
+            "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) "
+            "VALUES (?, 'status', ?, ?, ?)",
+            (row["id"], current, desired_status, old_ts),
+        )
+        # Prune
+        db.execute(
+            "DELETE FROM status_history WHERE id NOT IN ("
+            "  SELECT id FROM status_history WHERE item_id = ? ORDER BY id DESC LIMIT ?"
+            ")",
+            (row["id"], MAX_HISTORY_PER_ITEM),
+        )
+    except Exception:
+        pass
+
+    db.commit()
+
+
+def start_healthchecks():
+    """Start the healthcheck background daemon thread (no-op if none configured)."""
+    healthchecks = _parse_healthchecks()
+    if not healthchecks:
+        return
+
+    t = threading.Thread(target=_healthcheck_worker, daemon=True, name="healthcheck")
+    t.start()
 
 
 # ── YAML runtime persistence ────────────────────────────────────────
@@ -808,6 +995,28 @@ def api_delete(item_id):
     return jsonify(ok=True, name=name)
 
 
+@app.route("/api/healthchecks")
+def api_healthchecks():
+    """Return all configured healthchecks. Public read — no auth required."""
+    hc = _parse_healthchecks()
+    return jsonify({name: dict(details) for name, details in hc.items()})
+
+
+@app.route("/api/healthcheck/run", methods=["POST"])
+def api_healthcheck_run():
+    """Trigger a one-shot healthcheck run for all services. Admin only."""
+    ip = request.remote_addr or ""
+    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
+        abort(403)
+
+    results = {}
+    for name, hc in _parse_healthchecks().items():
+        code = _run_curl_check(hc["url"], hc["timeout"])
+        healthy = (code is not None and code in hc["healthy_codes"]) if code is not None else False
+        results[name] = {"status_code": code, "healthy": healthy}
+    return jsonify(results)
+
+
 @app.route("/api/reorder", methods=["POST"])
 def api_reorder():
     ip = request.remote_addr or ""
@@ -829,6 +1038,7 @@ def _not_admin() -> bool:
 # ── Main ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     init_db()
+    start_healthchecks()
     print(f"Status page running on http://0.0.0.0:{SERVER_PORT}")
     print(f"Admin user: {ADMIN_USER} (hash provided via env)")
     app.run(host=SERVER_HOST, port=SERVER_PORT)
