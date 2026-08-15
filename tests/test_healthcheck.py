@@ -14,11 +14,7 @@ Covers:
 All tests reuse the A fixture from conftest.py to write configs on disk.
 """
 
-import json
-import os
 import sqlite3
-import sys
-import time
 
 from pathlib import Path
 
@@ -37,7 +33,7 @@ class TestSafeUrl:
         assert A._safe_url("https://example.com/health") is True
 
     def test_file_rejected(self, A):
-        assert A._safe_url("file:///etc/passwd ") is False
+        assert A._safe_url("file:///etc/passwd") is False
 
     def test_gopher_rejected(self, A):
         assert A._safe_url("gopher://evil.com") is False

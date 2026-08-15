@@ -1,12 +1,16 @@
 """Modified Condition/Decision Coverage (MC/DC) tests for status-my-page.
 
 This suite proves that every guard condition independently determines the
-outcome of compound boolean expressions in three critical code paths:
+outcome of compound boolean expressions in five critical code paths:
 
   1. YAML runtime state restoration — status overrides from _runtime.status,
      notes overrides from _runtime.notes (app.py L341–L365)
   2. Mutation API security gate — auth → CSRF → rate-limit trio on every
-     protected endpoint (app.py L679/689/701)
+     protected endpoint (app.py L957 / 1092 / 1102)
+  3. Healthcheck curl result gate — green vs degraded/red path inside the
+     worker loop (app.py L222, D_hc1)
+  4. Healthcheck config URL sanitisation — three-condition skip guard on
+     malformed YAML entries (app.py L124, D_hc2)
 
 Each class tests one compound decision by varying exactly one condition per
 test while holding all others constant, demonstrating that each condition is
@@ -16,25 +20,28 @@ any single condition would allow an attack or data-loss scenario.
 
 Test matrix — full MC/DC proof for every compound decision:
 
-┌─────────┬─────┬──────────────────┬────┬───┬─────────────────────────────────────────────────────────┐
-│ Test ID │ Cls│ Code path        │ D- │ C1│ Independent failure test(s)                              │
-│         │ ss │                  │ ID │     ├───┬───┬───┬───┤                                  │
-│         │    │                  │    │   │ C2│ C3│ C4│                                  │
-│         │    │                  │    │   ├───┼───┤───┤──────────────────────────────────────┤  │
-│ T1/T5/T8│ D1 │ runtime status re│    │   │   │   │                                   │  │
-│/T9      │    │ store (L342)     │ L34│F×F│ T │ × │ × │ baseline restores degraded           │  │
-│         │    │                  │ 2  │T× │ × │ × │ C1=True skips unseeded item              │  │
-│         │    │                  │    │   └───┴───┴───┤ (C2=T) on 'green' / ''               │  │
-│ T10     │ D2 │ runtime notes re-│    │   │   │                                   │  │
-│         │    │ store (L355)     │ L35│F×F│ T │ × │ baseline restores notes text       │  │
-│/T4/T7   │    │                  │ 5  │T× │ × │ × │ C1=True skips unseeded item              │  │
-│         │    │                  │    │   └───┴───┤ (C2=T: empty note) → skip          │  │
-│         │    │                  │    │   ──────────┼──────┤───┬───┬───├───────────────────┐  │
-│ T13     │ D3 │ security gate on │ L68│T×T│ T │ T │ T │ baseline: toggle → 200           │  │
-/        │    │ all mut endpoints│     │F × │ F │ × │ × │ C1=F: admin missing → 403     │  │
-│         │    │ (toggle/add/del/ │     │   │ × │ F │ × │ C2=F: bad CSRF → 403        │  │
-│         │    │ reorder)         │     │   └───┴───┤×┤×┤×┤ C3=F: rate limited → 403│  │
-└─────────────────────┴──────────┴────────┴───┴───┴───┴───┴────────────────────────────────────────────────────────────┘
+┌───────────┬───────┬───────────────────┬────┬───┬─────────────────────────────────────────────────────────┐
+│ Test ID   │ Class│ Code path         │ D- │ C1│ Independent failure test(s)                              │
+│           │  ss  │                   │ ID │     ├───┬───┬───┬───┤                                  │
+│           │      │                   │    │   │ C2│ C3│ C4│                                  │
+│           │      │                   │    │   ├───┼───┤───┤──────────────────────────────────────┤  │
+│ T1/T5/T8  │ D1   │ runtime status re-│ L34│F×F│ T │ × │ × │ baseline restores degraded           │  │
+│ /T9       │      │ store (L620)      │ 2  │T× │ × │ × │ C1=True skips unseeded item              │  │
+│           │      │                   │    │   └───┴───┴───┤ (C2=T) on 'green' / ''               │  │
+│ T10/T4/T7 │ D2   │ runtime notes re- │ L63│F×F│ T │ × │ baseline restores notes text       │  │
+│           │      │ store (L633)      │ 3  │T× │ × │ × │ C1=True skips unseeded item              │  │
+│           │      │                   │    │   └───┴───┤ (C2=T: empty note) → skip          │  │
+│ T11/T14.. │ D3   │ security gate on  │ L95│T×T│ T │ T │ T │ baseline: toggle → 200           │  │
+│ .T23      │      │ all mut endpoints │ 7  │F × │ F │ × │ × │ C1=F: admin missing → 403     │  │
+│           │      │ (toggle/add/del/  │    │   │ × │ F │ × │ C2=F: bad CSRF → 403        │  │
+│           │      │ reorder/run-hc)   │    │   └───┴───┤×┤×┤×┤ C3=F: rate limited → 403│  │
+│ T24/T25/T │ D_hc1│ health result gate│ L22│T×F│ T │ × │ C1=F -> none from conn error        │  │
+│ 26        │      │ (L222)            │ 2  │F×T│ F │ × │ baseline green (both True)         │  │
+│           │      │                   │    │   └───┴───┤ C2=F -> code not in whitelist       │  │
+│ T27..     │ D_hc2│ URL sanitisation  │ L12│T×F│ T │ × │ C1=T -> url key missing/None        │  │
+│ .T30      │      │ skip guard (L124) │    │F×T│ F │ × │ C2=T -> type is not str           │  │
+│           │      │                   │    │   └───┴───┤ C3=T -> empty/whitespace string     │  │
+└───────────┴───────┴───────────────────┴────┴───┴───┴───┴───┴───────────────────────────────────────────────┘
 
 Line refs use the canonical location of each `if ... continue` or guard compound.
 Each test varies exactly one condition while holding all others constant —
@@ -65,7 +72,7 @@ import yaml
 import json
 from pathlib import Path
 
-# D1 (L342): if item_name not in seed_set or new_state in ('green', ''): continue
+# D1 (L620): if item_name not in seed_set or new_state in ('green', ''): continue
 #   MC/DC conditions — expressed from the *code* side so labels map 1:1 to source:
 #     C1 = item_name not in seed_set    (F => item IS seeded, T => skipped)
 #     C2 = new_state in ('green', '')   (T => skip, F => proceed with restore)
@@ -116,7 +123,7 @@ class Test_D1_RestoreStatus:
         # '' not in seed_set (it's the initial value set at C342) — should be skipped, staying as 'green'
         assert row is not None and row["status"] == "green"
 
-# D2 (L355): if item_name not in seed_set or not note_text.strip(): continue
+# D2 (L633): if item_name not in seed_set or not note_text.strip(): continue
 #   MC/DC conditions — expressed from the *code* side so labels map 1:1 to source:
 #     C1 = item_name not in seed_set      (T => skip, F => proceed with restore)
 #     C2 = not note_text.strip()          (T => skip, F => proceed with restore)
@@ -197,6 +204,11 @@ class Test_D3_SecurityGuard:
         r = client.post("/api/reorder", data=b'{}', content_type="application/json")
         assert r.status_code == 403
 
+    def test_C1_not_admin__healthcheck_run(self, client):
+        """Non-Admin on /api/healthcheck/run -> 403."""
+        r = client.post("/api/healthcheck/run", data=b'{}', content_type="application/json")
+        assert r.status_code == 403
+
     # ── C2 fails: bad/missing CSRF -> 403 on every endpoint ─────────────────────────────
     def test_C2_bad_csrf__toggle(self, admin):
         """Bad CSRF on /api/toggle/1 -> 403."""
@@ -229,6 +241,15 @@ class Test_D3_SecurityGuard:
         """Bad CSRF on /api/reorder -> 403."""
         r = admin.post(
             "/api/reorder",
+            headers={"X-CSRF-Token": "bad"},
+            content_type="application/json", data=b'{}',
+        )
+        assert r.status_code == 403
+
+    def test_C2_bad_csrf__healthcheck_run(self, admin):
+        """Bad CSRF on /api/healthcheck/run -> 403."""
+        r = admin.post(
+            "/api/healthcheck/run",
             headers={"X-CSRF-Token": "bad"},
             content_type="application/json", data=b'{}',
         )
@@ -275,8 +296,18 @@ class Test_D3_SecurityGuard:
         )
         assert r.status_code == 403
 
+    def test_C3_rate_limited__healthcheck_run(self, admin, token, client):
+        """Over rate limit on /api/healthcheck/run -> 403."""
+        self.__rate_limit(client)
+        r = admin.post(
+            "/api/healthcheck/run",
+            headers={"X-CSRF-Token": token},
+            content_type="application/json", data=b'{}',
+        )
+        assert r.status_code == 403
 
-# D6 (L597–598): if not expected or not hmac.compare_digest(sent, expected): return False
+
+# D6 (L862): if not expected or not hmac.compare_digest(sent, expected): return False
 #   Internal CSRF guard inside _check_csrf() — controls session wipe + failure counter.
 #   MC/DC conditions:
 #     C1 = not expected  (no CSRF token stored in session)

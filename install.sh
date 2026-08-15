@@ -137,11 +137,14 @@ export INSTALL_DIR                                          # needed by the Pyth
 
 echo "Credentials set: user=$ADMIN_USER"
 
+SECRET_KEY=$("$VENV_DIR/bin/python3" -c "import secrets; print(secrets.token_hex(32))")
+
 # ---- Create credentials env file (restricted permissions) ----
 ENV_FILE="/etc/status-page/env"
 mkdir -p "$(dirname "$ENV_FILE")"
 cat > "$ENV_FILE" << ENVEOF
 STATUS_ADMIN_PASS_HASH=$PASS_HASH
+STATUS_SECRET_KEY=$SECRET_KEY
 PYTHONUNBUFFERED=1
 ENVEOF
 chmod 0640 "$ENV_FILE"

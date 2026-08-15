@@ -169,9 +169,11 @@ def _run_curl_check(url: str, timeout: int) -> int | None:
     try:
         result = subprocess.run(
             ["curl", "-o", "/dev/null", "-s", "-w", "%{http_code}",
+             "--proto-default", "http",
+             "--proto-redir", "-all,http,https",
              "--max-time", str(timeout),
              "--max-redirs", str(CURL_MAX_REDIRS),
-             "-L", url],
+             "-L", "--", url],
             capture_output=True, text=True, timeout=max(timeout + 5, CURL_MAX_REDIRS * 2 + 5),
         )
         code_str = result.stdout.strip()
@@ -186,31 +188,53 @@ def _run_curl_check(url: str, timeout: int) -> int | None:
         return None
 
 
+_HEALTHCHECK_THREAD = None
+_HEALTHCHECK_START_LOCK = threading.Lock()
+
+
 def _healthcheck_worker():
     """Background thread that polls each service on its own interval."""
-    # Initial parse to determine if we should start at all
-    healthchecks = _parse_healthchecks()
-    if not healthchecks:
-        return
+    # Across multiple WSGI worker processes, ensure only one runs the healthcheck loop
+    lock_file_path = BASE_DIR / "instance" / ".healthcheck.lock"
+    lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_file = open(lock_file_path, "a+")
+        try:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, OSError, ImportError):
+            # Another worker process is already running the healthcheck worker
+            return
+    except Exception:
+        pass
 
     # Track consecutive failures per service (for retry/backoff)
-    fail_count: dict[str, int] = {name: 0 for name in healthchecks}
-    next_fire: dict[str, float] = {name: time.time() for name in healthchecks}
-
-    print(f"Healthcheck worker started for {len(healthchecks)} service(s)")
+    fail_count: dict[str, int] = {}
+    next_fire: dict[str, float] = {}
 
     while True:
         # ── Reload config every cycle so changes without restart work ──
         healthchecks = _parse_healthchecks()
+        now = time.time()
+
+        # Synchronize dynamic additions/removals
+        for name in list(next_fire):
+            if name not in healthchecks:
+                del next_fire[name]
+                fail_count.pop(name, None)
+
+        for name in healthchecks:
+            if name not in next_fire:
+                next_fire[name] = now
+                fail_count.setdefault(name, 0)
+
         if not healthchecks:
             # No healthchecks configured — sleep and retry
             time.sleep(HEALTHCHECK_INTERVAL_DEFAULT)
             continue
 
-        now = time.time()
-
         # Only check services whose next-fire has passed
-        due = {name for name, nf in next_fire.items() if now >= nf}
+        due = [name for name, nf in next_fire.items() if now >= nf]
         for name in due:
             hc = healthchecks.get(name)
             if not hc:
@@ -245,8 +269,11 @@ def _healthcheck_worker():
         if next_fire:
             min_next = min(next_fire.values())
             sleep_dt = max(0.5, min_next - time.time())
-            for _ in range(max(1, int(sleep_dt * 2))):
+            steps = max(1, int(sleep_dt * 2))
+            for _ in range(steps):
                 time.sleep(0.5)
+        else:
+            time.sleep(HEALTHCHECK_INTERVAL_DEFAULT)
 
 
 def run_healthchecks_once() -> dict[str, dict]:
@@ -308,13 +335,14 @@ def _set_health_status(name: str, desired_status: str):
 
 
 def start_healthchecks():
-    """Start the healthcheck background daemon thread (no-op if none configured)."""
-    healthchecks = _parse_healthchecks()
-    if not healthchecks:
-        return
-
-    t = threading.Thread(target=_healthcheck_worker, daemon=True, name="healthcheck")
-    t.start()
+    """Start the healthcheck background daemon thread if not already running."""
+    global _HEALTHCHECK_THREAD
+    with _HEALTHCHECK_START_LOCK:
+        if _HEALTHCHECK_THREAD is not None and _HEALTHCHECK_THREAD.is_alive():
+            return
+        t = threading.Thread(target=_healthcheck_worker, daemon=True, name="healthcheck")
+        t.start()
+        _HEALTHCHECK_THREAD = t
 
 
 # ── YAML runtime persistence ────────────────────────────────────────
@@ -775,28 +803,58 @@ def toggle_item(item_id: int) -> str:
     # Record history
     _record_history(item_id, "status", current, new_status)
 
-    # Persist config-item status changes to yaml _runtime.status
+    # Persist status changes to yaml _runtime.status
     item_name = row["name"]
     rt = _load_runtime()
-    items_list = cfg.get("items", [])  # current config items list
-    if item_name in items_list:
-        rt_status = rt.setdefault("status", {})
-        if new_status != "green":
-            rt_status[item_name] = new_status
-        else:
-            rt_status.pop(item_name, None)
-        _save_runtime(rt)
+    rt_status = rt.setdefault("status", {})
+    if new_status != "green":
+        rt_status[item_name] = new_status
+    else:
+        rt_status.pop(item_name, None)
+    _save_runtime(rt)
 
     db.commit()
     return new_status
 
 
-def update_item_name(item_id: int, name: str):
+def update_item_name(item_id: int, name: str) -> tuple[bool, str]:
     db = get_db()
+    row = db.execute("SELECT name FROM status_items WHERE id=?", (item_id,)).fetchone()
+    if not row:
+        return False, "Not found"
+    old_name = row["name"]
+    if old_name == name:
+        return True, "No change"
+
+    # Check for name conflict
+    conflict = db.execute("SELECT id FROM status_items WHERE name=? AND id!=?", (name, item_id)).fetchone()
+    if conflict:
+        return False, "Item already exists"
+
     db.execute(
         "UPDATE status_items SET name = ? WHERE id = ?", (name, item_id)
     )
+
+    # Update references in _runtime
+    rt = _load_runtime()
+    updated = False
+    if "items" in rt and old_name in rt["items"]:
+        rt["items"] = [name if n == old_name else n for n in rt["items"]]
+        updated = True
+    if "status" in rt and old_name in rt["status"]:
+        rt["status"][name] = rt["status"].pop(old_name)
+        updated = True
+    if "notes" in rt and old_name in rt["notes"]:
+        rt["notes"][name] = rt["notes"].pop(old_name)
+        updated = True
+    if "history" in rt and old_name in rt["history"]:
+        rt["history"][name] = rt["history"].pop(old_name)
+        updated = True
+    if updated:
+        _save_runtime(rt)
+
     db.commit()
+    return True, "OK"
 
 
 def reorder_items(order_map: dict[int, int]):
@@ -813,22 +871,20 @@ def set_notes(item_id: int, notes: str):
     db = get_db()
     # Get current notes for history tracking
     current_row = db.execute("SELECT id, name, notes FROM status_items WHERE id=?", (item_id,)).fetchone()
-    old_notes = ""
-    if current_row:
-        old_notes = current_row["notes"] or ""
+    if not current_row:
+        return
+    old_notes = current_row["notes"] or ""
 
     # Record history if notes actually changed
     if old_notes != notes:
         _record_history(item_id, "notes", old_notes, notes)
 
-    # Persist config-item notes to yaml _runtime.notes (config items only)
+    # Persist notes to yaml _runtime.notes (if non-empty)
     if current_row and notes.strip():
         rt = _load_runtime()
-        items_list = cfg.get("items", [])
         item_name = current_row["name"]
-        if item_name in items_list:
-            rt.setdefault("notes", {})[item_name] = notes
-            _save_runtime(rt)
+        rt.setdefault("notes", {})[item_name] = notes
+        _save_runtime(rt)
 
     db.execute(
         "UPDATE status_items SET notes = ? WHERE id = ?",
@@ -967,7 +1023,10 @@ def api_rename(item_id):
         abort(403)
     data = validate_json_data(request.get_json(silent=True))
     name = validate_name(data.get("name", ""), "name")
-    update_item_name(item_id, name)
+    ok, msg = update_item_name(item_id, name)
+    if not ok:
+        status_code = 404 if msg == "Not found" else 409
+        return jsonify(error=msg), status_code
     return jsonify(ok=True)
 
 
@@ -1112,6 +1171,16 @@ def api_reorder():
 
 def _not_admin() -> bool:
     return not session.get("admin")
+
+
+# Ensure DB tables exist and healthcheck thread is started when running under WSGI (e.g. Gunicorn)
+if not DB_PATH.exists():
+    try:
+        init_db()
+    except Exception:
+        pass
+
+start_healthchecks()
 
 
 # ── Main ───────────────────────────────────────────────────────────
