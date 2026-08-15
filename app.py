@@ -77,18 +77,54 @@ SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
 HEALTHCHECK_INTERVAL_DEFAULT = 60
 HEALTHCHECK_TIMEOUT_DEFAULT  = 10
 HEALTHCHECK_RETRIES_DEFAULT  = 2
+# Redirect-following limit for curl (SSRF mitigation)
+CURL_MAX_REDIRS              = 5
+
+# Mutex for DB writes from the healthcheck thread (avoids conflicting with Flask request threads)
+_HEALTH_LOCK = threading.Lock()
+
+
+def _health_db():
+    """Open a standalone SQLite connection for the healthcheck worker thread.
+
+    Does NOT use Flask ``g`` — safe to call outside any request context.
+    """
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def _safe_url(url: str) -> bool:
+    """Allow only http:// and https:// URLs (prevent file://, gopher://, etc.)."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.hostname)
+    except Exception:
+        return False
 
 
 def _parse_healthchecks() -> dict[str, dict]:
     """Reload healthchecks from config.yaml on every call so edits take effect."""
-    hc_raw = load_config().get("healthchecks", {}) or {}
+    try:
+        cfg_data = load_config()
+    except Exception as e:
+        print(f"Healthcheck config parse error: {e}")
+        return {}
+
+    hc_raw = cfg_data.get("healthchecks", {}) or {}
     healthchecks: dict[str, dict] = {}
 
     for name, details in hc_raw.items():
         if not isinstance(details, dict):
             continue
+
         url = details.get("url")
         if not url or not isinstance(url, str) or not url.strip():
+            continue
+        # Reject non-HTTP(S) URLs (prevent file://, gopher://, etc.)
+        if not _safe_url(url.strip()):
             continue
 
         interval = details.get("interval", HEALTHCHECK_INTERVAL_DEFAULT)
@@ -133,14 +169,16 @@ def _run_curl_check(url: str, timeout: int) -> int | None:
     try:
         result = subprocess.run(
             ["curl", "-o", "/dev/null", "-s", "-w", "%{http_code}",
-             "--max-time", str(timeout), "-L", url],
-            capture_output=True, text=True, timeout=timeout + 5,
+             "--max-time", str(timeout),
+             "--max-redirs", str(CURL_MAX_REDIRS),
+             "-L", url],
+            capture_output=True, text=True, timeout=max(timeout + 5, CURL_MAX_REDIRS * 2 + 5),
         )
         code_str = result.stdout.strip()
         if not code_str:
             return None
         code = int(code_str)
-        # curl returns 000 on connection errors
+        # curl returns 000 on connection errors, 3xx means it hit redirect limit
         if code == 0 or code > 599:
             return None
         return code
@@ -148,47 +186,37 @@ def _run_curl_check(url: str, timeout: int) -> int | None:
         return None
 
 
-def _healthcheck_run_once() -> dict[str, dict]:
-    """Run all healthchecks once. Returns {name: {healthy, status_code}}."""
-    healthchecks = _parse_healthchecks()
-    results: dict[str, dict] = {}
-
-    for name, hc in healthchecks.items():
-        code = _run_curl_check(hc["url"], hc["timeout"])
-        results[name] = {"status_code": code, "healthy": (code in hc["healthy_codes"])}
-
-    return results
-
-
 def _healthcheck_worker():
     """Background thread that polls each service on its own interval."""
+    # Initial parse to determine if we should start at all
     healthchecks = _parse_healthchecks()
     if not healthchecks:
         return
 
     # Track consecutive failures per service (for retry/backoff)
     fail_count: dict[str, int] = {name: 0 for name in healthchecks}
-    # next_fire: when each check should fire next (epoch seconds)
-    now = time.time()
-    next_fire: dict[str, float] = {name: now for name in healthchecks}
+    next_fire: dict[str, float] = {name: time.time() for name in healthchecks}
 
     print(f"Healthcheck worker started for {len(healthchecks)} service(s)")
 
     while True:
+        # ── Reload config every cycle so changes without restart work ──
+        healthchecks = _parse_healthchecks()
+        if not healthchecks:
+            # No healthchecks configured — sleep and retry
+            time.sleep(HEALTHCHECK_INTERVAL_DEFAULT)
+            continue
+
         now = time.time()
-        # Find the soonest next-fire across all services
-        min_next = min(next_fire.values())
-        sleep_dt = max(0.5, min_next - now)
 
         # Only check services whose next-fire has passed
         due = {name for name, nf in next_fire.items() if now >= nf}
-        if not due:
-            for _ in range(int(sleep_dt * 2)):
-                time.sleep(0.5)
-            continue
-
         for name in due:
-            hc = healthchecks[name]
+            hc = healthchecks.get(name)
+            if not hc:
+                # Service was removed from config — skip
+                continue
+
             code = _run_curl_check(hc["url"], hc["timeout"])
 
             if code is not None and code in hc["healthy_codes"]:
@@ -196,12 +224,11 @@ def _healthcheck_worker():
                 if fail_count.get(name, 0) > 0:
                     print(f"Healthcheck OK [{name}] {code} (recovered)")
                 fail_count[name] = 0
-
                 _set_health_status(name, "green")
 
             else:
                 # Unhealthy — increment counter
-                fail_count[name] += 1
+                fail_count[name] = fail_count.get(name, 0) + 1
                 attempts = fail_count[name]
                 threshold = hc["retries"]
 
@@ -214,55 +241,70 @@ def _healthcheck_worker():
             # Schedule next check for this service on its own interval
             next_fire[name] = time.time() + hc["interval"]
 
-        # Sleep until the next service is due (in small increments for clean shutdown)
-        min_next = min(next_fire.values())
-        sleep_dt = max(0.5, min_next - time.time())
-        for _ in range(max(1, int(sleep_dt * 2))):
-            time.sleep(0.5)
+        # Sleep until the next service is due (small increments for clean shutdown)
+        if next_fire:
+            min_next = min(next_fire.values())
+            sleep_dt = max(0.5, min_next - time.time())
+            for _ in range(max(1, int(sleep_dt * 2))):
+                time.sleep(0.5)
 
 
 def run_healthchecks_once() -> dict[str, dict]:
-    """Public entry-point: runs all healthchecks once, returns results."""
-    return _healthcheck_run_once()
+    """Public entry-point: runs all healthchecks once (no DB mutation)."""
+    healthchecks = _parse_healthchecks()
+    results: dict[str, dict] = {}
+
+    for name, hc in healthchecks.items():
+        code = _run_curl_check(hc["url"], hc["timeout"])
+        healthy = (code is not None and code in hc["healthy_codes"])
+        results[name] = {"status_code": code, "healthy": healthy}
+
+    return results
 
 
 def _set_health_status(name: str, desired_status: str):
     """Set a DB item's status to match the healthcheck result (green/degraded/red).
 
-    Only changes if the DB value differs from desired — avoids unnecessary writes.
-    Green is special: only applied when called directly by the healthcheck worker,
-    i.e. the service actually came back online.
+    Uses its own DB connection (_health_db) — safe outside Flask request context.
+    Writes are serialized via _HEALTH_LOCK to avoid conflicting with Flask threads.
     """
-    db = get_db()
-    row = db.execute("SELECT id, status FROM status_items WHERE name = ?", [name]).fetchone()
-    if not row:
-        return
+    with _HEALTH_LOCK:
+        conn = _health_db()
+        try:
+            row = conn.execute(
+                "SELECT id, status FROM status_items WHERE name = ?", [name]
+            ).fetchone()
+            if not row:
+                return
 
-    current = row["status"]
-    if current == desired_status:
-        return  # no-op
+            current = row["status"]
+            if current == desired_status:
+                return  # no-op
 
-    old_ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    db.execute("UPDATE status_items SET status = ? WHERE id = ?", [desired_status, row["id"]])
+            ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            conn.execute(
+                "UPDATE status_items SET status = ? WHERE id = ?", [desired_status, row["id"]]
+            )
 
-    # Record history
-    try:
-        db.execute(
-            "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) "
-            "VALUES (?, 'status', ?, ?, ?)",
-            (row["id"], current, desired_status, old_ts),
-        )
-        # Prune
-        db.execute(
-            "DELETE FROM status_history WHERE id NOT IN ("
-            "  SELECT id FROM status_history WHERE item_id = ? ORDER BY id DESC LIMIT ?"
-            ")",
-            (row["id"], MAX_HISTORY_PER_ITEM),
-        )
-    except Exception:
-        pass
+            # Record history (actor omitted — healthcheck entries have no user source)
+            try:
+                conn.execute(
+                    "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) "
+                    "VALUES (?, 'status', ?, ?, ?)",
+                    (row["id"], current, desired_status, ts),
+                )
+                conn.execute(
+                    "DELETE FROM status_history WHERE id NOT IN ("
+                    "  SELECT id FROM status_history WHERE item_id = ? ORDER BY id DESC LIMIT ?"
+                    ")",
+                    (row["id"], MAX_HISTORY_PER_ITEM),
+                )
+            except Exception:
+                pass
 
-    db.commit()
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def start_healthchecks():
@@ -1034,7 +1076,13 @@ def api_delete(item_id):
 def api_healthchecks():
     """Return all configured healthchecks. Public read — no auth required."""
     hc = _parse_healthchecks()
-    return jsonify({name: dict(details) for name, details in hc.items()})
+    # Convert set -> list for JSON serializability
+    out: dict[str, dict] = {}
+    for name, details in hc.items():
+        d = dict(details)
+        d["healthy_codes"] = sorted(d["healthy_codes"])
+        out[name] = d
+    return jsonify(out)
 
 
 @app.route("/api/healthcheck/run", methods=["POST"])
