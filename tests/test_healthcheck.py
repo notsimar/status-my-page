@@ -505,6 +505,254 @@ class TestRunSoapCheck:
         assert healthy is False
 
 
+class TestHealthcheckExceptionPaths:
+    """Test exception handling in healthcheck subprocess calls."""
+
+    def test_run_ping_check_timeout(self, A, monkeypatch):
+        """_run_ping_check handles subprocess.TimeoutExpired."""
+        import subprocess
+        
+        def mock_run_timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_timeout)
+        result = A._run_ping_check("127.0.0.1", timeout=1)
+        assert result is False
+
+    def test_run_ping_check_file_not_found(self, A, monkeypatch):
+        """_run_ping_check handles FileNotFoundError (ping not installed)."""
+        import subprocess
+        
+        def mock_run_fnf(*args, **kwargs):
+            raise FileNotFoundError("ping command not found")
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_fnf)
+        result = A._run_ping_check("127.0.0.1", timeout=1)
+        assert result is False
+
+    def test_run_ping_check_os_error(self, A, monkeypatch):
+        """_run_ping_check handles OSError."""
+        import subprocess
+        
+        def mock_run_os(*args, **kwargs):
+            raise OSError("Permission denied")
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_os)
+        result = A._run_ping_check("127.0.0.1", timeout=1)
+        assert result is False
+
+    def test_run_curl_check_timeout(self, A, monkeypatch):
+        """_run_curl_check handles subprocess.TimeoutExpired."""
+        import subprocess
+        
+        def mock_run_timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_timeout)
+        result = A._run_curl_check("http://localhost/", timeout=1)
+        assert result is None
+
+    def test_run_curl_check_file_not_found(self, A, monkeypatch):
+        """_run_curl_check handles FileNotFoundError (curl not installed)."""
+        import subprocess
+        
+        def mock_run_fnf(*args, **kwargs):
+            raise FileNotFoundError("curl command not found")
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_fnf)
+        result = A._run_curl_check("http://localhost/", timeout=1)
+        assert result is None
+
+    def test_run_curl_check_os_error(self, A, monkeypatch):
+        """_run_curl_check handles OSError."""
+        import subprocess
+        
+        def mock_run_os(*args, **kwargs):
+            raise OSError("Network unreachable")
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_os)
+        result = A._run_curl_check("http://localhost/", timeout=1)
+        assert result is None
+
+    def test_run_soap_check_timeout(self, A, monkeypatch):
+        """_run_soap_check handles subprocess.TimeoutExpired."""
+        import subprocess
+        
+        def mock_run_timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_timeout)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_file_not_found(self, A, monkeypatch):
+        """_run_soap_check handles FileNotFoundError (curl not installed)."""
+        import subprocess
+        
+        def mock_run_fnf(*args, **kwargs):
+            raise FileNotFoundError("curl command not found")
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_fnf)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_os_error(self, A, monkeypatch):
+        """_run_soap_check handles OSError."""
+        import subprocess
+        
+        def mock_run_os(*args, **kwargs):
+            raise OSError("Network unreachable")
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_os)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_empty_stdout(self, A, monkeypatch):
+        """_run_soap_check handles empty stdout from curl."""
+        import subprocess
+        
+        class MockResult:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_empty(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_empty)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_no_newline(self, A, monkeypatch):
+        """_run_soap_check handles stdout without newline separator."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "200"  # No newline
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_no_nl(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_no_nl)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_non_digit_code(self, A, monkeypatch):
+        """_run_soap_check handles non-digit status code."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "HTTP/1.1 200 OK\nnot-a-number"
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_bad_code(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_bad_code)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_code_out_of_range_zero(self, A, monkeypatch):
+        """_run_soap_check handles status code 0 (curl error)."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "<xml></xml>\n0"
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_zero(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_zero)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_code_out_of_range_high(self, A, monkeypatch):
+        """_run_soap_check handles status code > 599."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "<xml></xml>\n999"
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_high(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_high)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        assert healthy is False
+        assert code is None
+
+    def test_run_soap_check_code_not_whitelisted(self, A, monkeypatch):
+        """_run_soap_check returns unhealthy when code not in healthy_codes."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "<xml></xml>\n404"
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_404(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_404)
+        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1, healthy_codes={200})
+        assert healthy is False
+        assert code == 404
+
+    def test_run_soap_check_expected_string_missing(self, A, monkeypatch):
+        """_run_soap_check returns unhealthy when expected_string not in response."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "<xml>Other content</xml>\n200"
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_missing(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_missing)
+        healthy, code = A._run_soap_check(
+            url="http://localhost/", timeout=1, 
+            expected_string="ExpectedContent"
+        )
+        assert healthy is False
+        assert code == 200
+
+    def test_run_soap_check_expected_string_found(self, A, monkeypatch):
+        """_run_soap_check returns healthy when expected_string found."""
+        import subprocess
+        
+        class MockResult:
+            stdout = "<xml>ExpectedContent</xml>\n200"
+            stderr = ""
+            returncode = 0
+        
+        def mock_run_found(*args, **kwargs):
+            return MockResult()
+        
+        monkeypatch.setattr(subprocess, "run", mock_run_found)
+        healthy, code = A._run_soap_check(
+            url="http://localhost/", timeout=1, 
+            expected_string="ExpectedContent"
+        )
+        assert healthy is True
+        assert code == 200
+
+
 # ─── run_healthchecks_once ────────────────────────────────────────
 
 class TestRunHealthchecksOnce:

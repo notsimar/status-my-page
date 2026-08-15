@@ -82,6 +82,14 @@ class Test_D1_RestoreStatus:
             c.row_factory = sqlite3.Row
             return c.execute(sql, params).fetchone()
 
+    def _set_db_status(self, A, name, status):
+        """Directly set DB status for test setup."""
+        with A.app.test_request_context():
+            row = A.get_db().execute("SELECT id FROM status_items WHERE name=?", (name,)).fetchone()
+            if row:
+                A.get_db().execute("UPDATE status_items SET status=? WHERE id=?", (status, row["id"]))
+                A.get_db().commit()
+
     def test_C1_False_C2_False__restores_degraded(self, A):
         """Baseline seeded + degraded -> enters block -> status restored (C1=F, C2=F)."""
         rt = A._load_runtime()
@@ -103,25 +111,33 @@ class Test_D1_RestoreStatus:
         assert row is None
 
     def test_C2_True__skipped(self, A):
-        """C2=T (new_state in ('green','')) alone causes skip even from seeded item."""
+        """C2=T (new_state in ('green','')) alone causes skip even from seeded item.
+        
+        Set DB to 'degraded' first, then runtime has 'green' -> skip should preserve 'degraded'.
+        """
+        # Setup: DB has degraded, runtime will have green (should be skipped)
+        self._set_db_status(A, "SvcA", "degraded")
+        
         rt = A._load_runtime()
         rt["status"] = {"SvcA": "green"}; A._save_runtime(rt)
 
         with A.app.test_request_context():
             A.init_db() 
         row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
-        assert row is not None and row["status"] == "green"
+        assert row is not None and row["status"] == "degraded", "C2=T should skip restore, preserving degraded"
 
     def test_C2_True_empty_string__skipped(self, A):
         """new_state='' also triggers skip (subset of C2=T case for full MC/DC pair coverage)."""
+        # Setup: DB has degraded, runtime will have '' (should be skipped)
+        self._set_db_status(A, "SvcA", "degraded")
+        
         rt = A._load_runtime()
         rt["status"] = {"SvcA": ""}; A._save_runtime(rt)
 
         with A.app.test_request_context():
             A.init_db() 
         row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
-        # '' not in seed_set (it's the initial value set at C342) — should be skipped, staying as 'green'
-        assert row is not None and row["status"] == "green"
+        assert row is not None and row["status"] == "degraded", "C2=T ('') should skip restore, preserving degraded"
 
 # D2 (L633): if item_name not in seed_set or not note_text.strip(): continue
 #   MC/DC conditions — expressed from the *code* side so labels map 1:1 to source:
@@ -132,6 +148,14 @@ class Test_D2_NotesRestore:
         with sqlite3.connect(str(A.DB_PATH)) as c:
             c.row_factory = sqlite3.Row
             return c.execute(sql, params).fetchone()
+
+    def _set_db_notes(self, A, name, notes):
+        """Directly set DB notes for test setup."""
+        with A.app.test_request_context():
+            row = A.get_db().execute("SELECT id FROM status_items WHERE name=?", (name,)).fetchone()
+            if row:
+                A.get_db().execute("UPDATE status_items SET notes=? WHERE id=?", (notes, row["id"]))
+                A.get_db().commit()
 
     def test_C1_False_C2_False__restores_notes(self, A):
         """Baseline: item in seed + note has text -> enters block -> notes restored."""
@@ -154,14 +178,20 @@ class Test_D2_NotesRestore:
         assert row is None
 
     def test_C2_True__skipped(self, A):
-        """C2=T (empty/whitespace-only note alone causes skip even from seeded item)."""
+        """C2=T (empty/whitespace-only note alone causes skip even from seeded item).
+        
+        Set DB notes first, then runtime has whitespace-only -> skip should preserve DB notes.
+        """
+        # Setup: DB has existing notes, runtime will have whitespace (should be skipped)
+        self._set_db_notes(A, "SvcA", "Existing notes")
+        
         rt = A._load_runtime()
         rt["notes"] = {"SvcA": "  "}; A._save_runtime(rt)
 
         with A.app.test_request_context():
             A.init_db()
         row = self._query(A, "SELECT notes FROM status_items WHERE name='SvcA'")
-        assert row is not None and row["notes"] == ""
+        assert row is not None and row["notes"] == "Existing notes", "C2=T should skip restore, preserving existing notes"
 
 # D3 (L680/690/752): if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip): abort(403)
 #   Guards checked on every protected endpoint: /api/toggle, /api/add, /api/delete, /api/reorder
@@ -171,7 +201,7 @@ class Test_D3_SecurityGuard:
     def __rate_limit(self, client):
         import app as m
         ip = client.environ_base['REMOTE_ADDR']
-        m._mutation_rates[ip] = [dt.datetime.now().timestamp()] * (m.MUTATION_MAX + 1)
+        m._mutation_rates[ip] = [dt.datetime.now(dt.timezone.utc).timestamp()] * (m.MUTATION_MAX + 1)
 
     # ── Baseline: one request succeeds (checked on toggle only — all share the gate) ───
     def test_baseline_all_ok__success(self, admin, token):

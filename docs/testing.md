@@ -6,16 +6,17 @@
 - [2. Running Tests](#2-running-tests)
 - [3. Unit Tests (Structural / MC/DC)](#3-unit-tests-structural--mcdc)
 - [4. Functional Tests](#4-functional-tests)
-- [5. Regression & Integration](#5-regression--integration)
-- [6. Adding New Tests](#6-adding-new-tests)
+- [5. Healthcheck Tests](#5-healthcheck-tests)
+- [6. Regression & Integration](#6-regression--integration)
+- [7. Adding New Tests](#7-adding-new-tests)
 
 ---
 
 ## 1. Test Categories
 
-This project organizes tests into three categories:
+This project organizes tests into four categories:
 
-### Unit (Structural / MC/DC) — `tests/test_structural.py` + `tests/test_mc_dc.py`
+### Unit (Structural / MC/DC) — Multiple test files
 
 Prove that every guard condition in compound boolean expressions **independently** controls the outcome. These are not "happy-path" tests — they are designed to fail at a specific gate.
 
@@ -26,23 +27,73 @@ Prove that every guard condition in compound boolean expressions **independently
 | D3: SecurityGate | app.py L680+ | `_not_admin() or not _check_csrf() or not _check_mutation_rate(ip)` | Test_D3_SecurityGuard (14 tests across 4 endpoints) | Full MC/DC |
 | D4: ReorderOverride | app.py L395 | `reorder_list and isinstance(reorder_list, list)` | Test_D4_ReorderOverride (7 tests) | Full MC/DC |
 | D5: SetNotesGuard | app.py L547 | `current_row and notes.strip()` | Test_D5_SetNotesGuard (7 tests) | Full MC/DC |
+| D6: CsrfInternalGuard | app.py L648 | `not expected or not hmac.compare_digest(sent, expected)` | Test_D6_CsrfInternalGuard (4 tests) | Full MC/DC |
+| D7: DeleteCleanupGate | app.py L851 | `"items" in rt and name in rt["items"]` | Test_D7_DeleteCleanupGate (5 tests) | Full MC/DC |
+| D_hc1: HealthResultGate | healthcheck.py L222 | `code is not None and code in healthy_codes` | Test_Dhc1_HealthResultGate (3 tests) | Full MC/DC |
+| D_hc2: UrlSanitisation | healthcheck.py L124 | `not url or not isinstance(url, str) or not url.strip()` | Test_Dhc2_UrlSanitisation (5 tests) | Full MC/DC |
 
-**Total: 35 structural tests, 100% decision coverage, all conditions MC/DC-proven.**
+**Total: 55 structural tests, 9 compound decisions, 100% decision coverage, all conditions MC/DC-proven.**
 
-### Functional — `tests/test_history.py`
+### Functional — `tests/test_history.py` + `tests/test_routes_and_features.py`
 
 End-to-end HTTP tests that verify the API behavior against a running server with a seeded database.
 
+**test_history.py (13 scenarios):**
 - **test_status_toggle**: Cycles status and records history entry
 - **test_notes_update**: Writes notes and verifies persistence
 - **test_history_newest_first**: Fetches history timeline, verifies reverse chronological order
 - **test_fields_present**: Validates each history record has event_type, item_id, old_value, new_value, occurred
 - **test_public_api_access**: Confirms /api/history/<id> is publicly readable
 - **test_api_errors**: Verifies proper HTTP status codes for bad requests
+- **test_cascade_delete**: Item deletion removes history from DB and YAML
+- **test_pruning_cap**: History table capped at MAX_HISTORY_PER_ITEM
+
+**test_routes_and_features.py:**
+- Auth: login, logout, rate limiting, auth-check, CSRF token endpoints
+- Mutations: add (409 conflict), rename, delete (404), reorder, toggle
+- Security: headers, DB archive snapshots, backup rotation
+- Admin credential validation (missing STATUS_ADMIN_PASS_HASH)
+
+### Healthcheck — `tests/test_healthcheck.py` + `tests/test_healthcheck_mc_dc.py`
+
+**test_healthcheck.py (44 tests):**
+- URL scheme validation (http/https only)
+- Host/IP validation for ping (rejects options, command injection)
+- Config parsing: defaults, custom intervals, healthy_codes, SOAP auto-detection
+- Real subprocess tests: ping localhost, curl connection refused, curl binary present
+- Healthcheck endpoints: GET /api/healthchecks, POST /api/healthcheck/run (admin+CSRF)
+- Worker thread: no-op when unconfigured, _set_health_status DB mutations
+- **Exception paths (17 tests):** TimeoutExpired, FileNotFoundError, OSError for ping/curl/soap; empty stdout, no newline, non-digit status codes, out-of-range codes, non-whitelisted codes, expected_string missing/found
+
+**test_healthcheck_mc_dc.py (11 tests):**
+- MC/DC for D_hc1 (health result gate) — 3 tests
+- MC/DC for D_hc2 (URL sanitisation) — 5 tests
+- Worker file lock tests (fcntl) — 2 tests
 
 ### Smoke — `tests/test_health.sh`
 
 Quick shell-based health check: pings the root endpoint and asserts HTTP 200. Runs in under 1 second, suitable for CI pre-checks.
+
+### Restart Persistence — `tests/test_restart_persistence.py`
+
+2 critical restart-simulation tests:
+- Add item via API → init_db() re-seeds → item survives
+- Add then delete item → init_db() → item stays gone (no re-addition)
+
+### Input Filter — `tests/test_input_filter.py` (100% coverage)
+
+80+ assertions covering:
+- Control character stripping (null bytes, DEL, preserves tab/newline)
+- XSS detection (script tags, event handlers, javascript: protocol, encoded brackets)
+- SQLi detection (compound patterns: UNION SELECT, OR 1=1, comments, stacked queries)
+- Path traversal (../, %2e%2e/)
+- Shell injection (backticks, $(), &&, ||, ;)
+- sanitize_text: length limits, HTML escaping, non-string rejection
+- validate_name: strict/relaxed charsets, length, XSS/SQLi/path/shell rejection
+- validate_notes: empty allowed, XSS/SQLi rejection, max length
+- validate_user_input: XSS/SQLi/path/shell in username/password
+- validate_json_data: dict required, rejects list/string/number/None
+- validate_int_param: int, string numeric, rejects negative/float/bool/non-numeric
 
 ---
 
@@ -53,18 +104,21 @@ Quick shell-based health check: pings the root endpoint and asserts HTTP 200. Ru
 ```bash
 cd ~/Developer/status-my-page
 
-# Start server first (in a separate terminal):
-source .venv/bin/activate
-./start.sh
+# All tests (no server needed for structural/unit)
+.venv/bin/pytest tests/ -v
 
-# Then run all tests:
-python -m pytest tests/ -v
+# Specific test categories
+.venv/bin/pytest tests/test_input_filter.py -v              # Input sanitization (100%)
+.venv/bin/pytest tests/test_mc_dc.py -v                      # MC/DC structural proofs (D1-D7)
+.venv/bin/pytest tests/test_structural.py -v                 # Additional MC/DC (D4, D5)
+.venv/bin/pytest tests/test_healthcheck.py -v                # Healthcheck functional + exception paths
+.venv/bin/pytest tests/test_healthcheck_mc_dc.py -v          # Healthcheck MC/DC + worker lock
+.venv/bin/pytest tests/test_history.py -v                    # Status history feature
+.venv/bin/pytest tests/test_routes_and_features.py -v        # Auth, mutations, headers
+.venv/bin/pytest tests/test_restart_persistence.py -v        # Restart simulation
 
-# Or just structural:
-python -m pytest tests/test_structural.py tests/test_mc_dc.py -v
-
-# Or just functional:
-python -m pytest tests/test_history.py -v
+# With coverage report
+.venv/bin/pytest tests/ --cov=app --cov=healthcheck --cov=input_filter --cov-report=term-missing
 ```
 
 ### Individual Test Class
@@ -75,18 +129,16 @@ pytest tests/test_structural.py::Test_D5_SetNotesGuard -v
 
 # Only the security gate on /api/delete
 pytest tests/test_mc_dc.py::Test_D3_SecurityGuard::test_C1_not_admin__delete -v
-```
 
-### Without pytest (Functional Only)
-
-```bash
-python tests/test_history.py
+# Only healthcheck exception paths
+pytest tests/test_healthcheck.py::TestHealthcheckExceptionPaths -v
 ```
 
 ### Smoke Check
 
 ```bash
-bash tests/test_health.sh
+bash tests/test_health.sh                    # Default: http://localhost:8920
+bash tests/test_health.sh http://myserver:9920  # Custom URL
 ```
 
 ---
@@ -95,7 +147,7 @@ bash tests/test_health.sh
 
 ### How It Works
 
-Each structural test class targets **one compound decision** in `app.py`. The methodology:
+Each structural test class targets **one compound decision** in `app.py` or `healthcheck.py`. The methodology:
 
 1. **Baseline**: Set all conditions to pass so the function proceeds normally
 2. **Individual Failure**: Flip exactly one condition to the opposite truth value while holding other constants at values that would allow the guard to pass — if the guard now blocks/skips, that condition is proven independent
@@ -117,13 +169,13 @@ The fixture ensures no state leaks between test classes. Tests within a class sh
 
 D3 is the most critical guard because it protects all mutation endpoints. It uses a **combinatorial approach** across 4 endpoints:
 
-For each endpoint (`/api/toggle`, `/api/add`, `/api/delete`, `/api/reorder`):
+For each endpoint (`/api/toggle`, `/api/add`, `/api/delete`, `/api/reorder`, `/api/healthcheck/run`):
 1. Baseline test: Admin + Valid CSRF + Under Rate Limit expects `200`
 2. C1 failure: Non-admin request expects `403`
 3. C2 failure: Invalid CSRF token expects `403`
 4. C3 failure: Over rate limit (pre-seeded `_mutation_rates`) expects `403`
 
-**Total D3 tests: 15** (1 baseline + 12 conditional failures across 4 endpoints)
+**Total D3 tests: 15** (1 baseline + 12 conditional failures across 5 endpoints)
 
 The key insight is that **any bypass of ANY gate grants unauthenticated write access**, so the proof must show all three gates independently block even when the other two pass.
 
@@ -152,26 +204,31 @@ Each functional test manages its own fixture data:
 
 ---
 
-## 5. Adding New Tests
+## 5. Healthcheck Tests
 
-### For Structural/MC/DC Tests
+### Unit Tests (`test_healthcheck.py`)
 
-1. **Identify a compound expression** in `app.py`: Search for lines containing `or` or `and` with 2+ conditions
-2. **Extract the conditions**: Break the boolean expression into atomic predicates (C1, C2, etc.)
-3. **Write baseline test**: All conditions pass so function succeeds
-4. **Write individual failure tests**: For each condition Ci:
-   - Set all other conditions to values that allow the guard to pass
-   - Force Ci to its opposite truth value
-   - Assert the guard now blocks or skips
-5. **Map line refs**: Record the source line numbers where each condition lives in app.py
+Covers the full healthcheck subsystem:
+- **Parsing & Validation**: URL scheme allowlist, host validation, numeric sanitization, SOAP auto-detection
+- **Real subprocess calls**: ping, curl, soap (testing against localhost/unreachable addresses)
+- **Endpoints**: GET /api/healthchecks (public), POST /api/healthcheck/run (admin+CSRF, dry-run)
+- **Worker internals**: _set_health_status DB writes, history recording, no-op guards
 
-### For Functional Tests
+### Exception Path Tests (17 tests in `TestHealthcheckExceptionPaths`)
 
-1. Add a `test_*` method to `tests/test_history.py`
-2. Use `requests.Session()` or `requests.post()` with a running server URL
-3. Seed any required test data before assertions
-4. Verify HTTP status code AND response JSON body
-5. Clean up test artifacts after assertions
+Each subprocess call (`ping`, `curl`, `soap`) tested for:
+- `subprocess.TimeoutExpired` → returns False/None
+- `FileNotFoundError` (binary missing) → returns False/None
+- `OSError` (network unreachable) → returns False/None
+- **SOAP-specific**: empty stdout, missing newline, non-digit status code, code=0, code>599, non-whitelisted code, expected_string missing/found
+
+These tests use `monkeypatch` to mock `subprocess.run` and verify graceful degradation.
+
+### MC/DC Tests (`test_healthcheck_mc_dc.py`)
+
+- **D_hc1** (L222): `code is not None and code in healthy_codes` — 3 tests (baseline, C1=F, C2=F)
+- **D_hc2** (L124): `not url or not isinstance(url, str) or not url.strip()` — 5 tests (C1, C2, C3 each independently, baseline)
+- **Worker Lock**: fcntl-based file lock proves single-worker guarantee across gunicorn processes
 
 ---
 
@@ -185,6 +242,38 @@ python -m pytest tests/ -v
 
 The structural suite is deliberately **brittle** because it should fail if a guard's logic changes — the condition truth table will no longer match expected outputs. This is intentional: any regression in security guards or restoration logic must surface as a test failure.
 
+**Current coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
+
 ---
 
-*Document version: 1.0 | Last updated: 2026-08-13 | Author: Simar Sahni*
+## 7. Adding New Tests
+
+### For Structural/MC/DC Tests
+
+1. **Identify a compound expression** in `app.py` or `healthcheck.py`: Search for lines containing `or` or `and` with 2+ conditions
+2. **Extract the conditions**: Break the boolean expression into atomic predicates (C1, C2, etc.)
+3. **Write baseline test**: All conditions pass so function succeeds
+4. **Write individual failure tests**: For each condition Ci:
+   - Set all other conditions to values that allow the guard to pass
+   - Force Ci to its opposite truth value
+   - Assert the guard now blocks or skips
+5. **Map line refs**: Record the source line numbers where each condition lives in app.py
+
+### For Functional Tests
+
+1. Add a `test_*` method to `tests/test_history.py` or `tests/test_routes_and_features.py`
+2. Use `requests.Session()` or `requests.post()` with a running server URL
+3. Seed any required test data before assertions
+4. Verify HTTP status code AND response JSON body
+5. Clean up test artifacts after assertions
+
+### For Healthcheck Tests
+
+1. Add to `tests/test_healthcheck.py` for functional tests
+2. Add to `tests/test_healthcheck_mc_dc.py` for MC/DC proofs
+3. Use `monkeypatch.setattr(subprocess, "run", mock_fn)` for exception-path tests
+4. Mock `fcntl.flock` behavior for worker lock tests
+
+---
+
+*Document version: 2.0 | Last updated: 2026-08-15 | Author: Simar Sahni*

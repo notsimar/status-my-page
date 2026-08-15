@@ -27,7 +27,8 @@ items:
 # ── Admin credentials ─────────────────────────────────────────
 admin:
   user: admin                # Admin username (overridable via STATUS_ADMIN_USER env)
-  # NOTE: Never store plaintext passwords here. Use STATUS_ADMIN_PASS_HASH env var instead.
+  # NOTE: Never store plaintext passwords here. 
+  # The STATUS_ADMIN_PASS_HASH environment variable is REQUIRED (no fallback).
 
 # ── Server settings ────────────────────────────────────────────
 server:

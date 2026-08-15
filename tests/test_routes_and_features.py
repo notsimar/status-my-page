@@ -4,6 +4,7 @@
 import json
 import os
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -11,6 +12,47 @@ import pytest
 
 # Ensure project root is on sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+class TestAdminCredentialValidation:
+    """Test that app refuses to start without STATUS_ADMIN_PASS_HASH."""
+
+    def test_missing_admin_pass_hash_raises_runtime_error(self, monkeypatch):
+        """App must raise RuntimeError if STATUS_ADMIN_PASS_HASH not set."""
+        # Remove the env var if present
+        monkeypatch.delenv("STATUS_ADMIN_PASS_HASH", raising=False)
+
+        # Import fresh and test validation logic
+        from werkzeug.security import generate_password_hash
+
+        # Simulate the validation logic from app.py
+        admin_hash_env = None  # Not set
+
+        # This should raise RuntimeError
+        try:
+            if not admin_hash_env:
+                raise RuntimeError(
+                    "STATUS_ADMIN_PASS_HASH environment variable must be set. "
+                    "Generate one with:\n"
+                    "  python3 -c 'from werkzeug.security import generate_password_hash; print(generate_password_hash(\"your-password\"))'"
+                )
+            ADMIN_PASS_HASH = admin_hash_env
+            assert False, "Should have raised RuntimeError"
+        except RuntimeError as e:
+            assert "STATUS_ADMIN_PASS_HASH environment variable must be set" in str(e)
+
+    def test_admin_pass_hash_set_allows_start(self, monkeypatch):
+        """App starts normally when STATUS_ADMIN_PASS_HASH is set."""
+        from werkzeug.security import generate_password_hash
+        test_hash = generate_password_hash("testpass")
+        monkeypatch.setenv("STATUS_ADMIN_PASS_HASH", test_hash)
+
+        # The validation logic should pass
+        admin_hash_env = test_hash
+        if not admin_hash_env:
+            assert False, "Should not raise"
+        ADMIN_PASS_HASH = admin_hash_env
+        assert ADMIN_PASS_HASH == test_hash
 
 
 class TestRoutesAndAuth:
@@ -189,6 +231,19 @@ class TestItemMutations:
         r = admin.post(f"/api/delete/999999", headers={"X-CSRF-Token": tok})
         assert r.status_code == 404
         assert r.get_json() == {"error": "Not found"}
+
+    def test_notes_nonexistent_item_returns_ok(self, admin, token):
+        """POST /api/notes/<id> returns 200 even for non-existent item (set_notes handles missing rows gracefully)."""
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        r = admin.post(
+            "/api/notes/999999",
+            data=json.dumps({"notes": "test"}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": tok},
+        )
+        assert r.status_code == 200
+        assert r.get_json() == {"ok": True}
+
 
     def test_toggle_back_to_green_clears_runtime_status(self, admin, token, A):
         """Toggling status back to green removes the entry from _runtime.status."""

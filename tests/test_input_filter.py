@@ -26,6 +26,44 @@ from input_filter import (
 )
 
 
+class TestMissingRowPaths:
+    """Test functions that handle missing DB rows gracefully."""
+
+    def test_toggle_item_missing_row_returns_green(self, A):
+        """toggle_item() returns 'green' for non-existent item_id without error."""
+        with A.app.test_request_context():
+            result = A.toggle_item(999999)
+        assert result == "green"
+
+    def test_update_item_name_missing_row_returns_not_found(self, A):
+        """update_item_name() returns (False, 'Not found') for non-existent item_id."""
+        with A.app.test_request_context():
+            ok, msg = A.update_item_name(999999, "New Name")
+        assert ok is False
+        assert msg == "Not found"
+
+    def test_set_notes_missing_row_no_error(self, A):
+        """set_notes() handles missing row gracefully (no error, no YAML write)."""
+        with A.app.test_request_context():
+            # This should not raise any exception
+            A.set_notes(999999, "Some notes")
+        
+        # Verify no YAML write occurred for non-existent item
+        rt = A._load_runtime()
+        notes_rt = rt.get("notes", {})
+        # 999999 doesn't exist in items, so it shouldn't be in notes
+        assert "999999" not in str(notes_rt)
+
+    def test_set_notes_missing_row_no_crash_on_empty_notes(self, A):
+        """set_notes() with empty notes on missing row also no-ops."""
+        with A.app.test_request_context():
+            A.set_notes(999999, "")
+        
+        rt = A._load_runtime()
+        notes_rt = rt.get("notes", {})
+        assert "999999" not in str(notes_rt)
+
+
 # ─── Control character stripping ────────────────────────────────────
 
 class TestStripControlChars:

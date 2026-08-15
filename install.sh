@@ -128,12 +128,23 @@ ADMIN_USER="${ADMIN_USER_INPUT:-admin}"
 read -rsp "Admin password: " ADMIN_PASS_INPUT
 echo ""
 
-PASS_HASH=$(echo "$ADMIN_PASS_INPUT" | "$VENV_DIR/bin/python3" -c "from werkzeug.security import generate_password_hash; import sys; print(generate_password_hash(sys.stdin.readline().rstrip()))")
+# Pass password via stdin to Python (no shell interpolation of user input)
+PASS_HASH=$("$VENV_DIR/bin/python3" -c "
+from werkzeug.security import generate_password_hash
+import sys
+pwd = sys.stdin.read()
+print(generate_password_hash(pwd.rstrip('\n')))
+" <<< "$ADMIN_PASS_INPUT")
 
 # Write new admin user into config.yaml — use env vars to avoid shell injection
 export _SP_INSTALL_USER="$ADMIN_USER"
-export INSTALL_DIR                                          # needed by the Python snippet below
-"$VENV_DIR/bin/python3" -c "import yaml,os; cfg=yaml.safe_load(open(os.environ['INSTALL_DIR']+'/config.yaml')); cfg['admin']['user']=os.environ['_SP_INSTALL_USER']; yaml.dump(cfg, open(os.environ['INSTALL_DIR']+'/config.yaml','w'), default_flow_style=False)"
+export INSTALL_DIR
+"$VENV_DIR/bin/python3" -c "
+import yaml, os
+cfg = yaml.safe_load(open(os.environ['INSTALL_DIR'] + '/config.yaml'))
+cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
+yaml.dump(cfg, open(os.environ['INSTALL_DIR'] + '/config.yaml', 'w'), default_flow_style=False)
+"
 
 echo "Credentials set: user=$ADMIN_USER"
 

@@ -81,7 +81,7 @@ server:
   port: 8920
 ```
 
-> **Note:** Do not put a plaintext password in `config.yaml`. Use the `STATUS_ADMIN_PASS_HASH` environment variable instead (see below).
+> **Note:** Do not put a plaintext password in `config.yaml`. The `STATUS_ADMIN_PASS_HASH` environment variable is **required** (no fallback). Generate one with the command below.
 
 **Start the server:**
 
@@ -290,12 +290,12 @@ server:
 
 ### Environment variables
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `STATUS_ADMIN_USER` | Override admin username from config.yaml | `john` |
-| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production) | `scrypt$72816$...` |
-| `STATUS_SECRET_KEY` | Flask session signing key (auto-generated if unset) | Any random string |
-| `STATUS_NO_ARCHIVE=1` | Skip DB archival on restart (dev/testing only) | — |
+| Variable | Purpose | Required | Example |
+|----------|---------|----------|---------|
+| `STATUS_ADMIN_USER` | Override admin username from config.yaml | No | `john` |
+| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production) | **Yes** | `scrypt$72816$...` |
+| `STATUS_SECRET_KEY` | Flask session signing key (auto-generated if unset) | No | Any random string |
+| `STATUS_NO_ARCHIVE=1` | Skip DB archival on restart (dev/testing only) | No | — |
 
 **Generate a hash:**
 
@@ -347,45 +347,67 @@ cp config.yaml.bak1 config.yaml
 
 ## 🧪 Testing & Quality Assurance
 
-### Functional testing
-- **Input Filter** (`tests/test_input_filter.py`): 80 assertions covering XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing (null bytes, control chars, oversized input), and safe-string passthrough for all validator functions.
-- **Structural Tests** (`tests/test_structural.py`): Per-route mutation logic — note persistence guards, empty/whitespace handling, reorder behaviour, and YAML runtime save conditions.
-- **API History** (`tests/test_history.py`): Comprehensive test suite with 10+ assertions verifying the status timeline, history recording (status toggles + notes), newest-first ordering, field presence, public accessibility, and proper cleanup of test artifacts.
-- **Health Check** (`tests/test_health.sh`): Quick shell-based smoke test that pings the root `/` endpoint and verifies an HTTP 200 response — ideal for CI pipelines or post-deploy validation.
+### Test Coverage Summary
 
-To run all tests:
+| Test Suite | Coverage | Description |
+|------------|----------|-------------|
+| `test_input_filter.py` | **100%** | 80+ assertions: XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, and safe-string passthrough |
+| `test_healthcheck.py` | 76% | Healthcheck parsing, endpoints, worker lock, and 17 exception-path tests (timeout, missing binaries, bad curl output) |
+| `test_mc_dc.py` | — | **MC/DC formal verification** of 7 compound decisions (admin+CSRF+rate-limit gates, YAML restore filters, CSRF internals, delete cleanup) |
+| `test_structural.py` | — | MC/DC for reorder override (D4) and set_notes YAML persist gate (D5) |
+| `test_history.py` | — | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning |
+| `test_routes_and_features.py` | — | Auth, mutations, security headers, backups, admin credential validation |
+| `test_restart_persistence.py` | — | 2 critical restart-simulation tests (add/delete survival) |
+| `test_healthcheck_mc_dc.py` | — | MC/DC for healthcheck result gate (D_hc1) and URL sanitisation (D_hc2) + worker lock tests |
 
-```bash
-# Unit + structural (no server needed)
-.venv/bin/pytest tests/test_input_filter.py tests/test_structural.py tests/test_mc_dc.py -v
+**Overall coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
 
-# Functional API tests (requires running server)
-./start.sh
-python3 tests/test_history.py
-bash tests/test_health.sh
-```
-
-Or with pytest:
+### Running Tests
 
 ```bash
-pip install pytest
-pytest tests/ -v
+# All tests (no server needed)
+.venv/bin/pytest tests/ -v
+
+# Specific test categories
+.venv/bin/pytest tests/test_input_filter.py -v              # Input sanitization (100%)
+.venv/bin/pytest tests/test_mc_dc.py -v                      # MC/DC structural proofs
+.venv/bin/pytest tests/test_structural.py -v                 # Additional MC/DC (D4, D5)
+.venv/bin/pytest tests/test_healthcheck.py -v                # Healthcheck + exception paths
+.venv/bin/pytest tests/test_healthcheck_mc_dc.py -v          # Healthcheck MC/DC + worker lock
+.venv/bin/pytest tests/test_history.py -v                    # Status history feature
+.venv/bin/pytest tests/test_routes_and_features.py -v        # Auth, mutations, headers
+.venv/bin/pytest tests/test_restart_persistence.py -v        # Restart simulation
+
+# With coverage report
+.venv/bin/pytest tests/ --cov=app --cov=healthcheck --cov=input_filter --cov-report=term-missing
 ```
 
 ### Structural Verification (MC/DC)
-This project employs **Modified Condition/Decision Coverage** to prove that critical security guards and restoration filters are logically sound. 
+
+This project employs **Modified Condition/Decision Coverage** to prove that critical security guards and restoration filters are logically sound.
+
 - **Coverage Target**: Every condition in compound boolean expressions independently affects the outcome.
-- **Verified Guards**: Admin authentication, CSRF validation, Rate limiting, and YAML runtime restoration logic.
+- **Verified Guards**: Admin authentication, CSRF validation, Rate limiting, YAML runtime restoration logic, reorder override, set_notes persistence gate, CSRF internal guard, delete cleanup cascade.
 - **Documentation**: See [README_MCDC.md](./README_MCDC.md) for the full mapping table and proof matrices.
 
-**Run structural tests:**
-
 ```bash
-# Run MC/DC structural coverage (requires pytest + running server)
-pytest tests/test_mc_dc.py -v
+# Run MC/DC structural coverage
+.venv/bin/pytest tests/test_mc_dc.py tests/test_structural.py tests/test_healthcheck_mc_dc.py -v
 ```
 
-The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, YAML restoration filters, and `_runtime` key filtering). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
+The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, YAML restoration filters, `_runtime` key filtering, healthcheck result evaluation, URL sanitisation, worker locking). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
+
+### Quick Health Check (Shell)
+
+For CI pipelines or post-deploy validation:
+
+```bash
+# Requires running server on localhost:8920 (or set BASE_URL)
+./tests/test_health.sh                    # Default: http://localhost:8920
+./tests/test_health.sh http://myserver:9920  # Custom URL
+```
+
+This shell script validates: page load, static assets, auth-check, login, mutation auth requirement, 3-state toggle cycle, and notes API — all in ~2 seconds.
 
 ## 🗂 File structure
 
@@ -402,12 +424,16 @@ status-my-page/
 ├── templates/index.html     # Jinja2-rendered UI with login & history modals
 ├── start.sh / stop.sh / restart.sh / rebuild.sh / install.sh
 ├── tests/
-│   ├── conftest.py            # Shared fixtures (temp DB, admin auth, CSRF)
-│   ├── test_input_filter.py   # 80 assertions: XSS, SQLi, fuzzing, sanitization
-│   ├── test_structural.py     # Per-route mutation logic & YAML persistence
-│   ├── test_history.py        # Automated API/DB history test suite
-│   ├── test_mc_dc.py          # MC/DC structural coverage for critical guards
-│   └── test_health.sh         # Quick health-check script
+│   ├── conftest.py              # Shared fixtures (temp DB, admin auth, CSRF)
+│   ├── test_input_filter.py     # 80+ assertions: XSS, SQLi, fuzzing, sanitization
+│   ├── test_structural.py       # Per-route mutation logic & YAML persistence (MC/DC D4, D5)
+│   ├── test_history.py          # Automated API/DB history test suite (13 scenarios)
+│   ├── test_mc_dc.py            # MC/DC structural coverage for 7 critical guards
+│   ├── test_healthcheck.py      # Healthcheck functional + 17 exception-path tests
+│   ├── test_healthcheck_mc_dc.py # Healthcheck MC/DC (D_hc1, D_hc2) + worker lock
+│   ├── test_routes_and_features.py # Auth, mutations, headers, backups
+│   ├── test_restart_persistence.py # Restart simulation tests
+│   └── test_health.sh           # Quick health-check script for CI/CD
 ├── License.md               # MIT © 2026 Simar Sahni
 └── .venv/                   # (excluded from git/deploy)
 ```
@@ -416,8 +442,8 @@ status-my-page/
 
 | Feature | Implementation |
 |---------|---------------|
-| **Authentication** | Flask signed sessions only — no plaintext cookie fallback |
-| **CSRF protection** | Per-request secret token, rotated on every successful mutation; 3-strike session wipe |
+| **Authentication** | Flask signed sessions only — no plaintext cookie fallback; `STATUS_ADMIN_PASS_HASH` env var **required** |
+| **CSRF protection** | Per-request secret token (header-only, no query param leakage), rotated on every successful mutation; 3-strike session wipe |
 | **Login rate-limit** | 5 failed attempts per IP → 30-second lockout |
 | **Mutation rate-limit** | 60 mutations per IP per 60-second window |
 | **Password storage** | werkzeug `scrypt` hashing with timing-safe HMAC comparison |

@@ -141,8 +141,8 @@ def _save_runtime(data):
 
         # Preserve known top-level keys under _base during a rewrite
         for section in ("admin", "server"):
-            if section in cfg_data and f"_base.{section}" not in str(cfg_data.get("_base", {})):
-                cfg_data.setdefault("_base", {})[section] = (cfg_data.pop(section, {}))
+            if section in cfg_data and section not in cfg_data.get("_base", {}):
+                cfg_data.setdefault("_base", {})[section] = cfg_data.pop(section, {})
 
         cfg_data["_runtime"] = data
 
@@ -207,20 +207,18 @@ def _is_locked(ip: str) -> bool:
     return len(_failed_logins.get(ip, [])) >= MAX_LOGIN_ATTEMPTS
 
 
-# Admin credentials — env var hash takes priority; fall back to config plaintext only if set.
+# Admin credentials — env var hash is REQUIRED. No plaintext fallback.
 ADMIN_USER = os.environ.get("STATUS_ADMIN_USER", CFG_ADMIN_USER)
 admin_hash_env = os.environ.get("STATUS_ADMIN_PASS_HASH")
-if admin_hash_env:
-    ADMIN_PASS_HASH = admin_hash_env
-elif CFG_ADMIN_PASS_FALLBACK_PLAIN and CFG_ADMIN_PASS_FALLBACK_PLAIN != "changeme":
-    ADMIN_PASS_HASH = generate_password_hash(CFG_ADMIN_PASS_FALLBACK_PLAIN)
-else:
-    # No hash configured — refuse to start with a blank password.
+if not admin_hash_env:
+    # No hash configured — refuse to start. Generate one with:
+    #   python3 -c 'from werkzeug.security import generate_password_hash; print(generate_password_hash("your-password"))'
     raise RuntimeError(
-        "STATUS_ADMIN_PASS_HASH environment variable must be set in production. "
+        "STATUS_ADMIN_PASS_HASH environment variable must be set. "
         "Generate one with:\n"
         "  python3 -c 'from werkzeug.security import generate_password_hash; print(generate_password_hash(\"your-password\"))'"
     )
+ADMIN_PASS_HASH = admin_hash_env
 
 
 # ── Database helpers ───────────────────────────────────────────────
@@ -272,7 +270,7 @@ def _archive_db_snapshot():
 
     ARCHIVES_DIR.mkdir(exist_ok=True)
     ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    filename = ARCHIVES_DIR / f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    filename = ARCHIVES_DIR / f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
 
     snapshot_data = {
         "timestamp": ts,
@@ -362,12 +360,13 @@ def init_db():
         )
         inserted_count = len(new_items)
 
-    # Reset all statuses to green, clear notes, and re-index positions from config order
+    # Re-index positions to match config order — DO NOT reset status/notes here.
+    # Status/notes are only changed by admin actions or healthcheck worker.
     for i, name in enumerate(seed_items):
         row = db.execute("SELECT id FROM status_items WHERE name = ?", [name]).fetchone()
         if row:
             db.execute(
-                "UPDATE status_items SET status='green', notes='', position=? WHERE id=?",
+                "UPDATE status_items SET position=? WHERE id=?",
                 (i, row[0])
             )
 
@@ -642,8 +641,8 @@ def _get_csrf() -> str:
 def _check_csrf() -> bool:
     ip = request.remote_addr or ""
     header_token = request.headers.get("X-CSRF-Token", "")
-    query_token = request.args.get(CSRF_SESSION_KEY, "")
-    sent = header_token or query_token
+    # Only accept CSRF token via header (query params are logged)
+    sent = header_token
 
     expected = session.get(CSRF_SESSION_KEY)
     if not expected or not hmac.compare_digest(sent, expected):

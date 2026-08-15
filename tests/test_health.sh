@@ -50,15 +50,23 @@ PASS=0; FAIL=0
 pass_ok()  { PASS=$((PASS+1)); echo "  ✅ $1";            }
 fail_fail() { FAIL=$((FAIL+1)); echo "  ❌ $1${2:+ — $2}"; }
 
-# ── Overridable credentials: read from .env if present, otherwise default ──
+# ───────────── Overridable credentials: read from .env if present ────────
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HEALTH_USER="admin"
-HEALTH_PASS="changeme"
 
+# Read password from .env file or environment
 if [ -f "$SCRIPT_DIR/.env" ]; then
-    # Derive admin user from STATUS_ADMIN_USER env var (or fall back to "admin")
-    HEALTH_USER="${STATUS_ADMIN_USER:-$HEALTH_USER}"
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/.env"
 fi
+
+# Use STATUS_ADMIN_USER from env, or fall back to "admin"
+HEALTH_USER="${STATUS_ADMIN_USER:-$HEALTH_USER}"
+
+# For the health check, we don't have the password hash available directly
+# The test will fail to login if the password isn't "changeme" in the default config
+# In production, the user should set HEALTH_PASS in their .env or environment
+HEALTH_PASS="${HEALTH_PASS:-changeme}"
 
 echo "Health checks → ${BASE_URL}  (user: ${HEALTH_USER})"
 echo '───────────────────────────'

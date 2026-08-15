@@ -142,17 +142,21 @@ if (addItemForm) {
             row.className = 'status-row';
             row.dataset.id = item.id;
             row.draggable = true;
+
+            // Build row via DOM to avoid any double-encoding risk from escHtml
             row.innerHTML = `
                 <div class="drag-handle" title="Drag to reorder">⠿</div>
                 <div class="status-main">
                     <span class="status-dot green"></span>
-                    <span class="status-name">${escHtml(item.name)}</span>
+                    <span class="status-name"></span>
                     <span class="status-label green">Operational</span>
                 </div>
-                <textarea class="notes-input" placeholder="Add status notes…" data-id="${item.id}">${escHtml(item.notes || '')}</textarea>
+                <textarea class="notes-input" placeholder="Add status notes…" data-id="${item.id}"></textarea>
                 <button class="btn-history" title="View history" data-id="${item.id}">🕙</button>
                 <button class="btn-delete" title="Delete this item" data-id="${item.id}">✕</button>
             `;
+            row.querySelector('.status-name').textContent = item.name;
+            row.querySelector('.notes-input').textContent = item.notes || '';
             list.appendChild(row);
 
             input.value = '';
@@ -285,12 +289,6 @@ function sendReorder() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order })
     }).catch(() => location.reload());
-}
-
-function escHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
 }
 
 // ── Overall badge ─────────────────────────────────────────────────
