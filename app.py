@@ -46,7 +46,6 @@ ITEM_NAMES: list[str] = cfg.get("items", [])
 CFG_ADMIN_USER = cfg.get("admin", {}).get("user", "admin")
 # Do not read config plaintext password — use env var hash only.
 # If neither STATUS_ADMIN_PASS_HASH nor a fallback exists, refuse to start.
-CFG_ADMIN_PASS_FALLBACK_PLAIN = cfg.get("admin", {}).get("password", "")
 SERVER_HOST = cfg.get("server", {}).get("host", "0.0.0.0")
 SERVER_PORT = cfg.get("server", {}).get("port", 8920)
 
