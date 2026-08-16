@@ -2,9 +2,14 @@
 """Tests for the optional per-service healthcheck system (app.py lines ~57-310).
 
 Covers:
-  _safe_url            — scheme allowlist, SSRF surface
-  _parse_healthchecks  — config parsing, sanitisation, edge cases
+  _safe_url             — scheme allowlist, SSRF surface
+  _safe_host            — host/IP validation for ping
+  _safe_port            — port number validation for TCP
+  _parse_healthchecks   — config parsing, sanitisation, edge cases
+  _run_ping_check       — real ping invocation + failure modes
+  _run_tcp_check        — real TCP connection + failure modes
   _run_curl_check       — real curl invocation + failure modes
+  _run_soap_check       — real SOAP POST via curl + failure modes
   run_healthchecks_once — public one-shot entry-point
   start_healthchecks    — daemon thread no-op when nothing configured
   GET /api/healthchecks — JSON serialisability (sets -> sorted lists)
@@ -282,6 +287,97 @@ class TestParseHealthchecks:
         assert hc["Gateway"]["type"] == "ping"
         assert hc["Gateway"]["host"] == "10.0.0.1"
 
+    def test_tcp_healthcheck_explicit_type(self, A):
+        self._write(
+            A,
+            {
+                "items": ["Database"],
+                "_runtime": {},
+                "healthchecks": {
+                    "Database": {"type": "tcp", "host": "127.0.0.1", "port": 5432, "interval": 15, "timeout": 2}
+                },
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "Database" in hc
+        assert hc["Database"]["type"] == "tcp"
+        assert hc["Database"]["host"] == "127.0.0.1"
+        assert hc["Database"]["port"] == 5432
+        assert hc["Database"]["interval"] == 15
+        assert hc["Database"]["timeout"] == 2
+
+    def test_tcp_healthcheck_auto_detect_from_host_port(self, A):
+        self._write(
+            A,
+            {
+                "items": ["Redis"],
+                "_runtime": {},
+                "healthchecks": {
+                    "Redis": {"host": "127.0.0.1", "port": 6379}
+                },
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "Redis" in hc
+        assert hc["Redis"]["type"] == "tcp"
+        assert hc["Redis"]["host"] == "127.0.0.1"
+        assert hc["Redis"]["port"] == 6379
+
+    def test_tcp_missing_host_skipped(self, A):
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "port": 5432}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_tcp_missing_port_skipped(self, A):
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1"}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_tcp_invalid_port_skipped(self, A):
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 99999}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_tcp_negative_port_skipped(self, A):
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": -1}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_tcp_invalid_host_rejected(self, A):
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "-c", "port": 80}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
 
 # ─── _run_ping_check ──────────────────────────────────────────────
 
@@ -294,6 +390,35 @@ class TestRunPingCheck:
     def test_unreachable_ping_fails(self, A):
         # 192.0.2.1 is reserved for documentation (TEST-NET-1) — non-routable
         assert A._run_ping_check("192.0.2.1", timeout=1) is False
+
+
+# ─── _run_tcp_check ──────────────────────────────────────────────
+
+class TestRunTcpCheck:
+    """Real TCP connection check + failure modes."""
+
+    def test_localhost_open_port_succeeds(self, A):
+        """TCP check to a listening port should succeed."""
+        import socket
+        # Create a temporary listening socket on localhost
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+        try:
+            assert A._run_tcp_check("127.0.0.1", port, timeout=2) is True
+        finally:
+            sock.close()
+
+    def test_localhost_closed_port_fails(self, A):
+        """TCP check to a closed port should fail."""
+        assert A._run_tcp_check("127.0.0.1", 19999, timeout=1) is False
+
+    def test_unreachable_host_fails(self, A):
+        """TCP check to non-routable IP should fail/timeout."""
+        # 192.0.2.1 is reserved for documentation (TEST-NET-1) — non-routable
+        assert A._run_tcp_check("192.0.2.1", 80, timeout=1) is False
 
 
 # ─── _run_curl_check ──────────────────────────────────────────────

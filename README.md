@@ -288,6 +288,62 @@ server:
   secret_key_env: STATUS_SECRET_KEY   # Flask session signing key
 ```
 
+### Healthchecks (optional)
+
+Automated per-service health checks update status indicators (🟢/🟡/🔴) in the background. Add a `healthchecks` section to `config.yaml`:
+
+```yaml
+healthchecks:
+  Primary Internet:
+    type: ping
+    host: 1.1.1.1
+    interval: 30
+    timeout: 3
+    retries: 2
+  Database:
+    type: tcp
+    host: 192.168.10.50
+    port: 5432
+    interval: 60
+    timeout: 5
+    retries: 3
+  API Gateway:
+    type: curl
+    url: https://api.example.com/health
+    healthy_codes: [200, 204]
+    interval: 30
+    timeout: 10
+    retries: 2
+  Legacy SOAP Service:
+    type: soap
+    url: http://legacy:9000/soap
+    soap_action: "HealthCheck"
+    expected_string: "<Status>OK</Status>"
+    interval: 60
+    timeout: 15
+```
+
+**Healthcheck Types:**
+
+| Type | Required Keys | Optional Keys | Use Case |
+|------|---------------|---------------|----------|
+| `ping` | `host` | `interval`, `timeout`, `retries` | ICMP reachability (routers, hosts) |
+| `tcp` | `host`, `port` | `interval`, `timeout`, `retries` | TCP port connectivity (DB, Redis, SMTP) |
+| `curl` | `url` | `healthy_codes`, `interval`, `timeout`, `retries` | HTTP/HTTPS REST APIs |
+| `soap` | `url` | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services |
+
+**Auto-detection:** If `type` is omitted, the parser infers it:
+- `host` + `port` → `tcp`
+- `host` only → `ping`
+- `url` → `curl` (or `soap` if `soap_action`/`body` present)
+
+**Key Options:**
+- `interval` — seconds between checks (default: 60)
+- `timeout` — seconds per attempt (default: 10)
+- `retries` — consecutive failures before marking degraded/red (default: 2)
+- `healthy_codes` — HTTP codes considered healthy (default: `[200]`)
+- `expected_string` / `body_contains` — response must contain this substring
+
 ### Environment variables
 
 | Variable | Purpose | Required | Example |
@@ -352,7 +408,7 @@ cp config.yaml.bak1 config.yaml
 | Test Suite | Coverage | Description |
 |------------|----------|-------------|
 | `test_input_filter.py` | **100%** | 80+ assertions: XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, and safe-string passthrough |
-| `test_healthcheck.py` | 76% | Healthcheck parsing, endpoints, worker lock, and 17 exception-path tests (timeout, missing binaries, bad curl output) |
+| `test_healthcheck.py` | 76% | Healthcheck parsing, endpoints, worker lock, and 20 exception-path tests (timeout, missing binaries, bad curl output) — includes TCP, ping, curl, SOAP |
 | `test_mc_dc.py` | — | **MC/DC formal verification** of 7 compound decisions (admin+CSRF+rate-limit gates, YAML restore filters, CSRF internals, delete cleanup) |
 | `test_structural.py` | — | MC/DC for reorder override (D4) and set_notes YAML persist gate (D5) |
 | `test_history.py` | — | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning |

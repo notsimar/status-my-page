@@ -95,6 +95,11 @@ def _safe_url(url: str) -> bool:
         return False
 
 
+def _safe_port(port: int) -> bool:
+    """Validate port number is in valid range."""
+    return isinstance(port, int) and 1 <= port <= 65535
+
+
 DEFAULT_SOAP_ENVELOPE = (
     '<?xml version="1.0" encoding="utf-8"?>'
     '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
@@ -139,6 +144,8 @@ def _parse_healthchecks() -> dict[str, dict]:
         if not check_type:
             if soap_action or soap_body:
                 check_type = "soap"
+            elif host and details.get("port") is not None:
+                check_type = "tcp"
             elif host:
                 check_type = "ping"
             elif url:
@@ -171,6 +178,24 @@ def _parse_healthchecks() -> dict[str, dict]:
             healthchecks[name.strip()] = {
                 "type": "ping",
                 "host": target_host,
+                "interval": max(interval, 1),
+                "timeout": max(timeout_val, 1),
+                "retries": max(retries, 1),
+            }
+        elif check_type == "tcp":
+            target_host = host or url
+            target_port = details.get("port")
+            if not target_host or not isinstance(target_host, str):
+                continue
+            target_host = target_host.strip()
+            if not _safe_host(target_host):
+                continue
+            if target_port is None or not _safe_port(int(target_port)):
+                continue
+            healthchecks[name.strip()] = {
+                "type": "tcp",
+                "host": target_host,
+                "port": int(target_port),
                 "interval": max(interval, 1),
                 "timeout": max(timeout_val, 1),
                 "retries": max(retries, 1),
@@ -227,6 +252,16 @@ def _run_ping_check(host: str, timeout: int) -> bool:
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
+def _run_tcp_check(host: str, port: int, timeout: int) -> bool:
+    """Run TCP connection check and return True if port is open, False on failure/timeout."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
         return False
 
 
@@ -416,6 +451,9 @@ def _healthcheck_worker():
             if hc.get("type") == "ping":
                 is_healthy = _run_ping_check(hc["host"], hc["timeout"])
                 check_info = f"ping {hc['host']}"
+            elif hc.get("type") == "tcp":
+                is_healthy = _run_tcp_check(hc["host"], hc["port"], hc["timeout"])
+                check_info = f"tcp {hc['host']}:{hc['port']}"
             elif hc.get("type") == "soap":
                 is_healthy, code = _run_soap_check(
                     url=hc["url"], timeout=hc["timeout"],
@@ -472,6 +510,9 @@ def run_healthchecks_once() -> dict[str, dict]:
         if hc.get("type") == "ping":
             healthy = _run_ping_check(hc["host"], hc["timeout"])
             results[name] = {"type": "ping", "host": hc["host"], "healthy": healthy}
+        elif hc.get("type") == "tcp":
+            healthy = _run_tcp_check(hc["host"], hc["port"], hc["timeout"])
+            results[name] = {"type": "tcp", "host": hc["host"], "port": hc["port"], "healthy": healthy}
         elif hc.get("type") == "soap":
             is_healthy, code = _run_soap_check(
                 url=hc["url"], timeout=hc["timeout"],

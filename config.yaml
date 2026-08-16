@@ -18,6 +18,27 @@ _base:
     port: 8920
     secret_key_env: STATUS_SECRET_KEY
 _runtime:
-  status: {}
+  status:
+    Primary Internet: degraded
   notes:
     Slack: High latency reported, investigating
+    Primary Internet: High latency
+  history:
+    Primary Internet:
+    - event_type: status
+      old_value: green
+      new_value: degraded
+      occurred: '2026-08-16T01:13:05.891199Z'
+    - event_type: notes
+      old_value: Some intermittent latency
+      new_value: High latency
+      occurred: '2026-08-16T01:13:24.091839Z'
+    Google workspace:
+    - event_type: status
+      old_value: degraded
+      new_value: red
+      occurred: '2026-08-16T01:13:26.013594Z'
+    - event_type: status
+      old_value: red
+      new_value: green
+      occurred: '2026-08-16T01:13:26.598230Z'
