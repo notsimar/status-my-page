@@ -28,8 +28,9 @@
 #
 # Prerequisites:
 #   1. Server running on target URL (see README → Installation)
-#   2. Admin credentials known — default is admin/changeme, or configure
-#      via STATUS_ADMIN_USER / STATUS_ADMIN_PASS_HASH env var.
+#   2. Admin credentials supplied — the app refuses to start without
+#      STATUS_ADMIN_PASS_HASH (no fallback). Set HEALTH_PASS (and optionally
+#      HEALTH_USER) in the environment or .env, matching your deployment.
 #
 # Usage:
 #     cd ~/Developer/status-my-page && ./tests/test_health.sh              # localhost:8920
@@ -54,19 +55,29 @@ fail_fail() { FAIL=$((FAIL+1)); echo "  ❌ $1${2:+ — $2}"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HEALTH_USER="admin"
 
-# Read password from .env file or environment
+# Read password from .env file or environment.
+# The hash value can contain '$' (e.g. scrypt salt), which would break a bare
+# 'source' under 'set -u' — source with nounset temporarily disabled.
 if [ -f "$SCRIPT_DIR/.env" ]; then
+    set +u
     # shellcheck source=/dev/null
-    source "$SCRIPT_DIR/.env"
+    . "$SCRIPT_DIR/.env"
+    set -u
 fi
 
-# Use STATUS_ADMIN_USER from env, or fall back to "admin"
+# Use STATUS_ADMIN_USER from env, or fall back to "admin" (username only)
 HEALTH_USER="${STATUS_ADMIN_USER:-$HEALTH_USER}"
 
-# For the health check, we don't have the password hash available directly
-# The test will fail to login if the password isn't "changeme" in the default config
-# In production, the user should set HEALTH_PASS in their .env or environment
-HEALTH_PASS="${HEALTH_PASS:-changeme}"
+# No password fallback: the app has no default credential (admin.password /
+# changeme were removed). HEALTH_PASS must be supplied in the environment or
+# .env — fail fast here rather than guessing.
+HEALTH_PASS="${HEALTH_PASS:-}"
+if [ -z "$HEALTH_PASS" ]; then
+    echo "ERROR: HEALTH_PASS is not set." >&2
+    echo "  The status page has no default password. Export your admin password" >&2
+    echo "  (e.g. 'export HEALTH_PASS=\"...\"') or add it to $SCRIPT_DIR/.env, then re-run." >&2
+    exit 2
+fi
 
 echo "Health checks → ${BASE_URL}  (user: ${HEALTH_USER})"
 echo '───────────────────────────'

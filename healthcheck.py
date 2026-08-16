@@ -400,12 +400,22 @@ def _set_health_status(name: str, desired_status: str):
 
 
 def _healthcheck_worker():
-    """Background thread that polls each service on its own interval."""
-    # Across multiple WSGI worker processes, ensure only one runs the healthcheck loop
-    if _BASE_DIR is None:
+    """Background thread that polls each service on its own interval.
+
+    A file-based advisory lock (instance/.healthcheck.lock, fcntl) ensures only
+    one worker process runs the loop at a time. The worker holds NO persistent
+    DB connection: it opens a WAL connection only briefly when flipping a
+    status, so it never contends with admin writes or DB rebuilds.
+    """
+    _shutdown = threading.Event()
+
+    if _DB_PATH is None:
         raise RuntimeError("Healthcheck not configured. Call configure_healthcheck() first.")
+
+    # Acquire file lock - only one worker process runs the loop at a time
     lock_file_path = _BASE_DIR / "instance" / ".healthcheck.lock"
     lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = None
     try:
         lock_file = open(lock_file_path, "a+")
         try:
@@ -413,93 +423,101 @@ def _healthcheck_worker():
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (IOError, OSError, ImportError):
             # Another worker process is already running the healthcheck worker
+            lock_file.close()
             return
     except Exception:
-        pass
+        lock_file = None  # couldn't even open the lock file; proceed unlocked
 
     # Track consecutive failures per service (for retry/backoff)
     fail_count: dict[str, int] = {}
     next_fire: dict[str, float] = {}
 
-    while True:
-        # ── Reload config every cycle so changes without restart work ──
-        healthchecks = _parse_healthchecks()
-        now = time.time()
+    try:
+        while not _shutdown.is_set():
+            # ── Reload config every cycle so changes without restart work ──
+            healthchecks = _parse_healthchecks()
+            now = time.time()
 
-        # Synchronize dynamic additions/removals
-        for name in list(next_fire):
-            if name not in healthchecks:
-                del next_fire[name]
-                fail_count.pop(name, None)
+            # Synchronize dynamic additions/removals
+            for name in list(next_fire):
+                if name not in healthchecks:
+                    del next_fire[name]
+                    fail_count.pop(name, None)
 
-        for name in healthchecks:
-            if name not in next_fire:
-                next_fire[name] = now
-                fail_count.setdefault(name, 0)
+            for name in healthchecks:
+                if name not in next_fire:
+                    next_fire[name] = now
+                    fail_count.setdefault(name, 0)
 
-        if not healthchecks:
-            # No healthchecks configured — sleep and retry
-            time.sleep(HEALTHCHECK_INTERVAL_DEFAULT)
-            continue
-
-        # Only check services whose next-fire has passed
-        due = [name for name, nf in next_fire.items() if now >= nf]
-        for name in due:
-            hc = healthchecks.get(name)
-            if not hc:
+            if not healthchecks:
+                # No healthchecks configured — sleep and retry
+                _shutdown.wait(timeout=HEALTHCHECK_INTERVAL_DEFAULT)
                 continue
 
-            if hc.get("type") == "ping":
-                is_healthy = _run_ping_check(hc["host"], hc["timeout"])
-                check_info = f"ping {hc['host']}"
-            elif hc.get("type") == "tcp":
-                is_healthy = _run_tcp_check(hc["host"], hc["port"], hc["timeout"])
-                check_info = f"tcp {hc['host']}:{hc['port']}"
-            elif hc.get("type") == "soap":
-                is_healthy, code = _run_soap_check(
-                    url=hc["url"], timeout=hc["timeout"],
-                    soap_action=hc.get("soap_action", ""),
-                    body=hc.get("body", ""),
-                    healthy_codes=hc.get("healthy_codes"),
-                    expected_string=hc.get("expected_string", ""),
-                )
-                check_info = f"soap code={code}"
+            # Only check services whose next-fire has passed
+            due = [name for name, nf in next_fire.items() if now >= nf]
+            for name in due:
+                hc = healthchecks.get(name)
+                if not hc:
+                    continue
+
+                if hc.get("type") == "ping":
+                    is_healthy = _run_ping_check(hc["host"], hc["timeout"])
+                    check_info = f"ping {hc['host']}"
+                elif hc.get("type") == "tcp":
+                    is_healthy = _run_tcp_check(hc["host"], hc["port"], hc["timeout"])
+                    check_info = f"tcp {hc['host']}:{hc['port']}"
+                elif hc.get("type") == "soap":
+                    is_healthy, code = _run_soap_check(
+                        url=hc["url"], timeout=hc["timeout"],
+                        soap_action=hc.get("soap_action", ""),
+                        body=hc.get("body", ""),
+                        healthy_codes=hc.get("healthy_codes"),
+                        expected_string=hc.get("expected_string", ""),
+                    )
+                    check_info = f"soap code={code}"
+                else:
+                    code = _run_curl_check(hc["url"], hc["timeout"])
+                    is_healthy = (code is not None and code in hc.get("healthy_codes", {200}))
+                    check_info = f"code={code}"
+
+                if is_healthy:
+                    # Healthy — reset fail counter
+                    if fail_count.get(name, 0) > 0:
+                        print(f"Healthcheck OK [{name}] {check_info} (recovered)")
+                    fail_count[name] = 0
+                    _set_health_status(name, "green")
+
+                else:
+                    # Unhealthy — increment counter
+                    fail_count[name] = fail_count.get(name, 0) + 1
+                    attempts = fail_count[name]
+                    threshold = hc["retries"]
+
+                    if attempts >= threshold:
+                        status = "red" if attempts >= threshold * 3 else "degraded"
+                        _set_health_status(name, status)
+                        print(f"Healthcheck FAIL [{name}] attempt={attempts}/{threshold} "
+                              f"{check_info} -> {status}")
+
+                # Schedule next check for this service on its own interval
+                next_fire[name] = time.time() + hc["interval"]
+
+            # Sleep until the next service is due
+            if next_fire:
+                min_next = min(next_fire.values())
+                sleep_dt = max(0.1, min_next - time.time())
+                _shutdown.wait(timeout=sleep_dt)
             else:
-                code = _run_curl_check(hc["url"], hc["timeout"])
-                is_healthy = (code is not None and code in hc.get("healthy_codes", {200}))
-                check_info = f"code={code}"
+                _shutdown.wait(timeout=HEALTHCHECK_INTERVAL_DEFAULT)
 
-            if is_healthy:
-                # Healthy — reset fail counter
-                if fail_count.get(name, 0) > 0:
-                    print(f"Healthcheck OK [{name}] {check_info} (recovered)")
-                fail_count[name] = 0
-                _set_health_status(name, "green")
-
-            else:
-                # Unhealthy — increment counter
-                fail_count[name] = fail_count.get(name, 0) + 1
-                attempts = fail_count[name]
-                threshold = hc["retries"]
-
-                if attempts >= threshold:
-                    status = "red" if attempts >= threshold * 3 else "degraded"
-                    _set_health_status(name, status)
-                    print(f"Healthcheck FAIL [{name}] attempt={attempts}/{threshold} "
-                          f"{check_info} -> {status}")
-
-            # Schedule next check for this service on its own interval
-            next_fire[name] = time.time() + hc["interval"]
-
-        # Sleep until the next service is due (small increments for clean shutdown)
-        if next_fire:
-            min_next = min(next_fire.values())
-            sleep_dt = max(0.5, min_next - time.time())
-            steps = max(1, int(sleep_dt * 2))
-            for _ in range(steps):
-                time.sleep(0.5)
-        else:
-            time.sleep(HEALTHCHECK_INTERVAL_DEFAULT)
+    finally:
+        # Release lock on shutdown
+        _shutdown.set()
+        try:
+            lock_file.close()
+        except Exception:
+            pass
 
 
 def run_healthchecks_once() -> dict[str, dict]:

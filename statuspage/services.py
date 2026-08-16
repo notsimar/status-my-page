@@ -1,0 +1,122 @@
+"""Business logic services for status-my-page.
+
+Contains the core service layer operations that are independent of HTTP.
+"""
+
+from statuspage.db import (
+    get_connection,
+    get_all_items,
+    get_item_by_id,
+    get_item_name,
+    toggle_status as db_toggle_status,
+    update_name as db_update_name,
+    reorder as db_reorder,
+    set_notes as db_set_notes,
+    add_item as db_add_item,
+    delete_item as db_delete_item,
+    record_history,
+    get_history,
+)
+from statuspage.config import _save_runtime, _load_runtime
+
+
+# ── Status Service ──────────────────────────────────────────────────
+
+def toggle_item(item_id: int) -> str:
+    """Cycle: green → degraded → red → green (also persists to yaml)."""
+    with get_connection() as db:
+        row = get_item_by_id(db, item_id)
+        if not row:
+            return "green"
+        old_status = row["status"]  # must be captured BEFORE the toggle
+        status = db_toggle_status(db, item_id)
+        # Record history
+        record_history(db, item_id, "status", old_status, status)
+        # Persist status changes to yaml _runtime.status
+        item_name = row["name"]
+        rt = _load_runtime()
+        rt_status = rt.setdefault("status", {})
+        if status != "green":
+            rt_status[item_name] = status
+        else:
+            rt_status.pop(item_name, None)
+        _save_runtime(rt)
+        db.commit()
+    return status
+
+
+def rename_item(item_id: int, name: str) -> tuple[bool, str]:
+    with get_connection() as db:
+        # Capture the old name BEFORE the rename so _runtime references can be re-keyed
+        row = get_item_by_id(db, item_id)
+        if not row:
+            return False, "Not found"
+        old_name = row["name"]
+        ok, msg = db_update_name(db, item_id, name)
+        if not ok:
+            return ok, msg
+        # Update references in _runtime (items list + status/notes/history keys)
+        rt = _load_runtime()
+        updated = False
+        if "items" in rt and old_name in rt["items"]:
+            rt["items"] = [name if n == old_name else n for n in rt["items"]]
+            updated = True
+        for section in ("status", "notes", "history"):
+            if section in rt and old_name in rt[section]:
+                rt[section][name] = rt[section].pop(old_name)
+                updated = True
+        if updated:
+            _save_runtime(rt)
+        db.commit()
+    return ok, msg
+
+
+def reorder_items(order_map: dict[int, int]) -> None:
+    with get_connection() as db:
+        db_reorder(db, order_map)
+        db.commit()
+
+
+def update_notes(item_id: int, notes: str) -> None:
+    with get_connection() as db:
+        # Get current notes for history tracking
+        row = get_item_by_id(db, item_id)
+        if not row:
+            return
+        old_notes = row["notes"] or ""
+
+        # Record history if notes actually changed
+        if old_notes != notes:
+            record_history(db, item_id, "notes", old_notes, notes)
+
+        db_set_notes(db, item_id, notes)
+        db.commit()
+
+
+def add_item(name: str) -> dict:
+    with get_connection() as db:
+        new_id = db_add_item(db, name)
+        db.commit()
+        row = get_item_by_id(db, new_id)
+        return {"id": new_id, "name": name, "status": "green", "notes": "", "position": row["position"]}
+
+
+def delete_item(item_id: int) -> str | None:
+    with get_connection() as db:
+        name = db_delete_item(db, item_id)
+        db.commit()
+        return name
+
+
+# ── History Service ─────────────────────────────────────────────────
+
+def get_item_history(item_id: int) -> dict | None:
+    with get_connection() as db:
+        return get_history(db, item_id)
+
+
+# ── Public query service ────────────────────────────────────────────
+
+def get_all_status_items() -> list:
+    with get_connection() as db:
+        return get_all_items(db)

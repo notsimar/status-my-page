@@ -13,6 +13,9 @@ import yaml
 
 BASE = Path(__file__).resolve().parent.parent
 os.environ["STATUS_NO_ARCHIVE"] = "1"
+# Must be set before ANY test imports app, so the healthcheck worker thread
+# isn't started at import time (it holds DB connections that break re-init).
+os.environ["STATUS_DISABLE_HEALTHCHECKS"] = "1"
 
 # ── Session-scoped: real patching of app paths + first init_db      ──
 @pytest.fixture(scope="session")
@@ -27,15 +30,14 @@ def A():
     if "STATUS_ADMIN_PASS_HASH" not in os.environ:
         os.environ["STATUS_ADMIN_PASS_HASH"] = generate_password_hash("testpass")
 
-    import app as m  # noqa: F811
+    # Disable healthchecks for tests to avoid database locking issues
+    os.environ["STATUS_DISABLE_HEALTHCHECKS"] = "1"
 
-    # ── save originals for teardown (unused; session ends) ----------
-    _orig = {"cfg": m.cfg, "items": m.ITEM_NAMES}  # keep references only
+    import app as m  # noqa: F811
 
     # ── point at a fresh temp environment ---------------------------
     _td  = tempfile.mkdtemp(prefix="mc_")
     cfg  = Path(_td) / "config.yaml"
-    rt   = {}  # will be written by yaml.dump below
     yaml.dump(
         {
             "items": ["SvcA", "SvcB"],
@@ -49,26 +51,26 @@ def A():
         sort_keys=False,
     )
 
-    m.CONFIG_PATH   = cfg
-    m.DB_PATH       = Path(_td) / "instance/status.db"
-    m.ARCHIVES_DIR  = Path(_td) / "archives"
-    m.cfg           = {"items": ["SvcA", "SvcB"], "_base": {
-        "admin": {"user": "admin"},
-        "server": {"host": "0.0.0.0", "port": 8920},
-    }, "_runtime": {}}
-    m.ITEM_NAMES    = ["SvcA", "SvcB"]
+    # Reinitialize config paths
+    m.init_config_paths(Path(_td))
+
+    # Clear rate limit state - use the module attributes exposed on m
     m._failed_logins.clear()
     m._mutation_rates.clear()
     m._csrf_failures.clear()
+
+    # Reload config to pick up the new config.yaml
+    m.reload_config()
 
     with m.app.test_request_context():           # so g is available (get_db needs it)
         m.init_db()                               # first run — creates tables + seeds
 
     # Configure healthcheck module with the temp paths
+    # Note: Don't call start_healthchecks() here - tests that need it will start it
     import healthcheck as hc
-    hc.configure_healthcheck(m.BASE_DIR, m.DB_PATH, m.CONFIG_PATH, m.load_config, m.MAX_HISTORY_PER_ITEM)
+    hc.configure_healthcheck(m.get_base_dir(), m.get_db_path(), m.get_config_path(), m.load_config, m.MAX_HISTORY_PER_ITEM)
 
-    yield m  # app module (cfg path available via m.CONFIG_PATH)
+    yield m  # app module (cfg path available via m.CONFIG_PATH etc.)
 
 
 # ── Convenience helpers ────────────────────────────────────────
