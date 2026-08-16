@@ -414,7 +414,7 @@ cp config.yaml.bak1 config.yaml
 | `test_history.py` | — | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning |
 | `test_routes_and_features.py` | — | Auth, mutations, security headers, backups, admin credential validation |
 | `test_restart_persistence.py` | — | 2 critical restart-simulation tests (add/delete survival) |
-| `test_healthcheck_mc_dc.py` | — | MC/DC for healthcheck result gate (D_hc1) and URL sanitisation (D_hc2) + worker lock tests |
+| `test_healthcheck_mc_dc.py` | — | MC/DC for healthcheck decisions: result gate (D_hc1), URL sanitisation (D_hc2), type auto-detection (D_hc3), TCP validation (D_hc5), SOAP result gate (D_hc7), worker lock |
 
 **Overall coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
 
@@ -444,6 +444,7 @@ This project employs **Modified Condition/Decision Coverage** to prove that crit
 
 - **Coverage Target**: Every condition in compound boolean expressions independently affects the outcome.
 - **Verified Guards**: Admin authentication, CSRF validation, Rate limiting, YAML runtime restoration logic, reorder override, set_notes persistence gate, CSRF internal guard, delete cleanup cascade.
+- **Healthcheck Guards**: Curl result gate (D_hc1), URL sanitisation (D_hc2), Type auto-detection (D_hc3), TCP validation (D_hc5), SOAP result gate (D_hc7), Worker lock
 - **Documentation**: See [README_MCDC.md](./README_MCDC.md) for the full mapping table and proof matrices.
 
 ```bash
