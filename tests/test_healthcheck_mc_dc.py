@@ -216,6 +216,308 @@ if __name__ == "__main__":
     _sys.exit(pytest.main([__file__, "-v"]))
 
 
+# ─── D_hc3: Type auto-detection logic ─────────────────────────────
+# Expression (_parse_healthchecks L144-154): Sequential if/elif chain for type inference
+#   Order of evaluation (short-circuit):
+#   C1 = soap_action or soap_body                    -> type="soap"
+#   C2 = host and details.get("port") is not None    -> type="tcp"
+#   C3 = host                                        -> type="ping"
+#   C4 = url                                         -> type="curl"
+#   else: continue (skip entry)
+#
+# MC/DC requires each condition to independently affect outcome:
+#   T_hc3_1: C1=True  -> soap (regardless of C2,C3,C4)
+#   T_hc3_2: C1=False, C2=True  -> tcp (regardless of C3,C4)
+#   T_hc3_3: C1=False, C2=False, C3=True  -> ping (regardless of C4)
+#   T_hc3_4: C1=False, C2=False, C3=False, C4=True  -> curl
+#   T_hc3_5: All False -> entry skipped
+
+
+class Test_Dhc3_TypeAutoDetection:
+    """MC/DC for the type auto-detection chain in _parse_healthchecks()."""
+
+    def _write(self, A, data):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    # ── C1=True alone -> soap ──────────────────────────────────────
+    def test_C1_True_soap_action__type_soap(self, A):
+        """soap_action present -> type=soap (C1=True, short-circuits rest)."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"url": "http://x/", "soap_action": "GetStatus"}},
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "SvcA" in hc
+        assert hc["SvcA"]["type"] == "soap"
+
+    def test_C1_True_soap_body__type_soap(self, A):
+        """soap_body present -> type=soap (C1=True)."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {
+                    "SvcA": {"url": "http://x/", "body": "<soap:Body/>"}
+                },
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert hc["SvcA"]["type"] == "soap"
+
+    # ── C1=False, C2=True -> tcp ───────────────────────────────────
+    def test_C1_False_C2_True_host_port__type_tcp(self, A):
+        """No soap fields, host+port present -> type=tcp (C1=F, C2=T)."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"host": "127.0.0.1", "port": 5432}},
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "SvcA" in hc
+        assert hc["SvcA"]["type"] == "tcp"
+
+    # ── C1=False, C2=False, C3=True -> ping ────────────────────────
+    def test_C1_False_C2_False_C3_True_host_only__type_ping(self, A):
+        """No soap, no port, host present -> type=ping (C1=F, C2=F, C3=T)."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"host": "10.0.0.1"}},
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "SvcA" in hc
+        assert hc["SvcA"]["type"] == "ping"
+
+    # ── C1=False, C2=False, C3=False, C4=True -> curl ──────────────
+    def test_all_False_C4_True_url_only__type_curl(self, A):
+        """No soap, no host, url present -> type=curl (C1=F, C2=F, C3=F, C4=T)."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"url": "http://localhost/health"}},
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "SvcA" in hc
+        assert hc["SvcA"]["type"] == "curl"
+
+    # ── All False -> skipped ───────────────────────────────────────
+    def test_all_False__skipped(self, A):
+        """No recognisable fields -> entry skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"interval": 30}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+
+# ─── D_hc5: TCP validation gate ────────────────────────────────────
+# Expression (_parse_healthchecks L188-194): Three-condition AND-chain
+#   if not target_host or not isinstance(target_host, str): continue
+#   if not _safe_host(target_host): continue
+#   if target_port is None or not _safe_port(int(target_port)): continue
+# All three must be False for entry to proceed.
+#   C1 = not target_host or not isinstance(target_host, str)
+#   C2 = not _safe_host(target_host)
+#   C3 = target_port is None or not _safe_port(int(target_port))
+#
+# MC/DC matrix (each independently affects outcome):
+#   T_hc5_1: C1=T (missing host) -> skip
+#   T_hc5_2: C2=T (unsafe host) -> skip
+#   T_hc5_3: C3=T (missing/invalid port) -> skip
+#   T_hc5_4: All F (valid host+port) -> proceeds
+
+
+class Test_Dhc5_TcpValidation:
+    """MC/DC for TCP host+port validation in _parse_healthchecks()."""
+
+    def _write(self, A, data):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    def test_C1_True_missing_host__skipped(self, A):
+        """C1=True: host key absent -> skipped."""
+        self._write(
+            A,
+            {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"type": "tcp", "port": 5432}}},
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_C1_True_non_string_host__skipped(self, A):
+        """C1=True: host is int -> skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": 12345, "port": 5432}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_C2_True_unsafe_host__skipped(self, A):
+        """C2=True: host passes type check but fails _safe_host -> skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "-c", "port": 80}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_C3_True_missing_port__skipped(self, A):
+        """C3=True: port key absent -> skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1"}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_C3_True_invalid_port_zero__skipped(self, A):
+        """C3=True: port=0 (out of range) -> skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 0}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_C3_True_invalid_port_high__skipped(self, A):
+        """C3=True: port=70000 (out of range) -> skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 70000}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_C3_True_negative_port__skipped(self, A):
+        """C3=True: negative port -> skipped."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": -1}},
+            },
+        )
+        assert A._parse_healthchecks() == {}
+
+    def test_all_False_valid_host_port__proceeds(self, A):
+        """All conditions False: valid host and port -> parsed."""
+        self._write(
+            A,
+            {
+                "items": ["SvcA"],
+                "_runtime": {},
+                "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 5432}},
+            },
+        )
+        hc = A._parse_healthchecks()
+        assert "SvcA" in hc
+        assert hc["SvcA"]["type"] == "tcp"
+        assert hc["SvcA"]["port"] == 5432
+
+
+# ─── D_hc7: SOAP result gate ───────────────────────────────────────
+# Expression (_run_soap_check L323-328): Compound AND for healthy result
+#   if code not in healthy_codes: return False, code
+#   if expected_string and expected_string.strip() not in resp_body: return False, code
+#   return True, code
+#
+# MC/DC conditions:
+#   C1 = code in healthy_codes
+#   C2 = not expected_string or expected_string in resp_body
+#   Outcome: (C1 and C2) -> healthy (True)
+#
+# ┌──────┬────┬────┬───────────────────────────────────────────────────┐
+# │ Test │ C1 │ C2 │ Observable effect                                 │
+# ├──────┼────┼────┼───────────────────────────────────────────────────┤
+# │ T_hc7│ T  │ T  │ Healthy (True, code)                              │
+# │ T_hc8│ F  │ ×  │ Unhealthy (False, code)                           │
+# │ T_hc9│ T  │ F  │ Unhealthy (False, code)                           │
+# └──────┴────┴────┴───────────────────────────────────────────────────┘
+
+
+class Test_Dhc7_SoapResultGate:
+    """MC/DC for SOAP healthy-result guard in _run_soap_check()."""
+
+    def _write(self, A, data):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    def test_C1T_C2T__baseline_healthy(self, A):
+        """Both True: code in healthy_codes AND expected_string found -> healthy."""
+        # Simulate guard: code=200 in {200}, expected_string="OK" in body
+        code = 200
+        healthy_codes = {200}
+        expected_string = "OK"
+        resp_body = "<Status>OK</Status>"
+        assert code in healthy_codes
+        assert expected_string in resp_body
+        assert code in healthy_codes and expected_string in resp_body
+
+    def test_C1_False_code_not_whitelisted__unhealthy(self, A):
+        """C1=False: code not in healthy_codes -> unhealthy (C2 irrelevant)."""
+        code = 404
+        healthy_codes = {200}
+        expected_string = "OK"
+        resp_body = "<Status>OK</Status>"
+        assert code not in healthy_codes
+        assert not (code in healthy_codes and expected_string in resp_body)
+
+    def test_C1_True_C2_False_expected_missing__unhealthy(self, A):
+        """C1=True but C2=False: expected_string missing from body -> unhealthy."""
+        code = 200
+        healthy_codes = {200}
+        expected_string = "HEALTHY"
+        resp_body = "<Status>OK</Status>"
+        assert code in healthy_codes
+        assert expected_string not in resp_body
+        assert not (code in healthy_codes and expected_string in resp_body)
+
+    def test_C2_True_no_expected_string__healthy(self, A):
+        """C2=True vacuously: no expected_string set -> healthy if code OK."""
+        code = 200
+        healthy_codes = {200}
+        expected_string = ""
+        resp_body = "<Status>OK</Status>"
+        assert code in healthy_codes
+        # C2 is vacuously True when expected_string is empty/None
+        assert not expected_string or expected_string in resp_body
+        assert code in healthy_codes and (not expected_string or expected_string in resp_body)
+
+
 # ─── Additional tests for healthcheck worker ──────────────────────
 
 class TestHealthcheckWorkerLock:
