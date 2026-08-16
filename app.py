@@ -315,34 +315,8 @@ def _archive_db_snapshot():
     print(f"Archived {total} items ({reds} red) -> {filename.name}")
 
 
-def init_db():
-    """Initialize/migrate DB tables and seed items from config.yaml.
-
-    Takes a timestamped JSON snapshot of the live DB state (into archives/)
-    before seeding so admin changes survive across restarts. Archive can be
-    disabled for testing with STATUS_NO_ARCHIVE=1.
-    """
-    # ── Pre-reset archival — save current DB state before init_db() wipes it ──
-    _archive_db_snapshot()
-
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(DB_PATH))
-    db.row_factory = sqlite3.Row
-
-    # Use config-driven item names for seeding, merged with runtime-persisted list.
-    rt = _load_runtime()
-    runtime_items: list[str] = rt.get("items", [])
-    seed_items = list(dict.fromkeys(
-        [n.strip() for n in ITEM_NAMES if n.strip()] +
-        [n.strip() for n in runtime_items if n.strip()]
-    )) or [
-        "Web Server", "Database", "API Gateway", "CDN", "Auth Service",
-        "Payment Processing", "Email Service", "Storage", "Cache Layer",
-        "Message Queue", "Search Engine", "ML Pipeline", "Monitoring",
-        "Backup System", "DNS",
-    ]
-
-    # Schema — create table and backfill columns for older databases
+def _create_schema(db: sqlite3.Connection):
+    """Create tables and backfill columns for older databases."""
     db.execute(
         """CREATE TABLE IF NOT EXISTS status_items (
             id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,7 +332,25 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
-    # Sync on every startup — compare current DB rows against config.
+
+def _compute_seed_items() -> list[str]:
+    """Compute the list of items to seed from config + runtime."""
+    rt = _load_runtime()
+    runtime_items: list[str] = rt.get("items", [])
+    seed_items = list(dict.fromkeys(
+        [n.strip() for n in ITEM_NAMES if n.strip()] +
+        [n.strip() for n in runtime_items if n.strip()]
+    )) or [
+        "Web Server", "Database", "API Gateway", "CDN", "Auth Service",
+        "Payment Processing", "Email Service", "Storage", "Cache Layer",
+        "Message Queue", "Search Engine", "ML Pipeline", "Monitoring",
+        "Backup System", "DNS",
+    ]
+    return seed_items
+
+
+def _sync_db_to_config(db: sqlite3.Connection, seed_items: list[str]) -> tuple[int, int]:
+    """Sync DB rows to match seed_items. Returns (deleted_count, inserted_count)."""
     seed_set = set(seed_items)
     existing_rows = {name: rid for name, rid in
                      db.execute("SELECT name, id FROM status_items").fetchall()}
@@ -394,59 +386,54 @@ def init_db():
                 (i, row[0])
             )
 
-    # ── Restore runtime overrides from YAML after seeding ──────────
-    try:
-        rt = _load_runtime()
-        # Status overrides: {item_name: "degraded"|"red"}
-        for item_name, new_state in rt.get("status", {}).items():
-            if item_name not in seed_set or new_state in ("green", ""):
-                continue
+    return deleted_count, inserted_count
+
+
+def _restore_runtime_overrides(db: sqlite3.Connection, seed_set: set[str]):
+    """Restore status, notes, and reorder overrides from _runtime YAML."""
+    rt = _load_runtime()
+    # Status overrides: {item_name: "degraded"|"red"}
+    for item_name, new_state in rt.get("status", {}).items():
+        if item_name not in seed_set or new_state in ("green", ""):
+            continue
+        row = db.execute(
+            "SELECT id FROM status_items WHERE name = ?", [item_name]
+        ).fetchone()
+        if row:
+            db.execute(
+                "UPDATE status_items SET status=? WHERE id=?",
+                (new_state, row["id"]),
+            )
+
+    # Notes overrides: {item_name: note_text}
+    for item_name, note_text in rt.get("notes", {}).items():
+        if item_name not in seed_set or not note_text.strip():
+            continue
+        row = db.execute(
+            "SELECT id FROM status_items WHERE name = ?", [item_name]
+        ).fetchone()
+        if row:
+            db.execute(
+                "UPDATE status_items SET notes=? WHERE id=?",
+                (note_text, row["id"]),
+            )
+
+    # Reorder overrides: [name, name, ...]
+    reorder_list = rt.get("reorder", None)
+    if reorder_list and isinstance(reorder_list, list):
+        for i, item_name in enumerate(reorder_list):
             row = db.execute(
                 "SELECT id FROM status_items WHERE name = ?", [item_name]
             ).fetchone()
             if row:
                 db.execute(
-                    "UPDATE status_items SET status=? WHERE id=?",
-                    (new_state, row["id"]),
+                    "UPDATE status_items SET position=? WHERE id=?",
+                    (i + 1, row["id"]),
                 )
 
-        # Notes overrides: {item_name: note_text}
-        for item_name, note_text in rt.get("notes", {}).items():
-            if item_name not in seed_set or not note_text.strip():
-                continue
-            row = db.execute(
-                "SELECT id FROM status_items WHERE name = ?", [item_name]
-            ).fetchone()
-            if row:
-                db.execute(
-                    "UPDATE status_items SET notes=? WHERE id=?",
-                    (note_text, row["id"]),
-                )
 
-        # Reorder overrides: [name, name, ...]
-        reorder_list = rt.get("reorder", None)
-        if reorder_list and isinstance(reorder_list, list):
-            for i, item_name in enumerate(reorder_list):
-                row = db.execute(
-                    "SELECT id FROM status_items WHERE name = ?", [item_name]
-                ).fetchone()
-                if row:
-                    db.execute(
-                        "UPDATE status_items SET position=? WHERE id=?",
-                        (i + 1, row["id"]),
-                    )
-
-    except Exception:
-        pass
-
-    action = f'Rebuilt {len(seed_items)} config items from config.yaml'
-    if deleted_count:
-        action += f" ({deleted_count} removed)"
-    if inserted_count:
-        action += f", {inserted_count} added"
-    print(action)
-
-    # ── History table — tracks every status/notes change ──────────
+def _create_history_table(db: sqlite3.Connection):
+    """Create history table and backfill occurred column."""
     db.execute(
         """CREATE TABLE IF NOT EXISTS status_history (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -457,7 +444,6 @@ def init_db():
             occurred   TEXT    NOT NULL
         )"""
     )
-
     # Backfill `occurred` column for pre-existing databases
     try:
         db.execute("ALTER TABLE status_history ADD COLUMN occurred TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'")
@@ -465,24 +451,55 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
-    # ── Restore history from _runtime.history (survives restarts) ──
-    try:
-        rt = _load_runtime()
-        for item_name, entries in rt.get("history", {}).items():
-            row = db.execute(
-                "SELECT id FROM status_items WHERE name = ?", [item_name]
-            ).fetchone()
-            if not row:
-                continue
-            for entry in entries:
-                db.execute(
-                    "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
-                    (row["id"], entry.get("event_type", "status"),
-                     entry.get("old_value", ""), entry.get("new_value", ""),
-                     entry.get("occurred", "1970-01-01T00:00:00Z")),
-                )
-    except Exception:
-        pass
+
+def _restore_history_from_yaml(db: sqlite3.Connection):
+    """Restore history entries from _runtime.history."""
+    rt = _load_runtime()
+    for item_name, entries in rt.get("history", {}).items():
+        row = db.execute(
+            "SELECT id FROM status_items WHERE name = ?", [item_name]
+        ).fetchone()
+        if not row:
+            continue
+        for entry in entries:
+            db.execute(
+                "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
+                (row["id"], entry.get("event_type", "status"),
+                 entry.get("old_value", ""), entry.get("new_value", ""),
+                 entry.get("occurred", "1970-01-01T00:00:00Z")),
+            )
+
+
+def init_db():
+    """Initialize/migrate DB tables and seed items from config.yaml.
+
+    Takes a timestamped JSON snapshot of the live DB state (into archives/)
+    before seeding so admin changes survive across restarts. Archive can be
+    disabled for testing with STATUS_NO_ARCHIVE=1.
+    """
+    # ── Pre-reset archival — save current DB state before init_db() wipes it ──
+    _archive_db_snapshot()
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(DB_PATH))
+    db.row_factory = sqlite3.Row
+
+    seed_items = _compute_seed_items()
+    seed_set = set(seed_items)
+
+    _create_schema(db)
+    deleted_count, inserted_count = _sync_db_to_config(db, seed_items)
+    _restore_runtime_overrides(db, seed_set)
+
+    action = f'Rebuilt {len(seed_items)} config items from config.yaml'
+    if deleted_count:
+        action += f" ({deleted_count} removed)"
+    if inserted_count:
+        action += f", {inserted_count} added"
+    print(action)
+
+    _create_history_table(db)
+    _restore_history_from_yaml(db)
 
     db.commit()
     db.close()
