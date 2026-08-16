@@ -2,6 +2,7 @@
 """Tiny status page — Flask + SQLite + YAML config."""
 
 import datetime as dt
+import functools
 import hashlib
 import hmac
 import json
@@ -14,6 +15,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict
+from enum import Enum
 from pathlib import Path
 
 import yaml
@@ -26,6 +28,26 @@ from input_filter import (
     validate_user_input, validate_json_data,
     validate_int_param,
 )
+
+
+class Status(str, Enum):
+    """Service status states. Order matters: red=0 (worst), degraded=1, green=2 (best)."""
+    RED = "red"
+    DEGRADED = "degraded"
+    GREEN = "green"
+
+    @property
+    def next(self) -> "Status":
+        """Cycle to next status: green -> degraded -> red -> green."""
+        order = [Status.GREEN, Status.DEGRADED, Status.RED]
+        idx = (order.index(self) + 1) % len(order)
+        return order[idx]
+
+    @property
+    def sort_key(self) -> int:
+        """For ordering: red first, then degraded, then green."""
+        return {"red": 0, "degraded": 1, "green": 2}[self.value]
+
 
 # ── Paths ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
@@ -74,6 +96,7 @@ from healthcheck import (
     _healthcheck_worker,
     run_healthchecks_once,
     start_healthchecks,
+    configure_healthcheck,
 )
 
 
@@ -511,7 +534,7 @@ def _record_history(item_id: int, event_type: str, old_value: str, new_value: st
         _save_runtime(rt)
 
 
-STATUS_CYCLE = ["green", "degraded", "red"]
+STATUS_CYCLE = [Status.GREEN, Status.DEGRADED, Status.RED]
 
 
 def toggle_item(item_id: int) -> str:
@@ -525,7 +548,7 @@ def toggle_item(item_id: int) -> str:
 
     current = row["status"]
     next_idx = (STATUS_CYCLE.index(current) + 1) % len(STATUS_CYCLE)
-    new_status = STATUS_CYCLE[next_idx]
+    new_status = STATUS_CYCLE[next_idx].value
     db.execute(
         "UPDATE status_items SET status=? WHERE id=?",
         (new_status, item_id),
@@ -659,6 +682,23 @@ def _check_csrf() -> bool:
     return True
 
 
+def _require_admin(require_csrf: bool = True, require_rate_limit: bool = True):
+    """Decorator for admin-only routes with optional CSRF and rate-limit checks."""
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapped(*args, **kwargs):
+            ip = request.remote_addr or ""
+            if not session.get("admin"):
+                abort(403)
+            if require_csrf and not _check_csrf():
+                abort(403)
+            if require_rate_limit and not _check_mutation_rate(ip):
+                abort(403)
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
 # ── Security headers ───────────────────────────────────────────────
 @app.after_request
 def security_headers(response):
@@ -739,19 +779,15 @@ def auth_check():
 
 
 @app.route("/api/toggle/<int:item_id>", methods=["POST"])
+@_require_admin()
 def api_toggle(item_id):
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
     status = toggle_item(item_id)
     return jsonify(status=status)
 
 
 @app.route("/api/rename/<int:item_id>", methods=["POST"])
+@_require_admin()
 def api_rename(item_id):
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
     data = validate_json_data(request.get_json(silent=True))
     name = validate_name(data.get("name", ""), "name")
     ok, msg = update_item_name(item_id, name)
@@ -762,10 +798,8 @@ def api_rename(item_id):
 
 
 @app.route("/api/notes/<int:item_id>", methods=["POST"])
+@_require_admin()
 def api_notes(item_id):
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
     data = validate_json_data(request.get_json(silent=True))
     notes = validate_notes(data.get("notes", ""), "notes")
     set_notes(item_id, notes)
@@ -804,10 +838,8 @@ def api_history(item_id):
 
 
 @app.route("/api/add", methods=["POST"])
+@_require_admin()
 def api_add():
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
     data = validate_json_data(request.get_json(silent=True))
     name = validate_name(data.get("name", ""), "name")
     db = get_db()
@@ -830,10 +862,8 @@ def api_add():
 
 
 @app.route("/api/delete/<int:item_id>", methods=["POST"])
+@_require_admin()
 def api_delete(item_id):
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
     db = get_db()
     row = db.execute("SELECT name FROM status_items WHERE id = ?", (item_id,)).fetchone()
     if not row:
@@ -877,21 +907,16 @@ def api_healthchecks():
 
 
 @app.route("/api/healthcheck/run", methods=["POST"])
+@_require_admin()
 def api_healthcheck_run():
     """Trigger a one-shot healthcheck run for all services. Admin only."""
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
-
     results: dict[str, dict] = run_healthchecks_once()
     return jsonify(results)
 
 
 @app.route("/api/reorder", methods=["POST"])
+@_require_admin()
 def api_reorder():
-    ip = request.remote_addr or ""
-    if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip):
-        abort(403)
     data = validate_json_data(request.get_json(silent=True))
     raw_order = data.get("order", {})
     if not isinstance(raw_order, dict):
@@ -912,12 +937,14 @@ if not DB_PATH.exists():
     except Exception:
         pass
 
+configure_healthcheck(BASE_DIR, DB_PATH, CONFIG_PATH, load_config, MAX_HISTORY_PER_ITEM)
 start_healthchecks()
 
 
 # ── Main ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     init_db()
+    configure_healthcheck(BASE_DIR, DB_PATH, CONFIG_PATH, load_config, MAX_HISTORY_PER_ITEM)
     start_healthchecks()
     print(f"Status page running on http://0.0.0.0:{SERVER_PORT}")
     print(f"Admin user: {ADMIN_USER} (hash provided via env)")

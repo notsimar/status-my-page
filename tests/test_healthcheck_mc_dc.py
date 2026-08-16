@@ -574,8 +574,8 @@ class TestHealthcheckWorkerLock:
         lock_file_path = tmp_path / ".healthcheck.lock"
         lock_file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Monkeypatch the lock file path by patching _get_base_dir in healthcheck module
-        monkeypatch.setattr(m, "_get_base_dir", lambda: tmp_path)
+        # Monkeypatch the lock file path by patching _BASE_DIR in healthcheck module
+        monkeypatch.setattr(m, "_BASE_DIR", tmp_path)
         
         # Hold the lock
         held_lock = open(lock_file_path, "a+")

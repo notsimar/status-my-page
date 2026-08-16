@@ -28,30 +28,28 @@ _HEALTH_LOCK = threading.Lock()
 _HEALTHCHECK_THREAD = None
 _HEALTHCHECK_START_LOCK = threading.Lock()
 
-
-def _get_base_dir() -> Path:
-    import app
-    return getattr(app, "BASE_DIR", Path(__file__).resolve().parent)
-
-
-def _get_db_path() -> Path:
-    import app
-    return getattr(app, "DB_PATH", _get_base_dir() / "instance" / "status.db")
+# ── Configuration (set by app.configure_healthcheck()) ─────────────
+_BASE_DIR: Path | None = None
+_DB_PATH: Path | None = None
+_CONFIG_PATH: Path | None = None
+_LOAD_CONFIG = None
+_MAX_HISTORY_PER_ITEM = 100
 
 
-def _get_config_path() -> Path:
-    import app
-    return getattr(app, "CONFIG_PATH", _get_base_dir() / "config.yaml")
-
-
-def _get_load_config():
-    import app
-    return getattr(app, "load_config", None)
-
-
-def _get_max_history_per_item() -> int:
-    import app
-    return getattr(app, "MAX_HISTORY_PER_ITEM", 100)
+def configure_healthcheck(
+    base_dir: Path,
+    db_path: Path,
+    config_path: Path,
+    load_config_fn,
+    max_history_per_item: int = 100,
+) -> None:
+    """Initialize healthcheck module with paths from app. Call once at startup."""
+    global _BASE_DIR, _DB_PATH, _CONFIG_PATH, _LOAD_CONFIG, _MAX_HISTORY_PER_ITEM
+    _BASE_DIR = base_dir
+    _DB_PATH = db_path
+    _CONFIG_PATH = config_path
+    _LOAD_CONFIG = load_config_fn
+    _MAX_HISTORY_PER_ITEM = max_history_per_item
 
 
 def _health_db():
@@ -59,11 +57,16 @@ def _health_db():
 
     Does NOT use Flask ``g`` — safe to call outside any request context.
     """
-    db_path = _get_db_path()
-    conn = sqlite3.connect(str(db_path))
+    if _DB_PATH is None:
+        raise RuntimeError("Healthcheck not configured. Call configure_healthcheck() first.")
+    conn = sqlite3.connect(str(_DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def _get_max_history_per_item() -> int:
+    return _MAX_HISTORY_PER_ITEM
 
 
 def _safe_host(target: str) -> bool:
@@ -111,14 +114,10 @@ DEFAULT_SOAP_ENVELOPE = (
 
 def _parse_healthchecks() -> dict[str, dict]:
     """Reload healthchecks from config.yaml on every call so edits take effect."""
+    if _LOAD_CONFIG is None or _CONFIG_PATH is None:
+        raise RuntimeError("Healthcheck not configured. Call configure_healthcheck() first.")
     try:
-        load_fn = _get_load_config()
-        if load_fn:
-            cfg_data = load_fn()
-        else:
-            import yaml
-            with open(_get_config_path()) as f:
-                cfg_data = yaml.safe_load(f)
+        cfg_data = _LOAD_CONFIG()
     except Exception as e:
         print(f"Healthcheck config parse error: {e}")
         return {}
@@ -403,7 +402,9 @@ def _set_health_status(name: str, desired_status: str):
 def _healthcheck_worker():
     """Background thread that polls each service on its own interval."""
     # Across multiple WSGI worker processes, ensure only one runs the healthcheck loop
-    lock_file_path = _get_base_dir() / "instance" / ".healthcheck.lock"
+    if _BASE_DIR is None:
+        raise RuntimeError("Healthcheck not configured. Call configure_healthcheck() first.")
+    lock_file_path = _BASE_DIR / "instance" / ".healthcheck.lock"
     lock_file_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         lock_file = open(lock_file_path, "a+")

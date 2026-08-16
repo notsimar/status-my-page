@@ -250,7 +250,8 @@ class TestParseHealthchecks:
         def bad_load():
             raise yaml.YAMLError("broken YAML")
 
-        monkeypatch.setattr(A, "load_config", bad_load)
+        import healthcheck as hc
+        monkeypatch.setattr(hc, "_LOAD_CONFIG", bad_load)
         assert A._parse_healthchecks() == {}
 
     def test_ping_healthcheck_explicit_type(self, A):

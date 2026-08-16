@@ -64,6 +64,10 @@ def A():
     with m.app.test_request_context():           # so g is available (get_db needs it)
         m.init_db()                               # first run — creates tables + seeds
 
+    # Configure healthcheck module with the temp paths
+    import healthcheck as hc
+    hc.configure_healthcheck(m.BASE_DIR, m.DB_PATH, m.CONFIG_PATH, m.load_config, m.MAX_HISTORY_PER_ITEM)
+
     yield m  # app module (cfg path available via m.CONFIG_PATH)
 
 
