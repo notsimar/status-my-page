@@ -19,6 +19,7 @@ from constants import (
     MUTATION_MAX,
     MUTATION_WINDOW,
     MAX_CSRF_FAILURES,
+    ADMIN_SESSION_IDLE_TIMEOUT,
 )
 from input_filter import InputRejected, validate_json_data, validate_user_input
 
@@ -148,6 +149,25 @@ def require_admin(require_csrf: bool = True, require_rate_limit: bool = True):
 
 # ── Auth routes ─────────────────────────────────────────────────────
 
+ADMIN_ACTIVE_SINCE_KEY = "***"
+
+
+def enforce_session_idle_expiry() -> None:
+    """Slide/expire the admin session based on inactivity.
+
+    Called once per request (app before_request) BEFORE any route runs.
+    If the admin was last active more than ADMIN_SESSION_IDLE_TIMEOUT
+    seconds ago, the session is wiped (logout). Every request by an
+    authenticated admin resets the timer.
+    """
+    last = session.get(ADMIN_ACTIVE_SINCE_KEY)
+    if session.get("admin") and last is not None:
+        if time.time() - last > ADMIN_SESSION_IDLE_TIMEOUT:
+            session.clear()
+            return
+        session[ADMIN_ACTIVE_SINCE_KEY] = time.time()
+
+
 def login_route():
     ip = request.remote_addr or ""
 
@@ -169,6 +189,7 @@ def login_route():
         session.clear()  # new clean session on login
         session["admin"] = True
         session.permanent = True
+        session[ADMIN_ACTIVE_SINCE_KEY] = time.time()  # start the 5-min idle clock
         response = jsonify(ok=True)
         _failed_logins.pop(ip, None)       # unlock current IP on success
         return response

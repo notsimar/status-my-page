@@ -126,6 +126,59 @@ class TestRoutesAndAuth:
         assert len(data["token"]) == 64  # hex token
 
 
+class TestSessionIdleExpiry:
+    """Admin session expires after 5 minutes of inactivity (sliding)."""
+
+    def test_session_survives_activity_within_timeout(self, admin, A):
+        """Requests within the idle window keep the session alive."""
+        # Backdate the timer by 4 minutes — still under the 300s limit
+        with admin.session_transaction() as sess:
+            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 4 * 60
+
+        r = admin.get("/auth-check")
+        assert r.status_code == 200
+        assert r.get_json() == {"admin": True}
+
+    def test_session_expires_after_idle_timeout(self, admin, A):
+        """A request more than 5 min after the last activity logs out."""
+        with admin.session_transaction() as sess:
+            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - (5 * 60 + 1)
+
+        r = admin.get("/auth-check")
+        assert r.status_code == 200
+        assert r.get_json() == {"admin": False}
+
+    def test_activity_slides_the_timer(self, admin, A):
+        """An active request at 4 min resets the clock, so a follow-up at
+        6 min total (but 2 min after the reset) is still authenticated."""
+        with admin.session_transaction() as sess:
+            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 4 * 60
+
+        # This request is 4 min after login but resets the timer
+        r1 = admin.get("/auth-check")
+        assert r1.get_json() == {"admin": True}
+
+        # Now 2 min after the reset — total 6 min since login, still active
+        with admin.session_transaction() as sess:
+            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 2 * 60
+
+        r2 = admin.get("/auth-check")
+        assert r2.get_json() == {"admin": True}
+
+    def test_expired_admin_mutations_are_forbidden(self, admin, A, token):
+        """After expiry, admin mutation routes return 403."""
+        with admin.session_transaction() as sess:
+            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - (5 * 60 + 1)
+
+        r = admin.post(
+            "/api/add",
+            data=json.dumps({"name": f"Expired_{int(time.time() * 1000)}"}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": token},
+        )
+        assert r.status_code == 403
+
+
 class TestItemMutations:
     def test_add_duplicate_conflict(self, admin, token):
         """POST /api/add returns 409 Conflict when item name already exists."""

@@ -68,6 +68,17 @@ app.secret_key = os.environ.get(SECRET_ENV) or secrets.token_hex(32)
 init_admin_auth()
 
 
+# ── Admin session idle expiry (5 min sliding per login) ────────────
+# Before every request: expire the admin session if idle beyond the
+# timeout, otherwise slide the timer forward. Runs before route checks.
+from statuspage.auth import enforce_session_idle_expiry
+
+
+@app.before_request
+def _enforce_admin_idle_expiry():
+    enforce_session_idle_expiry()
+
+
 # ── Per-request DB connection teardown ─────────────────────────────
 # get_connection() returns a per-request singleton stored in g. It must be
 # closed at the end of every request so no connection (and its write lock)
@@ -120,6 +131,10 @@ get_admin_pass_hash = _auth.get_admin_pass_hash
 _failed_logins = _auth._failed_logins
 _mutation_rates = _auth._mutation_rates
 _csrf_failures = _auth._csrf_failures
+
+# Session idle expiry (used by tests)
+enforce_session_idle_expiry = _auth.enforce_session_idle_expiry
+ADMIN_ACTIVE_SINCE_KEY = _auth.ADMIN_ACTIVE_SINCE_KEY
 
 # Healthcheck validation functions (used by tests) - re-export from original healthcheck module
 import healthcheck as _hc_module

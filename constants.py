@@ -20,6 +20,7 @@ MUTATION_MAX = 60               # Max mutations per IP within window
 MUTATION_WINDOW = 60            # Mutation rate-limit window (seconds)
 
 MAX_CSRF_FAILURES = 3           # Bad CSRF tokens before session wipe
+ADMIN_SESSION_IDLE_TIMEOUT = 300  # 5 min idle before admin session is wiped (sliding: resets on each authenticated request)
 
 
 # ── Input validation limits ─────────────────────────────────────────

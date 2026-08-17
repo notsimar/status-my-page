@@ -264,6 +264,12 @@ async function csrfFetch(url, options = {}) {
     if (token) options.headers['X-CSRF-Token'] = token;
     const res = await fetch(url, options);
 
+    // 403 means the session is invalid — expired after 5 min idle, logged
+    // out, or CSRF mismatch. Reload to drop back to the login UI.
+    if (res.status === 403) {
+        location.reload();
+    }
+
     // On success (+ 2xx), rotate the token by fetching a fresh one.
     if (res.ok && res.status < 300) {
         try {
