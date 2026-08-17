@@ -254,9 +254,10 @@ def validate_notes(raw: str, field: str = "notes") -> str:
 
 
 def validate_user_input(raw: str, field: str = "user") -> str:
-    """Validate username/password fields.
+    """Validate a username field.
 
-    Strict: no special characters beyond alphanumerics and common symbols.
+    Strict: no injection patterns (usernames are echoed into comparisons and
+    logs). Passwords must NOT use this — see validate_password().
     """
     if not isinstance(raw, str):
         raise InputRejected(f"expected string, got {type(raw).__name__}", field)
@@ -275,7 +276,29 @@ def validate_user_input(raw: str, field: str = "user") -> str:
         if check_fn(raw):
             raise InputRejected(f"contains forbidden characters ({label})", field)
 
-    return raw.rstrip()  # right-strip only (leading space might be intentional for passwords)
+    return raw.rstrip()  # right-strip only (leading space might be intentional)
+
+
+def validate_password(raw: str, field: str = "pass") -> str:
+    """Validate a password field: length-only policy.
+
+    Deliberately NO pattern filtering: passwords are opaque secrets — `check_password_hash`
+    treats the value opaquely, it is never rendered or interpolated, so shell,
+    SQLi, and XSS patterns inside a password are harmless. Over-restricting here
+    (e.g. rejecting `$`, `&&`, `` ` ``, or `` `OR` ``) made a whole class of
+    legitimate passwords unusable (400 at login instead of normal hashing).
+
+    Enforces: must be a string, max MAX_USERNAME_LENGTH chars (kept so
+    absurdly long bombs are rejected), control chars stripped.
+    """
+    if not isinstance(raw, str):
+        raise InputRejected(f"expected string, got {type(raw).__name__}", field)
+
+    raw = strip_control_chars(raw)
+    if len(raw) > MAX_USERNAME_LENGTH:
+        raise InputRejected(f"exceeds max length {MAX_USERNAME_LENGTH}", field)
+
+    return raw.rstrip()  # right-strip only (trailing newline/whitespace rarely intended)
 
 
 def validate_json_data(data: dict | None) -> dict:

@@ -16,6 +16,7 @@ from input_filter import (
     validate_name, NameChars,
     validate_notes,
     validate_user_input,
+    validate_password,
     validate_json_data,
     validate_int_param,
     strip_control_chars,
@@ -312,9 +313,30 @@ class TestValidateUserInput:
         with pytest.raises(InputRejected, match="XSS"):
             validate_user_input("<script>alert(1)</script>", "user")
 
-    def test_sqli_rejected_in_password(self):
-        with pytest.raises(InputRejected, match="SQLi"):
-            validate_user_input("' OR '1'='1", "pass")
+
+# ─── validate_password ──────────────────────────────────────────────
+
+class TestValidatePassword:
+    def test_valid_password(self):
+        assert validate_password("hunter2", "pass") == "hunter2"
+
+    def test_rejects_non_string(self):
+        with pytest.raises(InputRejected, match="expected string"):
+            validate_password(12345, "pass")  # type: ignore
+
+    def test_over_length_rejected(self):
+        with pytest.raises(InputRejected, match="max length"):
+            validate_password("x" * 100, field="pass")
+
+    def test_length_only_policy__sqli_like_accepted(self):
+        # Under the length-only policy, "SQLi-looking" text is a valid password.
+        assert validate_password("' OR '1'='1", "pass") == "' OR '1'='1"
+
+    def test_length_only_policy__shell_metacharacters_accepted(self):
+        assert validate_password("p@ss$w0rd && more `cmd`", "pass") == "p@ss$w0rd && more `cmd`"
+
+    def test_length_only_policy__xss_like_accepted(self):
+        assert validate_password("<script>alert(1)</script>", "pass") == "<script>alert(1)</script>"
 
 
 # ─── validate_json_data ─────────────────────────────────────────────

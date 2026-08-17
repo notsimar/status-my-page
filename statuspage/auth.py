@@ -21,7 +21,7 @@ from constants import (
     MAX_CSRF_FAILURES,
     ADMIN_SESSION_IDLE_TIMEOUT,
 )
-from input_filter import InputRejected, validate_json_data, validate_user_input
+from input_filter import InputRejected, validate_json_data, validate_user_input, validate_password
 
 
 # ── Admin credentials ───────────────────────────────────────────────
@@ -177,7 +177,7 @@ def login_route():
 
     data = validate_json_data(request.get_json(silent=True))
     user_supplied = validate_user_input(data.get("user", ""), "user")
-    pass_supplied = validate_user_input(data.get("pass", ""), "pass")
+    pass_supplied = validate_password(data.get("pass", ""), "pass")
 
     # Timing-safe: hash both username and password-hash-result together to prevent user enumeration.
     # Use fixed-length hex string 'true' (4 chars) for the boolean to avoid length-based leaks.
