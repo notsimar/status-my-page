@@ -188,7 +188,15 @@ def restore_runtime_overrides(db: sqlite3.Connection, seed_set: set[str]) -> Non
 
 
 def restore_history_from_yaml(db: sqlite3.Connection) -> None:
-    """Restore history entries from _runtime.history."""
+    """Restore history entries from _runtime.history.
+
+    Idempotent: before re-inserting the YAML mirror, remove the rows it
+    would duplicate (matched by the unique ``occurred`` timestamp). Without
+    this, every restart re-INSERTs the same YAML rows and the table grows by
+    the full mirror size on every boot (reproduced: 1 → 2 → 3 rows for one
+    event). DB-only entries beyond the YAML cap (HISTORY_RUNTIME_CAP) are
+    preserved.
+    """
     from statuspage.config import _load_runtime
     rt = _load_runtime()
     for item_name, entries in rt.get("history", {}).items():
@@ -197,6 +205,13 @@ def restore_history_from_yaml(db: sqlite3.Connection) -> None:
         ).fetchone()
         if not row:
             continue
+        occurred_vals = [e.get("occurred") for e in entries if e.get("occurred")]
+        if occurred_vals:
+            placeholders = ",".join("?" * len(occurred_vals))
+            db.execute(
+                f"DELETE FROM status_history WHERE item_id = ? AND occurred IN ({placeholders})",
+                [row["id"], *occurred_vals],
+            )
         for entry in entries:
             db.execute(
                 "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
