@@ -81,10 +81,11 @@ echo "=== Deploying to $INSTALL_DIR ==="
 mkdir -p "$INSTALL_DIR"/{instance,logs,archives}
 
 # Restrict archive dir (contains JSON snapshots with service state/notes)
-chmod 0700 "$INSTALL_DIR/archives"
+chmod 0750 "$INSTALL_DIR/archives"
 
 # Copy everything from current directory (where this script lives)
-cp -r app.py healthcheck.py input_filter.py config.yaml requirements.txt templates/ static/ \
+cp -r app.py healthcheck.py input_filter.py constants.py config.yaml requirements.txt \
+      statuspage/ templates/ static/ \
       tests/ docs/ start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md \
       "$INSTALL_DIR/"
 
@@ -92,8 +93,19 @@ cp -r app.py healthcheck.py input_filter.py config.yaml requirements.txt templat
 chmod +x "$INSTALL_DIR"/*.sh
 
 # Set ownership
-chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"/{instance,logs}
-chown root:"$SERVICE_USER" "$INSTALL_DIR"/* 2>/dev/null || true
+# App code stays root-owned (service user can't tamper with deployed code).
+# Writable locations must be owned by the service user, because at runtime
+# _save_runtime() writes config.yaml.bak* + a temp file into $INSTALL_DIR,
+# and archive_db_snapshot() writes timestamped JSON into $INSTALL_DIR/archives.
+# If the service user can't write there, every status/notes mutation that
+# persists to config.yaml raises PermissionError and the change is lost.
+chown -R root:"$SERVICE_USER" "$INSTALL_DIR"
+chown -R "$SERVICE_USER":"$SERVICE_USER" \
+    "$INSTALL_DIR" \
+    "$INSTALL_DIR/config.yaml" \
+    "$INSTALL_DIR/instance" \
+    "$INSTALL_DIR/logs" \
+    "$INSTALL_DIR/archives"
 
 # ---- Create Python venv ----
 echo ""
