@@ -46,6 +46,24 @@ def init_config_paths(base_dir: Path) -> None:
     _load_config_uncached()
 
 
+def _read_section(cfg: dict, key: str) -> dict:
+    """Return a config section, searching the top level first, then ``_base``.
+
+    ``_save_runtime`` restructures config by moving ``admin``/``server`` under
+    ``_base`` on the first mutation. Before that restructure those sections sit
+    at the top level. Searching both keeps the getters working in either format,
+    so the admin identity and server settings survive a save (without this, a
+    non-default admin username silently stops working after the first mutation).
+    """
+    val = cfg.get(key)
+    if isinstance(val, dict) and val:
+        return val
+    base = cfg.get("_base")
+    if isinstance(base, dict) and isinstance(base.get(key), dict):
+        return base[key]
+    return {}
+
+
 def _load_config_uncached() -> dict:
     """Load config.yaml without caching. Used at startup."""
     global _cfg_cache, _ITEM_NAMES, _CFG_ADMIN_USER, _SERVER_HOST, _SERVER_PORT, _SECRET_KEY_ENV
@@ -58,12 +76,14 @@ def _load_config_uncached() -> dict:
         _cfg_cache = {}
     if _cfg_cache is None:
         _cfg_cache = {}
-    
+
     _ITEM_NAMES = _cfg_cache.get("items", [])
-    _CFG_ADMIN_USER = _cfg_cache.get("admin", {}).get("user", "admin")
-    _SERVER_HOST = _cfg_cache.get("server", {}).get("host", "0.0.0.0")
-    _SERVER_PORT = _cfg_cache.get("server", {}).get("port", 8920)
-    _SECRET_KEY_ENV = _cfg_cache.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
+    admin_sec = _read_section(_cfg_cache, "admin")
+    server_sec = _read_section(_cfg_cache, "server")
+    _CFG_ADMIN_USER = admin_sec.get("user", "admin")
+    _SERVER_HOST = server_sec.get("host", "0.0.0.0")
+    _SERVER_PORT = server_sec.get("port", 8920)
+    _SECRET_KEY_ENV = server_sec.get("secret_key_env", "STATUS_SECRET_KEY")
     return _cfg_cache
 
 
