@@ -410,9 +410,10 @@ def _run_rss_feed_check(url: str, timeout: int, keywords: dict[str, list[str]] |
 
     ``keywords`` maps ``"red"`` / ``"degraded"`` to lists of lower-case
     marker words (case-insensitive substring scan over each entry's title +
-    description). Only the first ``RSS_MAX_ITEMS`` entries are scanned, and
-    the feed is truncated to ``RSS_MAX_BYTES`` before parsing so a huge feed
-    can't stall the worker. Stdlib only: curl subprocess for the fetch,
+    description/summary). Only the first ``RSS_MAX_ITEMS`` entries are scanned, and
+    ``curl --max-filesize`` rejects feeds larger than ``RSS_MAX_BYTES`` so a
+    huge feed can't stall the worker (a rejected feed reads as a fetch
+    failure, never as green). Stdlib only: curl subprocess for the fetch,
     ``xml.etree.ElementTree`` for tolerant parsing.
     """
     if keywords is None:

@@ -370,7 +370,7 @@ Other types: `curl`/`soap` take `url` (+ `soap_action`/`body`/`expected_string`/
 
 Partial-field merge by service name. **A `type` change is a full-replace** — old-type fields are dropped and only `interval`/`timeout`/`retries` survive the swap. Absent fields keep their current value.
 
-**Request Body:** any subset of create fields (e.g. `{"keys": {...}}`, `{"timeout": 20}`).
+**Request Body:** any subset of create fields (e.g. `{"keywords": {...}}`, `{"timeout": 20}`).
 **Response Body:** `{ "ok": true, "name": "...", "config": { "...": "merged config" } }`
 **Status Codes:** `200 OK` | `400 Bad Request` | `404 Not Found` (name unknown) | `401`/`403`/`429`
 

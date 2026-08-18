@@ -201,6 +201,82 @@ class TestRssFeedCheckRuntime:
         assert (result, code) == ("green", 200)
 
 
+# ── _run_rss_feed_check: feed-shape edge cases ─────────────────────
+
+class TestRssFeedCheckEdgeCases:
+    """Entry cap, empty feed, and oversized-feed handling. The docstring
+    claims these; pin the actual behaviour against a real local server."""
+
+    EMPTY_FEED = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss version="2.0"><channel><title>Vendor Status</title>'
+        '</channel></rss>'
+    )
+    # Red keyword buried in a title/description
+    RED_ENTRY = '<item><title>Major outage in us-east</title></item>'
+
+    def test_empty_feed_is_green(self, A, feed_server):
+        """Valid XML with zero entries: nothing to scan -> healthy (green).
+
+        An empty vendor feed (no active incidents) must NOT read as a fetch
+        failure — the fetch succeeded, there is simply no signal.
+        """
+        _set_feed(feed_server.server, self.EMPTY_FEED)
+        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        assert (result, code) == ("green", 200), \
+            f"empty feed should be green/200, got {result!r}/{code!r}"
+
+    def test_entries_beyond_cap_are_not_scanned(self, A, feed_server):
+        """Only the first RSS_MAX_ITEMS entries are scanned.
+
+        A red keyword in an entry PAST the cap is invisible (stale/old
+        incident), while the same keyword within the cap still trips red.
+        This proves the cap actually bounds the scan window.
+        """
+        import healthcheck as hc
+        cap = hc.RSS_MAX_ITEMS
+        clean = '<item><title>All systems normal</title></item>'
+
+        # Control: red within the cap -> red (confirms the probe works).
+        within = "<rss><channel>" + clean + self.RED_ENTRY + "</channel></rss>"
+        _set_feed(feed_server.server, within)
+        assert A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)[0] == "red"
+
+        # Same red entry pushed to position cap+1 -> must be ignored (green).
+        beyond = (
+            "<rss><channel>"
+            + clean * cap
+            + self.RED_ENTRY
+            + "</channel></rss>"
+        )
+        _set_feed(feed_server.server, beyond)
+        result = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)[0]
+        assert result == "green", (
+            f"entry #{cap+1} past RSS_MAX_ITEMS must not be scanned, got {result!r}"
+        )
+
+    def test_oversized_feed_is_fetch_failure(self, A, feed_server):
+        """A feed larger than RSS_MAX_BYTES is truncated by curl
+        (--max-filesize) so the XML is malformed mid-stream -> treated as a
+        fetch failure (None), NOT a green. Prevents a huge valid feed from
+        being silently read as 'all clear'."""
+        import healthcheck as hc
+        # Pad well past the cap with a clean entry title.
+        pad = "x" * (hc.RSS_MAX_BYTES + 4096)
+        oversized = (
+            "<rss><channel>"
+            f'<item><title>preamble {pad}</title></item>'
+            "</channel></rss>"
+        )
+        assert len(oversized.encode()) > hc.RSS_MAX_BYTES
+        _set_feed(feed_server.server, oversized)
+        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        assert result is None, (
+            f"oversized (> {hc.RSS_MAX_BYTES} B) feed must be a fetch failure, "
+            f"got {result!r}"
+        )
+
+
 # ── One-shot entry point ───────────────────────────────────────────
 
 class TestRssFeedOneShot:
