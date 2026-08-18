@@ -419,3 +419,36 @@ document.querySelectorAll('.status-row').forEach(function(row) {
         row.classList.add('show-notes');
     }
 });
+
+// ── Theme toggle (user-selectable light / dark mode) ─────────────
+// Preference persists per-browser in localStorage under 'theme'.
+// The inline script in index.html applies it before first paint so
+// returning users never see the default theme flash.
+function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+
+function syncThemeUI() {
+    if (!themeToggle) return;
+    var isLight = currentTheme() === 'light';
+    themeToggle.textContent = isLight ? '🌙 Dark mode' : '☀️ Light mode';
+    themeToggle.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
+}
+
+function setTheme(theme) {
+    var root = document.documentElement;
+    if (theme === 'light') root.setAttribute('data-theme', 'light');
+    else root.removeAttribute('data-theme');
+    try {
+        if (theme === 'light') localStorage.setItem('theme', 'light');
+        else localStorage.removeItem('theme');
+    } catch (e) { /* localStorage unavailable — theme is view-only in that case */ }
+    syncThemeUI();
+}
+
+const themeToggle = document.getElementById('themeToggle');
+themeToggle && themeToggle.addEventListener('click', () => {
+    setTheme(currentTheme() === 'light' ? 'dark' : 'light');
+});
+// Sync button label with the theme already applied by the inline boot script
+syncThemeUI();

@@ -5,11 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Status</title>
     <link rel="alternate" type="application/rss+xml" title="Status feed" href="/feed.xml">
+    <script>
+        /* Apply the saved theme before first paint so there is no dark→light flash.
+           Dark is the default; 'light' is only set by an explicit user choice. */
+        (function () {
+            try {
+                if (localStorage.getItem('theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) { /* localStorage unavailable (private mode) — stay dark */ }
+        })();
+    </script>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="{% if session_admin %}admin{% endif %}">
     <div class="container">
         <header>
+            <div class="theme-actions">
+                <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
+            </div>
             <h1>Application Status</h1>
             <div class="overall-badge" id="overallBadge"></div>
         </header>

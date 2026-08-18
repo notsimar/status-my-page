@@ -154,6 +154,16 @@ def generate_static_html() -> str:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Application Status</title>
+    <script>
+        /* Apply the saved theme before first paint (same behaviour as the live page). */
+        (function () {{
+            try {{
+                if (localStorage.getItem('theme') === 'light') {{
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }}
+            }} catch (e) {{ /* localStorage unavailable — stay dark */ }}
+        }})();
+    </script>
     <style>
 {css_content}
         /* Standalone static additions */
@@ -183,6 +193,9 @@ def generate_static_html() -> str:
 <body>
     <div class="container">
         <header>
+            <div class="theme-actions">
+                <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
+            </div>
             <h1>Application Status</h1>
             <div class="overall-badge {badge_class}">{badge_text}</div>
         </header>
@@ -195,6 +208,32 @@ def generate_static_html() -> str:
             Generated: {generated_time}
         </div>
     </div>
+    <script>
+        /* Theme toggle — mirrors the live page's behaviour. */
+        (function () {{
+            var btn = document.getElementById('themeToggle');
+            if (!btn) return;
+            function current() {{
+                return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+            }}
+            function sync() {{
+                var isLight = current() === 'light';
+                btn.textContent = isLight ? '🌙 Dark mode' : '☀️ Light mode';
+                btn.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
+            }}
+            btn.addEventListener('click', function () {{
+                var next = current() === 'light' ? 'dark' : 'light';
+                if (next === 'light') document.documentElement.setAttribute('data-theme', 'light');
+                else document.documentElement.removeAttribute('data-theme');
+                try {{
+                    if (next === 'light') localStorage.setItem('theme', 'light');
+                    else localStorage.removeItem('theme');
+                }} catch (e) {{}}
+                sync();
+            }});
+            sync();
+        }})();
+    </script>
 </body>
 </html>"""
     return html
