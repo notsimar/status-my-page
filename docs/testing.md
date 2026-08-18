@@ -262,9 +262,21 @@ python -m pytest tests/ -v
 
 The structural suite is deliberately **brittle** because it should fail if a guard's logic changes — the condition truth table will no longer match expected outputs. This is intentional: any regression in security guards or restoration logic must surface as a test failure.
 
-**Current coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
+**Current coverage: 88% total** (451 tests, measured 2026-08-18)
 
-**Test suite size: 451 tests** (as of 2026-08-17).
+| Module | Coverage |
+|--------|----------|
+| `input_filter.py` | 100% |
+| `statuspage/auth.py` | 97% |
+| `statuspage/services.py` | 96% |
+| `statuspage/rss.py` | 94% |
+| `statuspage/db.py` | 93% |
+| `statuspage/routes.py` | 91% |
+| `healthcheck.py` | 84% |
+| `statuspage/config.py` | 86% |
+| `app.py` | 73% |
+
+**Test suite size: 451 tests** (as of 2026-08-18).
 
 ---
 

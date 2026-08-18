@@ -428,7 +428,7 @@ cp config.yaml.bak1 config.yaml
 | Test Suite                     | Coverage | Description                                                                                                                                        |
 |--------------------------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------|
 | `test_input_filter.py`         | **100%** | 95 assertions: XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, safe-string passthrough                                      |
-| `test_healthcheck.py`          | 76%      | 91 tests: healthcheck parsing across all 5 types, endpoints, worker lock, exception paths (timeout, missing binaries, bad curl/ping/soap output)   |
+| `test_healthcheck.py` | 84% | 91 tests: healthcheck parsing across all 5 types, endpoints, worker lock, exception paths (timeout, missing binaries, bad curl/ping/soap output) |
 | `test_healthcheck_admin.py`    | —        | 82 tests: admin healthcheck CRUD + per-type validation (curl/ping/tcp/soap/rss), public feed toggle + endpoints                                    |
 | `test_healthcheck_one_shot.py` | —        | One-shot `/api/healthcheck/run` flow for each type, incl. rss + worker restart                                                                     |
 | `test_healthcheck_worker.py`   | —        | Worker thread lifecycle: E2E green→red→green, history rows, single-instance lock, hot restart                                                      |
@@ -439,9 +439,22 @@ cp config.yaml.bak1 config.yaml
 | `test_history.py`              | —        | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning                                                                 |
 | `test_routes_and_features.py`  | —        | Auth, mutations, security headers, backups, admin credential validation                                                                            |
 | `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
-| `test_healthcheck_mc_dc.py`    | —        | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests                |
+| `test_healthcheck_mc_dc.py` | — | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests |
 
-**Overall coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
+**Overall coverage: 88%** (451 tests, measured 2026-08-18)
+
+| Module | Coverage |
+|--------|----------|
+| `input_filter.py` | 100% |
+| `statuspage/auth.py` | 97% |
+| `statuspage/services.py` | 96% |
+| `statuspage/rss.py` | 94% |
+| `statuspage/db.py` | 93% |
+| `statuspage/routes.py` | 91% |
+| `healthcheck.py` (root worker) | 84% |
+| `statuspage/config.py` | 86% |
+| `app.py` (composition root) | 73% |
+| **TOTAL (all modules)** | **88%** |
 
 ### Running Tests
 
