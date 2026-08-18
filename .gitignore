@@ -27,3 +27,5 @@ Thumbs.db
 *-deploy.tar.gz
 *.0-1.tgz
 *.bak*
+*.swp
+.*.swp
