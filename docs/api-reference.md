@@ -292,7 +292,7 @@ Permanently deletes a service item and its associated history entries. Compacts 
 
 ### POST `/api/rename/<item_id>` — Update Service Name
 
-Renames an existing service item. Updates references in _runtime config and history.
+Renames an existing service item in the database and records the event in status history.
 
 **Request Parameters:**
 - `item_id` (path): Integer ID of the service to rename

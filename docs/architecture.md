@@ -50,7 +50,7 @@
 │  │  • toggle_item()       → cycles status          │    │
 │  │  • rename_item()       → updates name           │    │
 │  │  • delete_item()       → removes + compacts     │    │
-│  │  • set_notes()         → writes notes + YAML    │    │
+│  │  • set_notes()         → writes notes to DB     │    │
 │  │  • reorder_items()     → applies position map   │    │
 │  │  • record_mutation()   → inserts history row    │    │
 │  └────────────────────────┬────────────────────────┘    │
@@ -58,7 +58,7 @@
 │  ┌────────────────────────▼────────────────────────┐    │
 │  │        Persistence Layer (statuspage/db)        │    │
 │  │  • SQLite (WAL mode, instance/status.db)        │    │
-│  │  • YAML config.yaml (_runtime section)          │    │
+│  │  • Read-only YAML config.yaml (seeding input)   │    │
 │  │  • archives/ JSON snapshots                     │    │
 │  └─────────────────────────────────────────────────┘    │
 │                                                         │
@@ -88,8 +88,8 @@
 1. **No ORM (raw SQL)** — SQLite is simple enough that SQLAlchemy adds complexity without benefit. Raw SQL via `sqlite3.Row` gives explicit control over every query.
 2. **WAL-mode SQLite** — Enables concurrent reads during writes, so the healthcheck worker thread (which writes status on each poll) never blocks UI reads.
 3. **Session-based auth (no JWT)** — Flask signed sessions store state server-side; no token expiration complexity needed for a personal dashboard. A 5-minute sliding idle timeout logs out inactive admin sessions.
-4. **Config-driven seed data** — Service names come from `config.yaml` so deployment is just editing a YAML file and restarting.
-5. **YAML `_runtime` section** — Runtime changes (status, notes) are serialized back to `config.yaml` so state persists across DB resets and server restarts.
+4. **Config-driven seed data** — Service names in `config.yaml` act as read-only provisioning input; new items are inserted into SQLite on startup.
+5. **Database as Single Source of Truth** — Runtime mutations (status, notes, reorder, items, history) are maintained directly in SQLite.
 6. **Polling-free UI, RSS feed for consumers** — A prior SSE broadcast layer was removed; the client updates the DOM in response to each successful mutation (no long-lived connections holding gunicorn prefork slots). External consumers (uptime monitors, IFTTT, other dashboards) subscribe to the public `/feed.xml` RSS 2.0 status-change feed instead.
 7. **Package layout (`app.py` + `statuspage/`)** — `app.py` is a thin composition root (Flask app factory, route registration, security headers, bootstrap); each concern lives in `statuspage/`: `config.py` (parsing + runtime state), `db.py` (schema + history), `services.py` (domain ops), `routes.py` (HTTP handlers), `auth.py` (session/CSRF/rate-limit/lockout), `healthcheck.py` (worker + check dispatch), `rss.py` (public feed builder). `constants.py` holds shared tunables.
 8. **RSS healthchecks are explicit-only** — `type: rss` must be stated; a bare `url` never auto-detects as rss (it stays `curl`). Feeds are fetched via a curl subprocess (redirect policy, max-filesize, max-redirs capped) and parsed with stdlib ElementTree — no third-party RSS library.
@@ -101,13 +101,10 @@
 ### 2.1 Application Bootstrap
 
 ```
-1. Parse config.yaml via yaml.safe_load()            (statuspage/config.py _load_runtime)
-2. Filter keys: skip '_base' (admin secrets), keep '_runtime' for state restore
-3. Validate `items` array — must be a list of strings
-4. Store parsed config in module-level runtime state
-5. Restore `_runtime` state (status/notes) over the DB seed (idempotent)
-6. init_db() — schema, seed rows from items, backfill (statuspage/db.py)
-7. Healthcheck worker: _parse_healthchecks() → start_healthchecks()
+1. Parse config.yaml via yaml.safe_load()
+2. Validate `items` array — list of configured strings
+3. init_db() — create schema if needed, sync new items from config into DB
+4. Healthcheck worker: _parse_healthchecks() → start_healthchecks()
    spawns the daemon worker thread if any healthcheck is configured
 ```
 
@@ -158,7 +155,6 @@ POST /api/toggle/<id> / POST /api/rename/<id> / etc.
        └── Record history entry → status_history table
              (event_type, item_id, old_value, new_value, occurred UTC)
            + per-item history prune (keeps last N rows, outer item_id filter)
-           + _save_runtime() → write YAML _runtime section
 ```
 
 #### Healthcheck Admin Requests
@@ -172,19 +168,9 @@ POST/GET /api/healthchecks, PUT/DELETE /api/healthchecks/<name>
   → re-parse + hot-restart worker (healthcheck.py configure + restart)
 ```
 
-### 2.3 State Restoration Flow (YAML Backing)
+### 2.3 State Management
 
-On server restart, `config.yaml` under `_runtime` section contains the last known state. This merges over the DB seed data so that runtime changes survive a database reset:
-
-```python
-# In _load_runtime() (statuspage/config.py):
-if '_runtime' in cfg_data:
-    rt = cfg_data['_runtime']
-    # Status values (merge with items) — only restore rows that still exist
-    # and are not already green (green == default, no churn)
-    ...
-    # Custom notes — restore non-blank notes for surviving items
-```
+All state transitions and service entries are committed directly to SQLite (`instance/status.db`). `config.yaml` is used strictly on startup to seed any new services defined by the user without overwriting existing database state. Snapshots before DB initialization are automatically saved under `archives/`.
 
 ---
 
@@ -212,14 +198,14 @@ app.py                      # composition root: app factory, route table, header
 ├── pyyaml (PyYAML)          # YAML config parsing + runtime persistence
 ├── werkzeug.security        # scrypt password hashing, secure cookie handling
 │   └── flask                # indirect, via werkzeug
-└── statuspage/              # application package
-    ├── config.py            # config + _runtime state, healthcheck entry parsing
-    ├── db.py                # schema, seeding, history, pruning
-    ├── services.py          # domain operations
-    ├── routes.py            # HTTP handlers (status CRUD, healthcheck CRUD, feed)
-    ├── auth.py              # session, CSRF, rate limit, lockout, idle expiry
-    ├── healthcheck.py       # worker thread + curl/ping/tcp/soap/rss dispatch
-    └── rss.py               # public RSS 2.0 feed builder
+├── statuspage/              # application package
+│   ├── config.py            # config loading, healthcheck entry parsing
+│   ├── db.py                # schema, seeding, history, pruning
+│   ├── services.py          # domain operations
+│   ├── routes.py            # HTTP handlers (status CRUD, healthcheck CRUD, feed)
+│   ├── auth.py              # session, CSRF, rate limit, lockout, idle expiry
+│   ├── healthcheck.py       # worker thread + curl/ping/tcp/soap/rss dispatch
+│   └── rss.py               # public RSS 2.0 feed builder
 constants.py                 # shared tunables (timeouts, caps, ports)
 ```
 
@@ -344,7 +330,7 @@ worker loop (one thread, fcntl-locked to a single instance)
 | XSS                               | Zero `innerHTML` of user data; all sensitive content via `textContent`; DOM built with `createElement()`                            | `static/js/*.js`                                    |
 | SQL Injection                     | Parameterized queries (`?` placeholders); no string interpolation into SQL                                                          | `statuspage/db.py`, `services.py`                   |
 | Plaintext password disclosure     | Only scrypt hashes in `.env` / config; never logged or returned                                                                     | `auth.py`, `config.py` `_base` filtering            |
-| Configuration exposure            | `_base.admin` (hash + secret) filtered from `_runtime.config.data`; `.env` is 0600                                                  | `config.py` `_load_runtime()`                       |
+| Configuration exposure            | `_base.admin` (hash + secret) filtered from exposed config; `.env` is 0600                                                          | `config.py` `load_config()`                          |
 | SSRF via healthcheck URLs         | `_safe_url` (http/https only, no userinfo, host allowlist of TLDs) + curl `--proto` pinned to http/https; `_safe_host` for ping/tcp | `config.py` validation, `healthcheck.py` dispatch   |
 | Feed injection                    | Feed output escaped via `xml.sax.saxutils.escape`; feed is read-only (no admin token in it)                                         | `statuspage/rss.py`                                 |
 | Healthcheck DoS                   | per-check timeout + worker-thread cap + curl `--max-time`; feed body cap 512 KB                                                     | `healthcheck.py`, `constants.py`                    |

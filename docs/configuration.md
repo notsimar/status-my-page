@@ -5,7 +5,7 @@
 - [1. config.yaml Structure](#1-configyaml-structure)
 - [2. Environment Variables](#2-environment-variables)
 - [3. Security Credentials](#3-security-credentials)
-- [4. Runtime State (Auto-Populated)](#4-runtime-state-auto-populated)
+- [4. State Management & Persistence](#4-state-management--persistence)
 - [5. Backup Files](#5-backup-files)
 - [6. Config Migrations](#6-config-migrations)
 
@@ -47,12 +47,9 @@ features:
 
 #### `items` (required)
 - **Type:** Array of strings
-- **Purpose:** Defines the list of services to monitor
-- **Constraints:** Each name must be unique; empty array results in empty dashboard
-- **Lifecycle:** Changes to this list on server restart will:
-  - Add any new names as new DB rows (auto-seeded, position = current_count)
-  - Remove any deleted names from the display (items stay in DB but are filtered out by `_load_runtime`)
-  - Preserve existing status/notes for items that remain
+- **Purpose:** Read-only user input defining services to monitor and add to the configuration.
+- **Constraints:** Each name must be unique.
+- **Lifecycle:** On startup / `init_db()`, newly added items from `config.yaml` are seeded into SQLite without deleting or overriding existing items in the database. The database serves as the single source of truth for items and their state.
 
 #### `admin.user` (required)
 - **Type:** String
@@ -252,45 +249,26 @@ If the key is regenerated (e.g., after server restart and no persistent value), 
 
 ---
 
-## 4. Runtime State (Auto-Populated)
+## 4. State Management & Persistence
 
-On every admin mutation (toggle, rename, notes, add, delete, reorder), the application automatically writes the current runtime state back to `config.yaml` under a `_runtime` section:
+State is maintained exclusively within SQLite (`instance/status.db`). `config.yaml` is strictly a read-only input file for provisioning service items, server settings, and initial healthcheck definitions.
 
-```yaml
-_runtime:
-  status:
-    SvcA: degraded        # Current status per item name
-    SvcB: green
-  notes:                  # Per-item freeform notes (keys = item names)
-    SvcA: "Investigating latency spikes"
-  config:
-    data:
-      items:              # Synced list of current service names
-        - Slack
-        - Azure
-```
+### How State Works
 
-### How Runtime State Works
-
-1. **Persistence:** On mutation, app serializes `_runtime.config.data`, `_runtime.status`, and `_runtime.notes` to YAML
-2. **Restoration:** On server restart, `config.yaml` `_runtime` entries are loaded into memory and merged over DB seed data (runtime values take precedence)
-3. **Isolation:** Keys starting with `_` (`_base`, `_runtime`) are filtered from the public config dict so they never appear in API responses or templates
-
-This design ensures that runtime changes (status updates, notes, reorder) survive:
-- Application restarts
-- Database drops and re-seeding
-- Backup/restore operations
+1. **Database as Single Source of Truth:** All service items, current statuses (`green`, `degraded`, `red`), notes, positions, and mutation history live directly in SQLite.
+2. **Seeding:** On startup, `init_db()` reads `items` from `config.yaml` and adds any services that do not yet exist in the database. Existing items in SQLite and their state are preserved.
+3. **Admin Mutations:** All UI mutations (status toggles, notes, reordering, adding, deleting items) perform direct ACID operations against SQLite.
 
 ---
 
 ## 5. Backup Files
 
-The application maintains a rotation of previous `config.yaml` versions to protect against accidental data loss:
+The application maintains a rotation of previous `config.yaml` versions when healthcheck definitions are modified through the admin API:
 
 | File | Purpose | Retention |
 |------|---------|-----------|
 | `config.yaml` | Current configuration | Always newest |
-| `config.yaml.bak1` | Most recent backup | Auto-created before each mutation save |
+| `config.yaml.bak1` | Most recent backup | Auto-created before each healthcheck save |
 | `config.yaml.bak2` | Second most recent | Shifted up from `.bak1` on next save |
 | `config.yaml.bak3` | Third-most recent | Shifted up from `.bak2` |
 | `config.yaml.bak4` | Fourth-most recent | — |

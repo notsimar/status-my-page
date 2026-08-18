@@ -183,7 +183,7 @@ All structural tests use the `A` fixture (session-scoped) which sets up:
 - Environment variable `STATUS_ADMIN_PASS_HASH=scrypt$...` for "testpass"
 - Flask app with patched paths (CONFIG_PATH, DB_PATH, etc.)
 
-The fixture ensures no state leaks between test classes. Tests within a class share the same temp DB but perform explicit cleanup (e.g., `_save_runtime()` calls clear YAML state between tests).
+The fixture ensures no state leaks between test classes. Tests within a class share the same temp DB.
 
 ### Security Gate Testing Strategy (D3)
 

@@ -379,10 +379,11 @@ with no keywords, only fetch failures change the status.
 python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('my-secure-pw'))"
 ```
 
-### Runtime persistence & backups
+### Database persistence & backups
 
-Admin changes (status, notes, reorder) are persisted back to `config.yaml` under a `_runtime` section so they survive DB resets. On every save:
+The SQLite database (`instance/status.db`) is the single source of truth for all services, statuses, notes, positions, and history. `config.yaml` serves as a read-only input for provisioning new items and initial configuration.
 
+When healthchecks are updated via the admin API:
 1. Current `config.yaml` → `.bak1`
 2. Existing backups shift up (`.bak1` → `.bak2` … → `.bak5`)
 3. New config written atomically (`tempfile` + `os.replace`)
@@ -490,7 +491,7 @@ This project employs **Modified Condition/Decision Coverage** to prove that crit
 .venv/bin/pytest tests/test_mc_dc.py tests/test_structural.py tests/test_healthcheck_mc_dc.py -v
 ```
 
-The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, YAML restoration filters, `_runtime` key filtering, healthcheck result evaluation, URL sanitisation, rss feed gates, worker locking). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
+The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, healthcheck result evaluation, URL sanitisation, rss feed gates, worker locking). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
 
 ### Quick Health Check (Shell)
 
