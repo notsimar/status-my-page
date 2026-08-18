@@ -8,7 +8,9 @@
 - **Smart Notes**: Auto-show hidden notes only for degraded/outage states, auto-hide on green  
 - **Status History**: Every toggle and notes update is timestamped — open the 🕙 history panel per service to see the full change timeline
 - **Dark Theme UI**: Responsive layout (≤640px & ≤425px breakpoints), mobile-first CSS with proper touch targets
-- **Admin Controls**: Session-based auth, drag-and-drop reorder, inline rename, add/delete items, auto-saving notes
+- **Admin Controls**: Session-based auth, drag-and-drop reorder, inline rename, add/delete items, auto-saving notes, static page export
+- **Healthchecks**: Background probing via HTTP/HTTPS (`curl`), TCP, ICMP (`ping`), SOAP, and vendor RSS/Atom status feeds with custom failure/degraded keywords and service linking
+- **Static Page Export**: One-click standalone HTML export with inlined CSS for CDN/mass-delivery hosting
 - **Config-Driven**: `config.yaml` provides read-only provisioning input for services, credentials, and initial healthcheck definitions
 - **Database Persistence**: SQLite (`instance/status.db`) is the single source of truth for all service items, statuses, notes, positions, and mutation history
 - **Auto-Archival & Backups**: Pre-reset JSON snapshots (`archives/`) on restart, and atomic backup rotation (`.bak1`–`.bak5`) for `config.yaml` healthcheck edits
@@ -336,11 +338,11 @@ healthchecks:
 
 | Type   | Required Keys | Optional Keys                                                                               | Use Case                                |
 |--------|---------------|---------------------------------------------------------------------------------------------|-----------------------------------------|
-| `ping` | `host`        | `interval`, `timeout`, `retries`                                                            | ICMP reachability (routers, hosts)      |
-| `tcp`  | `host`, `port`| `interval`, `timeout`, `retries`                                                            | TCP port connectivity (DB, Redis, SMTP) |
-| `curl` | `url`         | `healthy_codes`, `failure_keyword`, `degraded_keyword`, `interval`, `timeout`, `retries`   | HTTP/HTTPS REST APIs                    |
-| `soap` | `url`         | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services                   |
-| `rss`  | `url`         | `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries`                       | Vendor status pages (RSS/Atom feeds)    |
+| `ping` | `host`        | `service`, `interval`, `timeout`, `retries`                                                 | ICMP reachability (routers, hosts)      |
+| `tcp`  | `host`, `port`| `service`, `interval`, `timeout`, `retries`                                                 | TCP port connectivity (DB, Redis, SMTP) |
+| `curl` | `url`         | `service`, `healthy_codes`, `failure_keyword`, `degraded_keyword`, `interval`, `timeout`, `retries` | HTTP/HTTPS REST APIs            |
+| `soap` | `url`         | `service`, `soap_action`, `body`, `expected_string`, `failure_keyword`, `degraded_keyword`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services |
+| `rss`  | `url`         | `service`, `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries`            | Vendor status pages (RSS/Atom feeds)    |
 
 **Auto-detection:** If `type` is omitted, the parser infers it:
 - `host` + `port` → `tcp`
@@ -357,11 +359,14 @@ the normal retry ladder applies (degraded → red). `keywords` is optional:
 with no keywords, only fetch failures change the status.
 
 **Key Options:**
+- `service` — target dashboard service name to update (defaults to healthcheck name if omitted)
 - `interval` — seconds between checks (default: 60)
 - `timeout` — seconds per attempt (default: 10)
 - `retries` — consecutive failures before marking degraded/red (default: 2)
 - `healthy_codes` — HTTP codes considered healthy (default: `[200]`)
-- `expected_string` / `body_contains` — response must contain this substring
+- `expected_string` — response must contain this substring (SOAP)
+- `failure_keyword` — response body match that flags RED/outage (HTTP/SOAP)
+- `degraded_keyword` — response body match that flags DEGRADED/warning (HTTP/SOAP)
 - `keywords.red` / `keywords.degraded` — rss type: marker words per severity
 
 ### Environment variables
