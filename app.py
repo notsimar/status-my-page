@@ -415,7 +415,6 @@ if not get_db_path().exists():
         pass
 
 # Only start healthchecks if not disabled via env var (for tests)
-import os
 if not os.environ.get("STATUS_DISABLE_HEALTHCHECKS"):
     configure_healthcheck_module()
     start_healthchecks()

@@ -520,7 +520,3 @@ def get_history(db: sqlite3.Connection, item_id: int):
             for e in entries
         ]
     }
-
-
-# Import os at module level for archive_db_snapshot
-import os

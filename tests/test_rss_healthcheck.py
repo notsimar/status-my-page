@@ -80,7 +80,10 @@ class FeedHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/rss+xml; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         else:
             self.send_response(404)
             self.end_headers()
