@@ -140,7 +140,8 @@ healthchecks:
 | `url` | REQUIRED; the SOAP endpoint URL (http/https only) | — |
 | `soap_action` | The `SOAPAction` header value | *(optional)* |
 | `body` | Custom XML payload to POST | Minimal SOAP envelope with empty `<Body/>` |
-| `failure_keyword` | String that flags failure if present in the response body (case-insensitive) | *(none)* |
+| `failure_keyword` | String that flags OUTAGE/RED if present in the response body (case-insensitive) | *(none)* |
+| `degraded_keyword` | String that flags DEGRADED/YELLOW if present in the response body (case-insensitive) | *(none)* |
 
 **RSS feed options:**
 

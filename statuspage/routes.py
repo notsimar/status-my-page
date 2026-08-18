@@ -333,6 +333,9 @@ def api_healthchecks_create():
             failure_keyword = data.get("failure_keyword", "").strip()
             if failure_keyword:
                 hc_config["failure_keyword"] = failure_keyword
+            degraded_keyword = data.get("degraded_keyword", "").strip()
+            if degraded_keyword:
+                hc_config["degraded_keyword"] = degraded_keyword
 
         codes, err = _clean_healthy_codes(data.get("healthy_codes"))
         if err:
@@ -437,7 +440,7 @@ def api_healthchecks_update(name: str):
                 return jsonify(error=err), 400
             hc_config["url"] = url
 
-        for key in ("failure_keyword",):
+        for key in ("failure_keyword", "degraded_keyword"):
             val = data.get(key)
             if val is not None:
                 val = str(val).strip()
@@ -520,7 +523,7 @@ def api_healthchecks_update(name: str):
 
     # Remove fields no longer relevant for the new type
     if new_type not in ("curl", "soap", "rss"):
-        for f in ("url", "healthy_codes", "soap_action", "body", "expected_string", "failure_keyword"):
+        for f in ("url", "healthy_codes", "soap_action", "body", "expected_string", "failure_keyword", "degraded_keyword"):
             hc_config.pop(f, None)
     if new_type in ("curl", "soap"):
         hc_config.pop("host", None)

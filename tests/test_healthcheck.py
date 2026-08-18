@@ -428,18 +428,18 @@ class TestRunCurlCheck:
     """Real curl invocation + failure modes."""
 
     def test_connection_refused_returns_none(self, A):
-        ok, code = A._run_curl_check("http://localhost:19999/nonexistent", timeout=2)
-        assert not ok and code is None
+        ok, code, res_status = A._run_curl_check("http://localhost:19999/nonexistent", timeout=2)
+        assert not ok and code is None and res_status == "red"
 
     def test_curl_binary_found(self, A):
         """At minimum curl should be discoverable on the build host."""
         # Just check it returns None (no crash or exception).
-        ok, code = A._run_curl_check("http://localhost:19997/bad", timeout=2)
-        assert not ok and code is None
+        ok, code, res_status = A._run_curl_check("http://localhost:19997/bad", timeout=2)
+        assert not ok and code is None and res_status == "red"
 
     def test_nonexistent_local_url_returns_none(self, A):
-        ok, code = A._run_curl_check("http://127.0.0.1:19988/nope", timeout=2)
-        assert not ok and code is None
+        ok, code, res_status = A._run_curl_check("http://127.0.0.1:19988/nope", timeout=2)
+        assert not ok and code is None and res_status == "red"
 
     def test_failure_keyword_flags_unhealthy(self, A, monkeypatch):
         """_run_curl_check returns unhealthy if failure_keyword is in response body."""
@@ -453,8 +453,41 @@ class TestRunCurlCheck:
         monkeypatch.setattr(subprocess, "run", mock_run_with_keyword)
         import healthcheck as hc
         monkeypatch.setattr(hc.subprocess, "run", mock_run_with_keyword)
-        ok, code = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
-        assert not ok and code == 200
+        ok, code, res_status = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
+        assert not ok and code == 200 and res_status == "red"
+
+    def test_degraded_keyword_flags_degraded(self, A, monkeypatch):
+        """_run_curl_check returns degraded if degraded_keyword is in response body."""
+        import subprocess
+
+        def mock_run_with_deg(*args, **kwargs):
+            class Resp:
+                stdout = "High Latency Warning\n200"
+            return Resp()
+
+        monkeypatch.setattr(subprocess, "run", mock_run_with_deg)
+        import healthcheck as hc
+        monkeypatch.setattr(hc.subprocess, "run", mock_run_with_deg)
+        ok, code, res_status = A._run_curl_check("http://localhost/health", timeout=2, degraded_keyword="High Latency")
+        assert not ok and code == 200 and res_status == "degraded"
+
+    def test_failure_keyword_takes_precedence_over_degraded(self, A, monkeypatch):
+        """_run_curl_check prefers red/failure keyword over degraded keyword."""
+        import subprocess
+
+        def mock_run_both(*args, **kwargs):
+            class Resp:
+                stdout = "High Latency and Critical Error\n200"
+            return Resp()
+
+        monkeypatch.setattr(subprocess, "run", mock_run_both)
+        import healthcheck as hc
+        monkeypatch.setattr(hc.subprocess, "run", mock_run_both)
+        ok, code, res_status = A._run_curl_check(
+            "http://localhost/health", timeout=2,
+            failure_keyword="Critical Error", degraded_keyword="High Latency"
+        )
+        assert not ok and code == 200 and res_status == "red"
 
     def test_failure_keyword_absent_returns_healthy(self, A, monkeypatch):
         """_run_curl_check returns healthy when failure_keyword is not in response body."""
@@ -468,8 +501,8 @@ class TestRunCurlCheck:
         monkeypatch.setattr(subprocess, "run", mock_run_clean)
         import healthcheck as hc
         monkeypatch.setattr(hc.subprocess, "run", mock_run_clean)
-        ok, code = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
-        assert ok and code == 200
+        ok, code, res_status = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
+        assert ok and code == 200 and res_status == "green"
 
 
 # ─── SOAP healthchecks ──────────────────────────────────────────
@@ -705,8 +738,8 @@ class TestHealthcheckExceptionPaths:
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
 
         monkeypatch.setattr(subprocess, "run", mock_run_timeout)
-        ok, code = A._run_curl_check("http://localhost/", timeout=1)
-        assert not ok and code is None
+        ok, code, res_status = A._run_curl_check("http://localhost/", timeout=1)
+        assert not ok and code is None and res_status == "red"
 
     def test_run_curl_check_file_not_found(self, A, monkeypatch):
         """_run_curl_check handles FileNotFoundError (curl not installed)."""
@@ -716,8 +749,8 @@ class TestHealthcheckExceptionPaths:
             raise FileNotFoundError("curl command not found")
 
         monkeypatch.setattr(subprocess, "run", mock_run_fnf)
-        ok, code = A._run_curl_check("http://localhost/", timeout=1)
-        assert not ok and code is None
+        ok, code, res_status = A._run_curl_check("http://localhost/", timeout=1)
+        assert not ok and code is None and res_status == "red"
 
     def test_run_curl_check_os_error(self, A, monkeypatch):
         """_run_curl_check handles OSError."""
@@ -727,8 +760,8 @@ class TestHealthcheckExceptionPaths:
             raise OSError("Network unreachable")
 
         monkeypatch.setattr(subprocess, "run", mock_run_os)
-        ok, code = A._run_curl_check("http://localhost/", timeout=1)
-        assert not ok and code is None
+        ok, code, res_status = A._run_curl_check("http://localhost/", timeout=1)
+        assert not ok and code is None and res_status == "red"
 
     def test_run_soap_check_timeout(self, A, monkeypatch):
         """_run_soap_check handles subprocess.TimeoutExpired."""

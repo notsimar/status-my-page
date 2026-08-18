@@ -236,11 +236,13 @@ class TestHealthcheckCreate:
         r = _mutate(admin, "POST", "/api/healthchecks", {
             "name": name, "type": "curl", "url": "http://localhost/health",
             "failure_keyword": "Error",
+            "degraded_keyword": "Slow",
         })
         assert r.status_code == 200
         disk = _read_hc_yaml()[name]
         assert disk["type"] == "curl"
         assert disk["failure_keyword"] == "Error"
+        assert disk["degraded_keyword"] == "Slow"
 
     def test_create_soap_all_fields(self, admin, clean_hc):
         name = _name("HC SOAP")

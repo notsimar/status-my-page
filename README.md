@@ -338,7 +338,7 @@ healthchecks:
 |--------|---------------|---------------------------------------------------------------------------------------------|-----------------------------------------|
 | `ping` | `host`        | `interval`, `timeout`, `retries`                                                            | ICMP reachability (routers, hosts)      |
 | `tcp`  | `host`, `port`| `interval`, `timeout`, `retries`                                                            | TCP port connectivity (DB, Redis, SMTP) |
-| `curl` | `url`         | `healthy_codes`, `failure_keyword`, `interval`, `timeout`, `retries`                        | HTTP/HTTPS REST APIs                    |
+| `curl` | `url`         | `healthy_codes`, `failure_keyword`, `degraded_keyword`, `interval`, `timeout`, `retries`   | HTTP/HTTPS REST APIs                    |
 | `soap` | `url`         | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services                   |
 | `rss`  | `url`         | `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries`                       | Vendor status pages (RSS/Atom feeds)    |
 
@@ -445,7 +445,7 @@ cp config.yaml.bak1 config.yaml
 | `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
 | `test_healthcheck_mc_dc.py` | — | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests |
 
-**Overall coverage: 88%** (430 tests, measured 2026-08-18)
+**Overall coverage: 88%** (435 tests, measured 2026-08-18)
 
 | Module | Coverage |
 |--------|----------|

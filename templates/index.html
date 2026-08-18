@@ -176,9 +176,15 @@
                 </div>
                 
                 <div id="hcFailureKeywordRow" class="form-row hc-type-field hidden">
-                    <label for="hcFailureKeyword">Failure Keyword / Substring</label>
+                    <label for="hcFailureKeyword">Failure / Outage Keyword (Red)</label>
                     <input type="text" id="hcFailureKeyword" placeholder="Error, Exception, 500, Database failure">
-                    <small class="help-text">Optional. If found in response body, check fails (case-insensitive).</small>
+                    <small class="help-text">Optional. If found in response body, check marks item RED (case-insensitive).</small>
+                </div>
+
+                <div id="hcDegradedKeywordRow" class="form-row hc-type-field hidden">
+                    <label for="hcDegradedKeyword">Degraded Keyword (Yellow)</label>
+                    <input type="text" id="hcDegradedKeyword" placeholder="Slow, Warning, High Latency, Maintenance">
+                    <small class="help-text">Optional. If found in response body, check marks item DEGRADED (case-insensitive).</small>
                 </div>
                 
                 <!-- rss fields -->

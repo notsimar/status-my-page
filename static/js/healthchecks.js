@@ -64,6 +64,7 @@ const hcSoapAction = document.getElementById('hcSoapAction');
 const hcBody = document.getElementById('hcBody');
 const hcExpectedString = document.getElementById('hcExpectedString');
 const hcFailureKeyword = document.getElementById('hcFailureKeyword');
+const hcDegradedKeyword = document.getElementById('hcDegradedKeyword');
 const hcHost = document.getElementById('hcHost');
 const hcPort = document.getElementById('hcPort');
 const hcRssKeywordsRed = document.getElementById('hcRssKeywordsRed');
@@ -74,8 +75,8 @@ const hcRetries = document.getElementById('hcRetries');
 
 // Type-specific field groups
 const typeFieldGroups = {
-    curl: ['hcUrlRow', 'hcHealthyCodesRow', 'hcFailureKeywordRow'],
-    soap: ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcFailureKeywordRow'],
+    curl: ['hcUrlRow', 'hcHealthyCodesRow', 'hcFailureKeywordRow', 'hcDegradedKeywordRow'],
+    soap: ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcFailureKeywordRow', 'hcDegradedKeywordRow'],
     ping: ['hcHostRow'],
     tcp: ['hcHostRow', 'hcPortRow'],
     rss: ['hcUrlRow', 'hcRssKeywordsRow', 'hcRssKeywordsDegRow'],
@@ -94,7 +95,7 @@ function hideError() {
 
 function showFieldGroups(type) {
     // Hide all type-specific fields
-    const allFields = ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcFailureKeywordRow', 'hcHostRow', 'hcPortRow', 'hcRssKeywordsRow', 'hcRssKeywordsDegRow'];
+    const allFields = ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcFailureKeywordRow', 'hcDegradedKeywordRow', 'hcHostRow', 'hcPortRow', 'hcRssKeywordsRow', 'hcRssKeywordsDegRow'];
     allFields.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
@@ -168,6 +169,7 @@ function openModal(mode, data = null) {
             } else {
                 hcHealthyCodes.value = (data.healthy_codes || []).join(', ');
                 hcFailureKeyword.value = data.failure_keyword || '';
+                hcDegradedKeyword.value = data.degraded_keyword || '';
             }
             if (data.type === 'soap') {
                 hcSoapAction.value = data.soap_action || '';
@@ -217,6 +219,8 @@ function collectFormData() {
             if (codes.length > 0) data.healthy_codes = codes;
             const fk = hcFailureKeyword.value.trim();
             if (fk) data.failure_keyword = fk;
+            const dk = hcDegradedKeyword.value.trim();
+            if (dk) data.degraded_keyword = dk;
         }
         if (type === 'soap') {
             const sa = hcSoapAction.value.trim();
