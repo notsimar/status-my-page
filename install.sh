@@ -23,7 +23,7 @@ if echo "$INSTALL_DIR" | grep -q '\.\.\/'; then
     exit 1
 fi
 INSTALL_DIR=$(realpath -m "$INSTALL_DIR")
-
+export INSTALL_DIR
 echo "Install directory: $INSTALL_DIR"
 echo "Service user: $SERVICE_USER"
 echo ""
