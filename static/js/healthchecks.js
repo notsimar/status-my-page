@@ -63,6 +63,7 @@ const hcHealthyCodes = document.getElementById('hcHealthyCodes');
 const hcSoapAction = document.getElementById('hcSoapAction');
 const hcBody = document.getElementById('hcBody');
 const hcExpectedString = document.getElementById('hcExpectedString');
+const hcFailureKeyword = document.getElementById('hcFailureKeyword');
 const hcHost = document.getElementById('hcHost');
 const hcPort = document.getElementById('hcPort');
 const hcRssKeywordsRed = document.getElementById('hcRssKeywordsRed');
@@ -73,8 +74,8 @@ const hcRetries = document.getElementById('hcRetries');
 
 // Type-specific field groups
 const typeFieldGroups = {
-    curl: ['hcUrlRow', 'hcHealthyCodesRow'],
-    soap: ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow'],
+    curl: ['hcUrlRow', 'hcHealthyCodesRow', 'hcFailureKeywordRow'],
+    soap: ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcFailureKeywordRow'],
     ping: ['hcHostRow'],
     tcp: ['hcHostRow', 'hcPortRow'],
     rss: ['hcUrlRow', 'hcRssKeywordsRow', 'hcRssKeywordsDegRow'],
@@ -93,7 +94,7 @@ function hideError() {
 
 function showFieldGroups(type) {
     // Hide all type-specific fields
-    const allFields = ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcHostRow', 'hcPortRow', 'hcRssKeywordsRow', 'hcRssKeywordsDegRow'];
+    const allFields = ['hcUrlRow', 'hcHealthyCodesRow', 'hcSoapActionRow', 'hcBodyRow', 'hcExpectedStringRow', 'hcFailureKeywordRow', 'hcHostRow', 'hcPortRow', 'hcRssKeywordsRow', 'hcRssKeywordsDegRow'];
     allFields.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.add('hidden');
@@ -166,6 +167,7 @@ function openModal(mode, data = null) {
                 hcRssKeywordsDeg.value = _joinCsv((data.keywords || {}).degraded);
             } else {
                 hcHealthyCodes.value = (data.healthy_codes || []).join(', ');
+                hcFailureKeyword.value = data.failure_keyword || '';
             }
             if (data.type === 'soap') {
                 hcSoapAction.value = data.soap_action || '';
@@ -213,6 +215,8 @@ function collectFormData() {
         } else {
             const codes = hcHealthyCodes.value.split(',').map(c => parseInt(c.trim(), 10)).filter(c => !isNaN(c));
             if (codes.length > 0) data.healthy_codes = codes;
+            const fk = hcFailureKeyword.value.trim();
+            if (fk) data.failure_keyword = fk;
         }
         if (type === 'soap') {
             const sa = hcSoapAction.value.trim();

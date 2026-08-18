@@ -246,7 +246,7 @@ These tests use `monkeypatch` to mock `subprocess.run` and verify graceful degra
 
 ### MC/DC Tests (`test_healthcheck_mc_dc.py`)
 
-- **D_hc1** (L222): `code is not None and code in healthy_codes` — 3 tests (baseline, C1=F, C2=F)
+- **D_hc1** (L222): `code is not None and code in healthy_codes and body_ok` — 3 tests (baseline, C1=F, C2=F)
 - **D_hc2** (L124): `not url or not isinstance(url, str) or not url.strip()` — 5 tests (C1, C2, C3 each independently, baseline)
 - **Worker Lock**: fcntl-based file lock proves single-worker guarantee across gunicorn processes
 

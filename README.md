@@ -338,7 +338,7 @@ healthchecks:
 |--------|---------------|---------------------------------------------------------------------------------------------|-----------------------------------------|
 | `ping` | `host`        | `interval`, `timeout`, `retries`                                                            | ICMP reachability (routers, hosts)      |
 | `tcp`  | `host`, `port`| `interval`, `timeout`, `retries`                                                            | TCP port connectivity (DB, Redis, SMTP) |
-| `curl` | `url`         | `healthy_codes`, `interval`, `timeout`, `retries`                                           | HTTP/HTTPS REST APIs                    |
+| `curl` | `url`         | `healthy_codes`, `failure_keyword`, `interval`, `timeout`, `retries`                        | HTTP/HTTPS REST APIs                    |
 | `soap` | `url`         | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services                   |
 | `rss`  | `url`         | `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries`                       | Vendor status pages (RSS/Atom feeds)    |
 

@@ -175,6 +175,12 @@
                     <small class="help-text">Optional. If set, response must contain this string.</small>
                 </div>
                 
+                <div id="hcFailureKeywordRow" class="form-row hc-type-field hidden">
+                    <label for="hcFailureKeyword">Failure Keyword / Substring</label>
+                    <input type="text" id="hcFailureKeyword" placeholder="Error, Exception, 500, Database failure">
+                    <small class="help-text">Optional. If found in response body, check fails (case-insensitive).</small>
+                </div>
+                
                 <!-- rss fields -->
                 <div id="hcRssKeywordsRow" class="form-row hc-type-field hidden">
                     <label for="hcRssKeywordsRed">Red Keywords (comma-separated)</label>

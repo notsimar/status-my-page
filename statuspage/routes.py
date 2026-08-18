@@ -318,16 +318,21 @@ def api_healthchecks_create():
             return jsonify(error=err), 400
         hc_config["url"] = url
 
-        if check_type == "soap":
-            soap_action = data.get("soap_action", "").strip()
-            if soap_action:
-                hc_config["soap_action"] = soap_action
-            body = data.get("body", "").strip()
-            if body:
-                hc_config["body"] = body
-            expected_string = data.get("expected_string", "").strip()
-            if expected_string:
-                hc_config["expected_string"] = expected_string
+        if check_type in ("curl", "soap"):
+            if check_type == "soap":
+                soap_action = data.get("soap_action", "").strip()
+                if soap_action:
+                    hc_config["soap_action"] = soap_action
+                body = data.get("body", "").strip()
+                if body:
+                    hc_config["body"] = body
+                expected_string = data.get("expected_string", "").strip()
+                if expected_string:
+                    hc_config["expected_string"] = expected_string
+
+            failure_keyword = data.get("failure_keyword", "").strip()
+            if failure_keyword:
+                hc_config["failure_keyword"] = failure_keyword
 
         codes, err = _clean_healthy_codes(data.get("healthy_codes"))
         if err:
@@ -432,6 +437,15 @@ def api_healthchecks_update(name: str):
                 return jsonify(error=err), 400
             hc_config["url"] = url
 
+        for key in ("failure_keyword",):
+            val = data.get(key)
+            if val is not None:
+                val = str(val).strip()
+                if val:
+                    hc_config[key] = val
+                elif key in hc_config:
+                    del hc_config[key]
+
         if new_type == "soap":
             for key in ("soap_action", "body", "expected_string"):
                 val = data.get(key)
@@ -506,7 +520,7 @@ def api_healthchecks_update(name: str):
 
     # Remove fields no longer relevant for the new type
     if new_type not in ("curl", "soap", "rss"):
-        for f in ("url", "healthy_codes", "soap_action", "body", "expected_string"):
+        for f in ("url", "healthy_codes", "soap_action", "body", "expected_string", "failure_keyword"):
             hc_config.pop(f, None)
     if new_type in ("curl", "soap"):
         hc_config.pop("host", None)

@@ -231,6 +231,17 @@ class TestHealthcheckCreate:
         disk = _read_hc_yaml()[name]
         assert disk == {"type": "tcp", "host": "127.0.0.1", "port": 5432}
 
+    def test_create_curl_with_failure_keyword(self, admin, clean_hc):
+        name = _name("HC Curl FK")
+        r = _mutate(admin, "POST", "/api/healthchecks", {
+            "name": name, "type": "curl", "url": "http://localhost/health",
+            "failure_keyword": "Error",
+        })
+        assert r.status_code == 200
+        disk = _read_hc_yaml()[name]
+        assert disk["type"] == "curl"
+        assert disk["failure_keyword"] == "Error"
+
     def test_create_soap_all_fields(self, admin, clean_hc):
         name = _name("HC SOAP")
         r = _mutate(admin, "POST", "/api/healthchecks", {

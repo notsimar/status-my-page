@@ -150,7 +150,8 @@ _safe_port = _hc_module._safe_port
 _parse_healthchecks = _hc_module._parse_healthchecks
 _run_ping_check = _hc_module._run_ping_check
 _run_tcp_check = _hc_module._run_tcp_check
-_run_curl_check = _hc_module._run_curl_check
+def _run_curl_check(*args, **kwargs):
+    return _hc_module._run_curl_check(*args, **kwargs)
 _run_soap_check = _hc_module._run_soap_check
 _run_rss_feed_check = _hc_module._run_rss_feed_check
 _set_health_status = _hc_module._set_health_status

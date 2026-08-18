@@ -428,18 +428,48 @@ class TestRunCurlCheck:
     """Real curl invocation + failure modes."""
 
     def test_connection_refused_returns_none(self, A):
-        result = A._run_curl_check("http://localhost:19999/nonexistent", timeout=2)
-        assert result is None
+        ok, code = A._run_curl_check("http://localhost:19999/nonexistent", timeout=2)
+        assert not ok and code is None
 
     def test_curl_binary_found(self, A):
         """At minimum curl should be discoverable on the build host."""
         # Just check it returns None (no crash or exception).
-        result = A._run_curl_check("http://localhost:19997/bad", timeout=2)
-        assert result is None
+        ok, code = A._run_curl_check("http://localhost:19997/bad", timeout=2)
+        assert not ok and code is None
 
     def test_nonexistent_local_url_returns_none(self, A):
-        result = A._run_curl_check("http://127.0.0.1:19988/nope", timeout=2)
-        assert result is None
+        ok, code = A._run_curl_check("http://127.0.0.1:19988/nope", timeout=2)
+        assert not ok and code is None
+
+    def test_failure_keyword_flags_unhealthy(self, A, monkeypatch):
+        """_run_curl_check returns unhealthy if failure_keyword is in response body."""
+        import subprocess
+
+        def mock_run_with_keyword(*args, **kwargs):
+            class Resp:
+                stdout = "Service Internal Error 500\n200"
+            return Resp()
+
+        monkeypatch.setattr(subprocess, "run", mock_run_with_keyword)
+        import healthcheck as hc
+        monkeypatch.setattr(hc.subprocess, "run", mock_run_with_keyword)
+        ok, code = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
+        assert not ok and code == 200
+
+    def test_failure_keyword_absent_returns_healthy(self, A, monkeypatch):
+        """_run_curl_check returns healthy when failure_keyword is not in response body."""
+        import subprocess
+
+        def mock_run_clean(*args, **kwargs):
+            class Resp:
+                stdout = '{"status": "ok"}\n200'
+            return Resp()
+
+        monkeypatch.setattr(subprocess, "run", mock_run_clean)
+        import healthcheck as hc
+        monkeypatch.setattr(hc.subprocess, "run", mock_run_clean)
+        ok, code = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
+        assert ok and code == 200
 
 
 # ─── SOAP healthchecks ──────────────────────────────────────────
@@ -670,35 +700,35 @@ class TestHealthcheckExceptionPaths:
     def test_run_curl_check_timeout(self, A, monkeypatch):
         """_run_curl_check handles subprocess.TimeoutExpired."""
         import subprocess
-        
+
         def mock_run_timeout(*args, **kwargs):
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
-        
+
         monkeypatch.setattr(subprocess, "run", mock_run_timeout)
-        result = A._run_curl_check("http://localhost/", timeout=1)
-        assert result is None
+        ok, code = A._run_curl_check("http://localhost/", timeout=1)
+        assert not ok and code is None
 
     def test_run_curl_check_file_not_found(self, A, monkeypatch):
         """_run_curl_check handles FileNotFoundError (curl not installed)."""
         import subprocess
-        
+
         def mock_run_fnf(*args, **kwargs):
             raise FileNotFoundError("curl command not found")
-        
+
         monkeypatch.setattr(subprocess, "run", mock_run_fnf)
-        result = A._run_curl_check("http://localhost/", timeout=1)
-        assert result is None
+        ok, code = A._run_curl_check("http://localhost/", timeout=1)
+        assert not ok and code is None
 
     def test_run_curl_check_os_error(self, A, monkeypatch):
         """_run_curl_check handles OSError."""
         import subprocess
-        
+
         def mock_run_os(*args, **kwargs):
             raise OSError("Network unreachable")
-        
+
         monkeypatch.setattr(subprocess, "run", mock_run_os)
-        result = A._run_curl_check("http://localhost/", timeout=1)
-        assert result is None
+        ok, code = A._run_curl_check("http://localhost/", timeout=1)
+        assert not ok and code is None
 
     def test_run_soap_check_timeout(self, A, monkeypatch):
         """_run_soap_check handles subprocess.TimeoutExpired."""

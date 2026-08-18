@@ -147,6 +147,7 @@ def _parse_healthchecks() -> dict[str, dict]:
         soap_action = details.get("soap_action", details.get("action", ""))
         soap_body = details.get("body", details.get("envelope", ""))
         expected_string = details.get("expected_string", details.get("expected", ""))
+        failure_keyword = details.get("failure_keyword", details.get("failure_string", details.get("fail_keyword", "")))
 
         # Auto-detect check_type if not explicitly set
         if not check_type:
@@ -266,6 +267,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                     "soap_action": str(soap_action).strip() if soap_action else "",
                     "body": str(soap_body) if soap_body else "",
                     "expected_string": str(expected_string).strip() if expected_string else "",
+                    "failure_keyword": str(failure_keyword).strip() if failure_keyword else "",
                     "interval": max(interval, 1),
                     "timeout": max(timeout_val, 1),
                     "retries": max(retries, 1),
@@ -275,6 +277,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                 healthchecks[name.strip()] = {
                     "type": "curl",
                     "url": url.strip(),
+                    "failure_keyword": str(failure_keyword).strip() if failure_keyword else "",
                     "interval": max(interval, 1),
                     "timeout": max(timeout_val, 1),
                     "retries": max(retries, 1),
@@ -375,27 +378,40 @@ def _run_soap_check(
         return False, None
 
 
-def _run_curl_check(url: str, timeout: int) -> int | None:
-    """Run curl and return the HTTP status code, or None on failure."""
+def _run_curl_check(url: str, timeout: int, failure_keyword: str = "") -> tuple[bool, int | None]:
+    """Run curl and return (is_healthy, status_code). Flags failure if failure_keyword is found in response body."""
+    cmd = [
+        "curl", "-s", "-o", "-", "-w", "\n%{http_code}",
+        "--proto-default", "http",
+        "--proto-redir", "-all,http,https",
+        "--max-time", str(timeout),
+        "--max-redirs", str(CURL_MAX_REDIRS),
+        "-L", "--", url,
+    ]
     try:
         result = subprocess.run(
-            ["curl", "-o", "/dev/null", "-s", "-w", "%{http_code}",
-             "--proto-default", "http",
-             "--proto-redir", "-all,http,https",
-             "--max-time", str(timeout),
-             "--max-redirs", str(CURL_MAX_REDIRS),
-             "-L", "--", url],
+            cmd,
             capture_output=True, text=True, timeout=max(timeout + 5, CURL_MAX_REDIRS * 2 + 5),
         )
-        code_str = result.stdout.strip()
-        if not code_str:
-            return None
-        code = int(code_str)
-        if code == 0 or code > 599:
-            return None
-        return code
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
+        return False, None
+
+    stdout = result.stdout or ""
+    if "\n" not in stdout:
+        return False, None
+    parts = stdout.rsplit("\n", 1)
+    resp_body, code_str = parts[0], parts[1].strip()
+    if not code_str.isdigit():
+        return False, None
+    code = int(code_str)
+    if code == 0 or code > 599:
+        return False, None
+
+    if failure_keyword and isinstance(failure_keyword, str) and failure_keyword.strip():
+        if failure_keyword.strip().lower() in resp_body.lower():
+            return False, code
+
+    return True, code
 
 
 def _run_rss_feed_check(url: str, timeout: int, keywords: dict[str, list[str]] | None = None) -> tuple[str | None, None | int]:
@@ -631,8 +647,8 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
                     )
                     check_info = f"soap code={code}"
                 else:
-                    code = _run_curl_check(hc["url"], hc["timeout"])
-                    is_healthy = (code is not None and code in hc.get("healthy_codes", {200}))
+                    body_ok, code = _run_curl_check(hc["url"], hc["timeout"], failure_keyword=hc.get("failure_keyword", ""))
+                    is_healthy = (code is not None and code in hc.get("healthy_codes", {200}) and body_ok)
                     check_info = f"code={code}"
 
                 if is_healthy:
@@ -703,8 +719,8 @@ def run_healthchecks_once() -> dict[str, dict]:
                              "status_code": code, "result": rss_result,
                              "healthy": rss_result == "green"}
         else:
-            code = _run_curl_check(hc["url"], hc["timeout"])
-            healthy = (code is not None and code in hc.get("healthy_codes", {200}))
+            body_ok, code = _run_curl_check(hc["url"], hc["timeout"], failure_keyword=hc.get("failure_keyword", ""))
+            healthy = (code is not None and code in hc.get("healthy_codes", {200}) and body_ok)
             results[name] = {"type": "curl", "status_code": code, "healthy": healthy}
 
     return results
