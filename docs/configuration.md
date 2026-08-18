@@ -84,13 +84,30 @@ features:
 - **Purpose:** Feature toggles for optional functionality
 - Currently exposed flags: `drag_drop_reorder`, `notes_enabled`, `history_enabled`. Future versions may add more.
 
+#### `rss` (optional)
+- **Type:** Dictionary
+- **Purpose:** Controls the public status RSS feed at `GET /feed.xml`.
+- **Keys:**
+
+| Key | Description | Default |
+|---|---|---|
+| `enabled` | Toggle the feed endpoint | `true` |
+| `title` | Feed `<title>` (max 64 chars) | `Application Status` |
+| `max_items` | Max history entries in the feed | `50` |
+
+The feed is generated on demand from `status_history` status-change rows
+(admin toggles and healthcheck flips both qualify), so `lastBuildDate` and the
+newest `<item>` always advance the instant a status changes.
+
 #### `healthchecks` (optional)
 - **Type:** Dictionary keyed by service name
-- **Purpose:** Automated background health checking via HTTP (`curl`), ICMP (`ping`), or SOAP endpoints.
+- **Purpose:** Automated background health checking via HTTP (`curl`), ICMP (`ping`), TCP, SOAP endpoints, or vendor RSS/Atom status feeds.
 - **Supported types:**
   - `curl` (default): Performs an HTTP/HTTPS GET request using `curl`.
   - `ping` / `icmp`: Performs ICMP ping check using `ping -c 1`.
+  - `tcp`: TCP port connectivity check (`host` + `port`).
   - `soap`: POSTs a SOAP XML payload via `curl` and optionally validates the response body against an expected string.
+  - `rss`: Fetches an RSS/Atom status feed and maps entry keywords to status (see below). **Never auto-detected** — a bare `url` always means `curl`; set `type: rss` explicitly.
 
 **Example:**
 ```yaml
@@ -127,6 +144,39 @@ healthchecks:
 | `soap_action` | The `SOAPAction` header value | *(optional)* |
 | `body` | Custom XML payload to POST | Minimal SOAP envelope with empty `<Body/>` |
 | `expected_string` | String that must appear in the response body for healthy status | *(none — 200 is enough)* |
+
+**RSS feed options:**
+
+| Key | Description | Default |
+|---|---|---|
+| `url` | REQUIRED; the RSS/Atom feed URL (http/https only) | — |
+| `keywords.red` | Marker phrases that flip the item **red immediately** (no retry ladder) | *(empty in YAML; admin panel create applies `outage`, `down`, `major issue`, `critical` when omitted)* |
+| `keywords.degraded` | Marker phrases that flip the item **degraded** | *(empty in YAML; admin panel create applies `degraded`, `partial`, `minor`, `investigating` when omitted)* |
+| `interval` | Seconds between feed polls | `60` |
+| `timeout` | Fetch timeout in seconds | `10` |
+| `retries` | Consecutive **fetch-failure** retries before degraded/red | `2` |
+
+The worker fetches the feed (`curl`), parses it with stdlib ElementTree
+(first 20 entries, 512 KB body cap, namespace-agnostic `<item>`/`<entry>`),
+and scans entry titles + descriptions/summaries case-insensitively for the
+keywords. Precedence: any `red` keyword → red; else any `degraded` keyword →
+degraded; clean feed → green. If the feed itself can't be fetched, the normal
+retry ladder applies (degraded → red). With no keywords configured, only fetch
+failures change status.
+
+**Example:**
+```yaml
+healthchecks:
+  Google Workspace:
+    type: rss
+    url: https://www.google.com/appsstatus/dashboard/
+    keywords:
+      red: [outage, major issue]
+      degraded: [degraded, minor, investigating]
+    interval: 60
+    timeout: 30
+    retries: 2
+```
 
 ---
 
@@ -302,4 +352,4 @@ Before modifying config.yaml structure:
 
 ---
 
-*Document version: 1.0 | Last updated: 2026-08-13 | Author: Simar Sahni*
+*Document version: 1.1 | Last updated: 2026-08-17 | Author: Simar Sahni*

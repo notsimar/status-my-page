@@ -16,6 +16,9 @@ archives/
 # Test stubs (leave untracked to avoid cluttering working directory)
 test_fixes.*
 
+# Agent working files
+.hermes/
+
 # OS
 .DS_Store
 Thumbs.db

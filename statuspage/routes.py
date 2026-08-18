@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
 """HTTP routes for status-my-page."""
-
 import sqlite3
+from urllib.parse import urlparse
 from flask import jsonify, render_template, session, request
 
+import healthcheck as hc_module  # shared validation helpers
 from statuspage.auth import (
     login_route,
     logout_route,
@@ -26,6 +28,8 @@ from statuspage.services import (
     delete_item,
     get_item_history,
 )
+from statuspage.config import _load_healthchecks, _save_healthchecks, _load_rss, _save_rss
+from statuspage import rss as rss_mod
 from input_filter import InputRejected, validate_json_data, validate_name, validate_notes, validate_int_param
 
 
@@ -38,6 +42,40 @@ def status_page():
     return render_template(
         "index.html", items=items, session_admin=is_admin, csrf_token=csrf
     )
+
+
+def feed_xml():
+    """RSS 2.0 status-change feed. Public read.
+
+    Generated on demand from status_history so it always reflects the live
+    DB and the newest <item> / lastBuildDate advance when a status changes.
+    """
+    from flask import Response, abort
+
+    if not rss_mod.is_rss_enabled():
+        abort(404)
+
+    with get_connection() as db:
+        xml = rss_mod.build_feed_xml(db, base_url=request.host_url)
+
+    resp = Response(xml, mimetype="application/rss+xml; charset=utf-8")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
+def api_rss_status():
+    """Public: feed availability + metadata for the UI.
+
+    Returns feed URL / enabled so non-admin visitors can see the link and so
+    the admin panel can render the current state without a second round trip.
+    """
+    conf = rss_mod.get_rss_config()
+    return jsonify({
+        "enabled": conf["enabled"],
+        "title": conf["title"],
+        "max_items": conf["max_items"],
+        "url": request.host_url.rstrip("/") + "/feed.xml",
+    })
 
 
 def api_history(item_id: int):
@@ -128,3 +166,397 @@ def api_reorder():
     order_map = {validate_int_param(k, "key"): validate_int_param(v, "value") for k, v in raw_order.items()}
     reorder_items(order_map)
     return jsonify(ok=True)
+
+
+# ── Healthcheck Admin Routes ────────────────────────────────────────
+
+VALID_HC_TYPES = ["curl", "ping", "tcp", "soap", "rss"]
+# Numeric bounds: (field, min, max) for admin-supplied tuning values
+HC_NUMERIC_BOUNDS = [
+    ("interval", 1, 3600),
+    ("timeout", 1, 300),
+    ("retries", 1, 10),
+]
+
+
+def _validate_rss_keywords(raw) -> tuple[dict[str, list[str]] | None, str | None]:
+    """Sanitize rss keywords input.
+
+    Returns (keywords, error). keywords is None when the input was absent;
+    the result always has "red"/"degraded" keys with lower-case word lists
+    (mirrors _parse_healthchecks). Non-dict or malformed entries are
+    rejected with an error for the create endpoint; individual bad words are
+    dropped.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        return None, "keywords must be an object with red and degraded arrays"
+    out: dict[str, list[str]] = {"red": [], "degraded": []}
+    for level in ("red", "degraded"):
+        val = raw.get(level, [])
+        if isinstance(val, str):
+            val = [val]
+        if not isinstance(val, list):
+            return None, f"keywords.{level} must be an array of strings"
+        for w in val:
+            if w is None:
+                continue
+            w = str(w).strip()
+            if len(w) > 64 or not w:
+                continue
+            out[level].append(w.lower())
+    return out, None
+
+
+def _clean_healthy_codes(raw) -> tuple[list[int] | None, str | None]:
+    """Sanitize healthy_codes input.
+
+    Returns (codes, error). codes is None when the input was absent; an
+    empty list means "clear existing". Out-of-range or non-numeric entries
+    are dropped (mirrors _parse_healthchecks, which falls back to {200}
+    when the set ends up empty).
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list):
+        return None, "healthy_codes must be an array"
+    codes = []
+    for c in raw:
+        try:
+            code = int(c)
+        except (TypeError, ValueError):
+            continue
+        if 100 <= code <= 599:
+            codes.append(code)
+    return codes, None
+
+
+def _validate_host(raw) -> tuple[str | None, str | None]:
+    """Validate a ping/tcp host. Returns (host, error)."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None, "host is required"
+    host = raw.strip()
+    if not hc_module._safe_host(host):
+        return None, "invalid host"
+    return host, None
+
+
+def _validate_url(raw) -> tuple[str | None, str | None]:
+    """Validate a curl/soap URL. Returns (url, error)."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None, "url is required for curl/soap type"
+    url = raw.strip()
+    if not hc_module._safe_url(url):
+        return None, "url must be http:// or https:// with a valid hostname"
+    return url, None
+
+
+def _validate_numeric_fields(data: dict) -> tuple[dict[str, int], str | None]:
+    """Extract and bound-check interval/timeout/retries. Returns (fields, error)."""
+    fields: dict[str, int] = {}
+    for field, min_val, max_val in HC_NUMERIC_BOUNDS:
+        val = data.get(field)
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            return fields, f"{field} must be an integer"
+        try:
+            val = int(val)
+        except (TypeError, ValueError):
+            return fields, f"{field} must be an integer"
+        if not (min_val <= val <= max_val):
+            return fields, f"{field} must be between {min_val} and {max_val}"
+        fields[field] = val
+    return fields, None
+
+
+@require_admin()
+def api_healthchecks_create():
+    """Create a new healthcheck configuration."""
+    data = validate_json_data(request.get_json(silent=True))
+
+    # Validate required fields
+    name = validate_name(data.get("name", ""), "name")
+    raw_type = data.get("type") or ""
+    if not isinstance(raw_type, str):
+        raw_type = ""
+    check_type = raw_type.strip().lower()
+
+    # Validate type
+    if check_type and check_type not in VALID_HC_TYPES:
+        return jsonify(error=f"invalid type, must be one of: {', '.join(VALID_HC_TYPES)}"), 400
+
+    # Auto-detect type from payload when omitted (mirrors _parse_healthchecks).
+    # A healthcheck with no probe target at all is dead config — reject it.
+    if not check_type:
+        has_url = isinstance(data.get("url"), str) and data["url"].strip()
+        has_host = isinstance(data.get("host"), str) and data["host"].strip()
+        has_soap = bool(
+            (isinstance(data.get("soap_action"), str) and data["soap_action"].strip())
+            or (isinstance(data.get("body"), str) and data["body"].strip())
+        )
+        if has_soap:
+            check_type = "soap"
+        elif has_host and data.get("port") is not None:
+            check_type = "tcp"
+        elif has_host:
+            check_type = "ping"
+        elif has_url:
+            check_type = "curl"
+        else:
+            return jsonify(error="missing probe target (url or host, or soap_action/body)"), 400
+
+    # Build healthcheck config based on type
+    hc_config: dict = {}
+    if check_type:
+        hc_config["type"] = check_type
+
+    if check_type in ("curl", "soap"):
+        url, err = _validate_url(data.get("url", ""))
+        if err:
+            return jsonify(error=err), 400
+        hc_config["url"] = url
+
+        if check_type == "soap":
+            soap_action = data.get("soap_action", "").strip()
+            if soap_action:
+                hc_config["soap_action"] = soap_action
+            body = data.get("body", "").strip()
+            if body:
+                hc_config["body"] = body
+            expected_string = data.get("expected_string", "").strip()
+            if expected_string:
+                hc_config["expected_string"] = expected_string
+
+        codes, err = _clean_healthy_codes(data.get("healthy_codes"))
+        if err:
+            return jsonify(error=err), 400
+        if codes:
+            hc_config["healthy_codes"] = codes
+
+    elif check_type == "ping":
+        host, err = _validate_host(data.get("host", ""))
+        if err:
+            return jsonify(error=err), 400
+        hc_config["host"] = host
+
+    elif check_type == "tcp":
+        host, err = _validate_host(data.get("host", ""))
+        if err:
+            return jsonify(error=err), 400
+        hc_config["host"] = host
+
+        port = data.get("port")
+        if port is None or isinstance(port, bool):
+            return jsonify(error="port is required for tcp type"), 400
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return jsonify(error="port must be an integer"), 400
+        if not (1 <= port <= 65535):
+            return jsonify(error="port must be between 1 and 65535"), 400
+        hc_config["port"] = port
+
+    elif check_type == "rss":
+        url, err = _validate_url(data.get("url", ""))
+        if err:
+            return jsonify(error=err), 400
+        hc_config["url"] = url
+        # Default keywords: outage words -> red, performance words -> degraded
+        hc_config["keywords"] = {
+            "red": ["outage", "down", "major issue", "critical"],
+            "degraded": ["degraded", "partial", "minor", "investigating"],
+        }
+        keywords, err = _validate_rss_keywords(data.get("keywords"))
+        if err:
+            return jsonify(error=err), 400
+        if keywords is not None:
+            hc_config["keywords"] = keywords
+
+    numeric, err = _validate_numeric_fields(data)
+    if err:
+        return jsonify(error=err), 400
+    hc_config.update(numeric)
+
+    # Check for duplicate name
+    existing = _load_healthchecks()
+    if name in existing:
+        return jsonify(error="healthcheck with this name already exists"), 409
+
+    # Save
+    existing[name] = hc_config
+    _save_healthchecks(existing)
+
+    return jsonify(ok=True, name=name, config=hc_config)
+
+
+@require_admin()
+def api_healthchecks_update(name: str):
+    """Update an existing healthcheck configuration.
+
+    Partial semantics: only fields present in the payload are changed.
+    Type change is full-replace — switching type discards old-type fields.
+    """
+    data = validate_json_data(request.get_json(silent=True))
+
+    existing = _load_healthchecks()
+    if name not in existing:
+        return jsonify(error="healthcheck not found"), 404
+
+    hc_config = dict(existing[name])  # copy existing
+
+    # Allow type change
+    raw_type = data.get("type") or ""
+    if not isinstance(raw_type, str):
+        raw_type = ""
+    check_type = raw_type.strip().lower()
+    if check_type:
+        if check_type not in VALID_HC_TYPES:
+            return jsonify(error=f"invalid type, must be one of: {', '.join(VALID_HC_TYPES)}"), 400
+        new_type = check_type
+    else:
+        new_type = hc_config.get("type", "")
+
+    changed_type = bool(check_type) and new_type != hc_config.get("type")
+    if changed_type:
+        # Full replace: keep only name + tuning numbers (which are universal)
+        hc_config = {k: vc for k, vc in hc_config.items() if k in ("interval", "timeout", "retries")}
+    hc_config["type"] = new_type
+
+    if new_type in ("curl", "soap"):
+        url = data.get("url")
+        if url is not None:
+            url, err = _validate_url(url)
+            if err:
+                return jsonify(error=err), 400
+            hc_config["url"] = url
+
+        if new_type == "soap":
+            for key in ("soap_action", "body", "expected_string"):
+                val = data.get(key)
+                if val is not None:
+                    val = str(val).strip()
+                    if val:
+                        hc_config[key] = val
+                    elif key in hc_config:
+                        del hc_config[key]
+
+        codes, err = _clean_healthy_codes(data.get("healthy_codes"))
+        if err:
+            return jsonify(error=err), 400
+        if codes is not None:
+            if codes:
+                hc_config["healthy_codes"] = codes
+            elif "healthy_codes" in hc_config:
+                del hc_config["healthy_codes"]
+
+    elif new_type == "ping":
+        host = data.get("host")
+        if host is not None:
+            host, err = _validate_host(host)
+            if err:
+                return jsonify(error=err), 400
+            hc_config["host"] = host
+
+    elif new_type == "tcp":
+        host = data.get("host")
+        if host is not None:
+            host, err = _validate_host(host)
+            if err:
+                return jsonify(error=err), 400
+            hc_config["host"] = host
+
+        port = data.get("port")
+        if port is not None:
+            if isinstance(port, bool):
+                return jsonify(error="port must be an integer"), 400
+            try:
+                port = int(port)
+            except (TypeError, ValueError):
+                return jsonify(error="port must be an integer"), 400
+            if not (1 <= port <= 65535):
+                return jsonify(error="port must be between 1 and 65535"), 400
+            hc_config["port"] = port
+
+    elif new_type == "rss":
+        url = data.get("url")
+        if url is not None:
+            url, err = _validate_url(url)
+            if err:
+                return jsonify(error=err), 400
+            hc_config["url"] = url
+        keywords, err = _validate_rss_keywords(data.get("keywords"))
+        if err:
+            return jsonify(error=err), 400
+        if keywords is not None:
+            # Full replace: both levels are always (re)set from the payload
+            hc_config["keywords"] = keywords
+        elif "keywords" not in hc_config:
+            # Type migration into rss: apply the same defaults as create
+            hc_config["keywords"] = {
+                "red": ["outage", "down", "major issue", "critical"],
+                "degraded": ["degraded", "partial", "minor", "investigating"],
+            }
+
+    numeric, err = _validate_numeric_fields(data)
+    if err:
+        return jsonify(error=err), 400
+    hc_config.update(numeric)
+
+    # Remove fields no longer relevant for the new type
+    if new_type not in ("curl", "soap", "rss"):
+        for f in ("url", "healthy_codes", "soap_action", "body", "expected_string"):
+            hc_config.pop(f, None)
+    if new_type in ("curl", "soap"):
+        hc_config.pop("host", None)
+        hc_config.pop("port", None)
+    if new_type != "tcp":
+        hc_config.pop("port", None)
+    if new_type not in ("ping", "tcp"):
+        hc_config.pop("host", None)
+    if new_type != "rss":
+        hc_config.pop("keywords", None)
+
+    # Save
+    existing[name] = hc_config
+    _save_healthchecks(existing)
+
+    return jsonify(ok=True, name=name, config=hc_config)
+
+
+@require_admin()
+def api_healthchecks_delete(name: str):
+    """Delete a healthcheck configuration."""
+    existing = _load_healthchecks()
+    if name not in existing:
+        return jsonify(error="healthcheck not found"), 404
+
+    del existing[name]
+    _save_healthchecks(existing)
+
+    return jsonify(ok=True)
+
+
+@require_admin()
+def api_rss_toggle():
+    """Toggle the RSS status feed on/off. Admin only.
+
+    ``POST /api/rss`` with JSON ``{"enabled": bool}``. Persists to config.yaml
+    ``rss: {enabled: ...}`` (preserving other rss keys such as title / max_items).
+    """
+    data = validate_json_data(request.get_json(silent=True))
+    if "enabled" not in data:
+        return jsonify(error="enabled is required"), 400
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return jsonify(error="enabled must be a boolean"), 400
+
+    conf = rss_mod.get_rss_config()
+    conf["enabled"] = enabled
+    # Persist only the stable scalar keys (base_url is derived, never stored).
+    to_save = {k: v for k, v in conf.items() if k != "base_url"}
+    _save_rss(to_save)
+
+    return jsonify(ok=True, enabled=enabled,
+                   url=request.host_url.rstrip("/") + "/feed.xml")

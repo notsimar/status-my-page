@@ -26,8 +26,14 @@ from statuspage.db import init_db
 from statuspage.healthcheck import configure_healthcheck_module, start_healthchecks
 from statuspage.routes import (
     status_page,
+    feed_xml,
+    api_rss_status,
+    api_rss_toggle,
     api_history,
     api_healthchecks,
+    api_healthchecks_create,
+    api_healthchecks_update,
+    api_healthchecks_delete,
     login,
     logout,
     auth_check,
@@ -146,6 +152,7 @@ _run_ping_check = _hc_module._run_ping_check
 _run_tcp_check = _hc_module._run_tcp_check
 _run_curl_check = _hc_module._run_curl_check
 _run_soap_check = _hc_module._run_soap_check
+_run_rss_feed_check = _hc_module._run_rss_feed_check
 _set_health_status = _hc_module._set_health_status
 _healthcheck_worker = _hc_module._healthcheck_worker
 
@@ -290,6 +297,12 @@ def __getattr__(name):
     if name == "_run_soap_check":
         import healthcheck as _hc_module
         return _hc_module._run_soap_check
+    if name == "_run_rss_feed_check":
+        import healthcheck as _hc_module
+        return _hc_module._run_rss_feed_check
+    if name == "RSS_MAX_ITEMS":
+        import healthcheck as _hc_module
+        return _hc_module.RSS_MAX_ITEMS
     if name == "_set_health_status":
         import healthcheck as _hc_module
         return _hc_module._set_health_status
@@ -367,8 +380,15 @@ def security_headers(response):
 
 # ── Routes ─────────────────────────────────────────────────────────
 app.add_url_rule("/", "status_page", status_page)
+app.add_url_rule("/feed.xml", "feed_xml", feed_xml)
+app.add_url_rule("/rss", "feed_xml_alias", feed_xml, methods=["GET"])
+app.add_url_rule("/api/rss", "api_rss_status", api_rss_status, methods=["GET"])
+app.add_url_rule("/api/rss", "api_rss_toggle", api_rss_toggle, methods=["POST"])
 app.add_url_rule("/api/history/<int:item_id>", "api_history", api_history)
 app.add_url_rule("/api/healthchecks", "api_healthchecks", api_healthchecks)
+app.add_url_rule("/api/healthchecks", "api_healthchecks_create", api_healthchecks_create, methods=["POST"])
+app.add_url_rule("/api/healthchecks/<string:name>", "api_healthchecks_update", api_healthchecks_update, methods=["PUT"])
+app.add_url_rule("/api/healthchecks/<string:name>", "api_healthchecks_delete", api_healthchecks_delete, methods=["DELETE"])
 
 # Auth routes
 app.add_url_rule("/login", "login", login, methods=["POST"])

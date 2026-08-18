@@ -321,6 +321,15 @@ healthchecks:
     expected_string: "<Status>OK</Status>"
     interval: 60
     timeout: 15
+  Google Workspace:
+    type: rss
+    url: https://www.google.com/appsstatus/dashboard/
+    keywords:
+      red: [outage, major issue]
+      degraded: [degraded, minor, investigating]
+    interval: 60
+    timeout: 10
+    retries: 2
 ```
 
 **Healthcheck Types:**
@@ -331,11 +340,21 @@ healthchecks:
 | `tcp` | `host`, `port` | `interval`, `timeout`, `retries` | TCP port connectivity (DB, Redis, SMTP) |
 | `curl` | `url` | `healthy_codes`, `interval`, `timeout`, `retries` | HTTP/HTTPS REST APIs |
 | `soap` | `url` | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services |
+| `rss` | `url` | `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries` | Vendor status pages (RSS/Atom feeds) |
 
 **Auto-detection:** If `type` is omitted, the parser infers it:
 - `host` + `port` → `tcp`
 - `host` only → `ping`
 - `url` → `curl` (or `soap` if `soap_action`/`body` present)
+- `rss` is never auto-detected — a bare `url` always means `curl`; set `type: rss` explicitly.
+
+**RSS feed checks:** The worker fetches the feed (curl, stdlib XML parse,
+first 20 entries, 512 KB cap) and scans entry titles/descriptions for
+keywords. A matching `red` keyword flips the item red *immediately* (next
+check, no retry ladder); a matching `degraded` keyword flips it degraded;
+a clean feed flips it back to green. If the feed itself can't be fetched,
+the normal retry ladder applies (degraded → red). `keywords` is optional:
+with no keywords, only fetch failures change the status.
 
 **Key Options:**
 - `interval` — seconds between checks (default: 60)
@@ -343,6 +362,7 @@ healthchecks:
 - `retries` — consecutive failures before marking degraded/red (default: 2)
 - `healthy_codes` — HTTP codes considered healthy (default: `[200]`)
 - `expected_string` / `body_contains` — response must contain this substring
+- `keywords.red` / `keywords.degraded` — rss type: marker words per severity
 
 ### Environment variables
 

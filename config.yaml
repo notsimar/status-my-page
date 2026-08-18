@@ -42,3 +42,20 @@ _runtime:
       old_value: red
       new_value: green
       occurred: '2026-08-16T01:13:26.598230Z'
+healthchecks:
+  Google workspace:
+    type: rss
+    url: https://www.google.com/appsstatus/dashboard/en/feed.atom
+    keywords:
+      red:
+      - major issue
+      - major outage
+      - ongoing
+      degraded:
+      - partial
+      - minor
+      - investigating
+      - experiencing issues
+    interval: 60
+    timeout: 10
+    retries: 2

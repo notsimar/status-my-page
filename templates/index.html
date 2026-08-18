@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Status</title>
+    <link rel="alternate" type="application/rss+xml" title="Status feed" href="/feed.xml">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="{% if session_admin %}admin{% endif %}">
@@ -31,6 +32,13 @@
             {% endfor %}
         </div>
 
+        <!-- RSS feed link (public read; hidden by JS when the feed is disabled) -->
+        <div class="rss-row hidden" id="rssRow">
+            <span class="rss-row-label" title="Subscribers are notified when any service's status changes">📡 Status feed — updates on every status change</span>
+            <a id="rssLink" class="rss-link" href="/feed.xml">Subscribe (RSS)</a>
+            <code id="rssUrl" class="rss-url">/feed.xml</code>
+        </div>
+
     {% if session_admin %}
     <div class="admin-footer">
         <form id="addItemForm" class="add-item-form">
@@ -40,6 +48,41 @@
         <div class="admin-bar">
             <span>⚡ Admin mode — click dots to toggle, drag to reorder · auto-logout after 5 min idle</span>
             <button id="logoutBtn" class="btn-logout">Logout</button>
+        </div>
+    </div>
+
+    <!-- Healthcheck Admin Panel -->
+    <div class="admin-section" id="healthcheckAdmin">
+        <h2 class="admin-section-title">Healthchecks <button id="addHealthcheckBtn" class="btn-sm btn-add-hc">+ Add Healthcheck</button></h2>
+        <div class="healthcheck-table-wrapper">
+            <table class="healthcheck-table" id="healthcheckTable">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Target</th>
+                        <th>Interval</th>
+                        <th>Timeout</th>
+                        <th>Retries</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="healthcheckTbody"></tbody>
+            </table>
+            <div id="healthcheckEmpty" class="empty-state hidden">No healthchecks configured. Click + Add Healthcheck to create one.</div>
+        </div>
+    </div>
+
+    <!-- RSS Feed Admin Panel -->
+    <div class="admin-section" id="rssAdmin">
+        <h2 class="admin-section-title">Status Feed (RSS)</h2>
+        <div class="rss-admin-row">
+            <div class="switch" title="Publish an RSS feed that gets a new entry every time a service changes status">
+                <input type="checkbox" id="rssEnabled">
+                <label for="rssEnabled"></label>
+            </div>
+            <span id="rssState" class="rss-state">—</span>
+            <code id="rssAdminUrl" class="rss-url">/feed.xml</code>
         </div>
     </div>
     {% else %}
@@ -74,9 +117,121 @@
         </div>
     </div>
 
+    <!-- Healthcheck modal -->
+    <div id="healthcheckModal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <div class="history-header">
+                <h2 id="healthcheckModalTitle">Add Healthcheck</h2>
+                <button type="button" id="closeHealthcheckModal" class="btn-close-modal">✕</button>
+            </div>
+            <form id="healthcheckForm">
+                <input type="hidden" id="healthcheckMode" value="create">
+                <input type="hidden" id="healthcheckOriginalName" value="">
+                
+                <div class="form-row">
+                    <label for="hcName">Name <span class="required">*</span></label>
+                    <input type="text" id="hcName" placeholder="e.g., API Gateway" required maxlength="128">
+                </div>
+                
+                <div class="form-row">
+                    <label for="hcType">Type <span class="required">*</span></label>
+                    <select id="hcType" required>
+                        <option value="">Select type…</option>
+                        <option value="curl">HTTP/HTTPS (curl)</option>
+                        <option value="ping">ICMP Ping</option>
+                        <option value="tcp">TCP Port</option>
+                        <option value="soap">SOAP</option>
+                        <option value="rss">RSS Feed</option>
+                    </select>
+                </div>
+                
+                <!-- curl/soap fields -->
+                <div id="hcUrlRow" class="form-row hc-type-field hidden">
+                    <label for="hcUrl">URL <span class="required">*</span></label>
+                    <input type="url" id="hcUrl" placeholder="https://example.com/health" required>
+                </div>
+                
+                <div id="hcHealthyCodesRow" class="form-row hc-type-field hidden">
+                    <label for="hcHealthyCodes">Healthy HTTP Codes</label>
+                    <input type="text" id="hcHealthyCodes" placeholder="200, 204 (comma-separated)">
+                    <small class="help-text">Default: 200. Valid range: 100-599</small>
+                </div>
+                
+                <!-- soap fields -->
+                <div id="hcSoapActionRow" class="form-row hc-type-field hidden">
+                    <label for="hcSoapAction">SOAPAction Header</label>
+                    <input type="text" id="hcSoapAction" placeholder="GetStatus">
+                </div>
+                
+                <div id="hcBodyRow" class="form-row hc-type-field hidden">
+                    <label for="hcBody">SOAP Body (XML)</label>
+                    <textarea id="hcBody" rows="4" placeholder="<soap:Envelope>...</soap:Envelope>"></textarea>
+                    <small class="help-text">Optional. Uses default envelope if empty.</small>
+                </div>
+                
+                <div id="hcExpectedStringRow" class="form-row hc-type-field hidden">
+                    <label for="hcExpectedString">Expected Response String</label>
+                    <input type="text" id="hcExpectedString" placeholder="OK">
+                    <small class="help-text">Optional. If set, response must contain this string.</small>
+                </div>
+                
+                <!-- rss fields -->
+                <div id="hcRssKeywordsRow" class="form-row hc-type-field hidden">
+                    <label for="hcRssKeywordsRed">Red Keywords (comma-separated)</label>
+                    <input type="text" id="hcRssKeywordsRed" placeholder="outage, down, major issue, critical">
+                    <small class="help-text">Feed entry text containing any of these → item goes red</small>
+                </div>
+
+                <div id="hcRssKeywordsDegRow" class="form-row hc-type-field hidden">
+                    <label for="hcRssKeywordsDeg">Degraded Keywords (comma-separated)</label>
+                    <input type="text" id="hcRssKeywordsDeg" placeholder="degraded, partial, minor">
+                    <small class="help-text">Feed entry text containing any of these → item goes degraded</small>
+                </div>
+
+                <!-- ping/tcp fields -->
+                <div id="hcHostRow" class="form-row hc-type-field hidden">
+                    <label for="hcHost">Host / IP <span class="required">*</span></label>
+                    <input type="text" id="hcHost" placeholder="192.168.10.1 or example.com" required>
+                </div>
+                
+                <div id="hcPortRow" class="form-row hc-type-field hidden">
+                    <label for="hcPort">Port <span class="required">*</span></label>
+                    <input type="number" id="hcPort" placeholder="5432" min="1" max="65535" required>
+                </div>
+                
+                <!-- Common numeric fields -->
+                <div class="form-row triple">
+                    <div>
+                        <label for="hcInterval">Interval (s)</label>
+                        <input type="number" id="hcInterval" value="60" min="1" max="3600" required>
+                        <small class="help-text">1-3600</small>
+                    </div>
+                    <div>
+                        <label for="hcTimeout">Timeout (s)</label>
+                        <input type="number" id="hcTimeout" value="10" min="1" max="300" required>
+                        <small class="help-text">1-300</small>
+                    </div>
+                    <div>
+                        <label for="hcRetries">Retries</label>
+                        <input type="number" id="hcRetries" value="2" min="1" max="10" required>
+                        <small class="help-text">1-10</small>
+                    </div>
+                </div>
+                
+                <div id="healthcheckError" class="error hidden"></div>
+                <div class="modal-actions">
+                    <button type="button" id="cancelHealthcheck" class="btn-cancel">Cancel</button>
+                    <button type="submit" id="submitHealthcheck" class="btn-submit">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     {% if csrf_token %}
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% endif %}
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/healthchecks.js"></script>
+    <script src="/static/js/rss.js"></script>
 </body>
 </html>

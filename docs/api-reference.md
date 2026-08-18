@@ -74,6 +74,69 @@ Returns the complete mutation history for a specific service, ordered newest-fir
 
 **Status Codes:** `200 OK` | `404 Not Found` (item_id doesn't exist)
 
+### GET `/feed.xml` (alias: `/rss`) — Status RSS Feed
+
+Public read. Returns an RSS 2.0 feed of status changes, generated **on demand** from `status_history` so `lastBuildDate` and the newest `<item>` advance the instant a status changes (admin toggle **or** an automatic healthcheck flip). Only status-change events are surfaced — notes/renames are filtered out. Configurable via the `rss:` config section (`enabled`, `title`, `max_items`).
+
+**Request:** None
+**Response:** `application/rss+xml` document
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Application Status</title>
+    <link>http://localhost:8920/</link>
+    <description>Status change timeline</description>
+    <lastBuildDate>Mon, 17 Aug 2026 12:00:00 -0000</lastBuildDate>
+    <item>
+      <title>Slack: Operational → Degraded</title>
+      <description>Slack status changed from Operational to Degraded</description>
+      <pubDate>Mon, 17 Aug 2026 11:59:40 -0000</pubDate>
+    </item>
+  </channel>
+</rss>
+```
+**Headers:** `Cache-Control: no-cache, no-store, must-revalidate`
+
+**Status Codes:** `200 OK` | `404 Not Found` (feed disabled via `rss: {enabled: false}`)
+
+### GET `/api/healthchecks` — List Configured Healthchecks
+
+Public read. Returns all configured background healthchecks keyed by service name. No auth required so the dashboard can show per-service probe settings.
+
+**Request:** None
+**Response Body:**
+```json
+{
+  "Google workspace": {
+    "type": "rss",
+    "url": "https://www.google.com/appsstatus/dashboard/en/feed.atom",
+    "keywords": { "red": ["major issue"], "degraded": ["partial"] },
+    "interval": 60,
+    "timeout": 10,
+    "retries": 2
+  }
+}
+```
+**Status Codes:** `200 OK`
+
+### GET `/api/rss` — Feed Metadata
+
+Public read. Returns feed availability + metadata so the UI can render the feed link and the admin panel can show current state without a second round trip.
+
+**Request:** None
+**Response Body:**
+```json
+{
+  "enabled": true,
+  "title": "Application Status",
+  "max_items": 50,
+  "url": "http://localhost:8920/feed.xml"
+}
+```
+
+**Status Codes:** `200 OK`
+
 ### GET `/auth-check` — Session Validation
 
 Checks if the current session is authenticated as admin. Useful for UI to show/hide admin controls.
@@ -275,6 +338,72 @@ Where keys are item IDs (strings) and values are zero-based integer positions.
 ```
 
 **Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests`
+
+### POST `/api/healthchecks` — Create Healthcheck
+
+Registers a background healthcheck for a service. `type` is one of `curl` (default), `ping`, `tcp`, `soap`, `rss`; when omitted it is auto-detected from the payload (`host`+`port`→`tcp`, `host`→`ping`, `url`→`curl`, `soap_action`/`body`→`soap`) — a bare `url` is never treated as `rss`. Numeric fields are bound-checked (`interval` 1–3600, `timeout` 1–300, `retries` 1–10).
+
+**Request Body (rss example):**
+```json
+{
+  "name": "Google workspace",
+  "type": "rss",
+  "url": "https://www.google.com/appsstatus/dashboard/en/feed.atom",
+  "keywords": {
+    "red": ["major issue", "major outage", "ongoing"],
+    "degraded": ["partial", "minor", "investigating", "experiencing issues"]
+  },
+  "interval": 60,
+  "timeout": 10,
+  "retries": 2
+}
+```
+Other types: `curl`/`soap` take `url` (+ `soap_action`/`body`/`expected_string`/`healthy_codes` for soap); `ping`/`tcp` take `host` (+ `port` for tcp).
+
+**Response Body:**
+```json
+{ "ok": true, "name": "Google workspace", "config": { "...": "full stored config" } }
+```
+**Status Codes:** `200 OK` | `400 Bad Request` (invalid type/url/host/keywords/empty target) | `409 Conflict` (name already exists) | `401`/`403`/`429`
+
+### PUT `/api/healthchecks/<name>` — Update Healthcheck
+
+Partial-field merge by service name. **A `type` change is a full-replace** — old-type fields are dropped and only `interval`/`timeout`/`retries` survive the swap. Absent fields keep their current value.
+
+**Request Body:** any subset of create fields (e.g. `{"keys": {...}}`, `{"timeout": 20}`).
+**Response Body:** `{ "ok": true, "name": "...", "config": { "...": "merged config" } }`
+**Status Codes:** `200 OK` | `400 Bad Request` | `404 Not Found` (name unknown) | `401`/`403`/`429`
+
+### DELETE `/api/healthchecks/<name>` — Remove Healthcheck
+**Response Body:** `{ "ok": true }`
+**Status Codes:** `200 OK` | `404 Not Found` | `401`/`403`/`429`
+
+### POST `/api/healthcheck/run` — One-Shot Healthcheck Run
+
+Runs every configured check **once** immediately (no worker, no persistence side-effects) and returns the live result. Useful for verifying a new config without waiting a full interval.
+
+**Request:** None
+**Response Body:**
+```json
+{
+  "Google workspace": {
+    "type": "rss",
+    "url": "...",
+    "status_code": 200,
+    "result": "green",
+    "healthy": true
+  }
+}
+```
+**Status Codes:** `200 OK` | `401`/`403`/`429`
+
+### POST `/api/rss` — Toggle Status Feed
+
+Enables/disables the public `/feed.xml` status feed. Persists to `config.yaml` `rss: {enabled: ...}` while preserving other rss keys.
+
+**Request Body:** `{ "enabled": true }`
+**Response Body:** `{ "ok": true, "enabled": true }`
+**Status Codes:** `200 OK` | `400 Bad Request` (missing/non-bool `enabled`) | `401`/`403`/`429`
 
 ---
 

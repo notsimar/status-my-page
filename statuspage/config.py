@@ -224,3 +224,80 @@ def _save_runtime(data: dict) -> None:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+# ── Healthchecks config persistence ────────────────────────────────
+
+def _load_healthchecks() -> dict:
+    """Return raw healthchecks dict from config.yaml (no parsing/sanitisation)."""
+    data = load_config()
+    return data.get("healthchecks", {}) or {}
+
+
+def _save_healthchecks(healthchecks: dict) -> None:
+    """Atomically write healthchecks section into config.yaml with backup rotation."""
+    with _CONFIG_LOCK:
+        # 1. Read current config FIRST (consistent snapshot before any file ops)
+        cfg_data = load_config()
+        if not isinstance(cfg_data, dict):
+            cfg_data = {"items": list(_ITEM_NAMES), "_base": {}}
+
+        # 2. Preserve known top-level keys under _base during a rewrite
+        for section in ("admin", "server"):
+            if section in cfg_data and section not in cfg_data.get("_base", {}):
+                cfg_data.setdefault("_base", {})[section] = cfg_data.pop(section, {})
+
+        # 3. Apply healthchecks data
+        cfg_data["healthchecks"] = healthchecks
+
+        # 4. Rotate backups of the ORIGINAL file (before we overwrite it)
+        _rotate_backups()
+
+        # 5. Atomic write: temp file + os.replace
+        if CONFIG_PATH is None:
+            return
+        path = CONFIG_PATH
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                yaml.dump(cfg_data, fh, default_flow_style=False, sort_keys=False)
+            os.replace(tmp_path, path)
+        finally:
+            # Clean up temp file if replace failed
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def _load_rss() -> dict:
+    """Return raw rss section from config.yaml ({} when absent)."""
+    data = load_config()
+    sec = data.get("rss")
+    return sec if isinstance(sec, dict) else {}
+
+
+def _save_rss(rss: dict) -> None:
+    """Atomically write rss section into config.yaml with backup rotation."""
+    with _CONFIG_LOCK:
+        cfg_data = load_config()
+        if not isinstance(cfg_data, dict):
+            cfg_data = {"items": list(_ITEM_NAMES), "_base": {}}
+        for section in ("admin", "server"):
+            if section in cfg_data and section not in cfg_data.get("_base", {}):
+                cfg_data.setdefault("_base", {})[section] = cfg_data.pop(section, {})
+        cfg_data["rss"] = rss
+        _rotate_backups()
+        if CONFIG_PATH is None:
+            return
+        path = CONFIG_PATH
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                yaml.dump(cfg_data, fh, default_flow_style=False, sort_keys=False)
+            os.replace(tmp_path, path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

@@ -443,6 +443,14 @@ def delete_item(db: sqlite3.Connection, item_id: int) -> str | None:
         rt["history"].pop(name, None)
     _save_runtime(rt)
 
+    # Prune healthcheck config for the deleted item so admin endpoints and
+    # the worker don't keep probing a name that no longer maps to an item.
+    from statuspage.config import _load_healthchecks, _save_healthchecks
+    hcs = _load_healthchecks()
+    if name in hcs:
+        del hcs[name]
+        _save_healthchecks(hcs)
+
     return name
 
 
@@ -455,12 +463,15 @@ def record_history(db: sqlite3.Connection, item_id: int, event_type: str, old_va
         "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
         (item_id, event_type, old_value, new_value, ts),
     )
-    # Prune oldest entries beyond retention limit for this item
+    # Prune oldest entries beyond retention limit FOR THIS ITEM only.
+    # (The outer item_id filter is required: the subquery only lists this
+    # item's kept ids, so without it every OTHER item's history would be
+    # wiped the moment this item records an event.)
     db.execute(
-        "DELETE FROM status_history WHERE id NOT IN ("
+        "DELETE FROM status_history WHERE item_id = ? AND id NOT IN ("
         "  SELECT id FROM status_history WHERE item_id = ? ORDER BY id DESC LIMIT ?"
         ")",
-        (item_id, MAX_HISTORY_PER_ITEM),
+        (item_id, item_id, MAX_HISTORY_PER_ITEM),
     )
 
     # ── Persist to YAML _runtime.history so it survives restarts ──

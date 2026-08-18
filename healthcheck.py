@@ -4,6 +4,9 @@
 Supports automated background and on-demand health checking via:
   - HTTP/HTTPS curl probing (type: curl)
   - ICMP ping reachability probing (type: ping)
+  - RSS feed status monitoring (type: rss) — the feed's own status text
+    drives the item state (e.g. a vendor status page's "outage"/"degraded"
+    keywords flip the item red/degraded; clean feed flips it green)
 """
 
 import datetime as dt
@@ -14,6 +17,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,6 +26,11 @@ HEALTHCHECK_INTERVAL_DEFAULT = 60
 HEALTHCHECK_TIMEOUT_DEFAULT = 10
 HEALTHCHECK_RETRIES_DEFAULT = 2
 CURL_MAX_REDIRS = 5
+
+# RSS feed check: scan at most this many leading <item> entries and
+# at most this many bytes of the feed before parsing.
+RSS_MAX_ITEMS = 20
+RSS_MAX_BYTES = 512 * 1024
 
 # Mutex for DB writes from the healthcheck thread
 _HEALTH_LOCK = threading.Lock()
@@ -199,6 +208,41 @@ def _parse_healthchecks() -> dict[str, dict]:
                 "timeout": max(timeout_val, 1),
                 "retries": max(retries, 1),
             }
+        elif check_type == "rss":
+            # Explicit type only (no auto-detect: a bare url means curl).
+            if not url or not isinstance(url, str) or not url.strip():
+                continue
+            if not _safe_url(url.strip()):
+                continue
+
+            # Keyword map: level -> lower-case marker words scanned in the
+            # feed. Empty lists are legal (then a fetch failure is the only
+            # signal of unhealthiness).
+            raw_kw = details.get("keywords", {}) or {}
+            keywords: dict[str, list[str]] = {"red": [], "degraded": []}
+            if isinstance(raw_kw, dict):
+                for level in ("red", "degraded"):
+                    raw_level = raw_kw.get(level, [])
+                    words: list[str] = []
+                    if isinstance(raw_level, str):
+                        raw_level = [raw_level]
+                    if isinstance(raw_level, list):
+                        for w in raw_level:
+                            if w is None:
+                                continue
+                            w = str(w).strip().lower()
+                            if w:
+                                words.append(w)
+                    keywords[level] = words
+
+            healthchecks[name.strip()] = {
+                "type": "rss",
+                "url": url.strip(),
+                "keywords": keywords,
+                "interval": max(interval, 1),
+                "timeout": max(timeout_val, 1),
+                "retries": max(retries, 1),
+            }
         elif check_type in ("curl", "soap"):
             if not url or not isinstance(url, str) or not url.strip():
                 continue
@@ -354,6 +398,90 @@ def _run_curl_check(url: str, timeout: int) -> int | None:
         return None
 
 
+def _run_rss_feed_check(url: str, timeout: int, keywords: dict[str, list[str]] | None = None) -> tuple[str | None, None | int]:
+    """Fetch an RSS/Atom feed and scan recent entries for status keywords.
+
+    Returns ``(result, http_code)`` where ``result`` is one of:
+
+    - ``"red"`` — the feed fetched and a ``red`` keyword matched
+    - ``"degraded"`` — no red match, but a ``degraded`` keyword matched
+    - ``"green"`` — the feed fetched cleanly with no keyword matches
+    - ``None`` — fetch failed (non-http status, timeout, malformed XML)
+
+    ``keywords`` maps ``"red"`` / ``"degraded"`` to lists of lower-case
+    marker words (case-insensitive substring scan over each entry's title +
+    description). Only the first ``RSS_MAX_ITEMS`` entries are scanned, and
+    the feed is truncated to ``RSS_MAX_BYTES`` before parsing so a huge feed
+    can't stall the worker. Stdlib only: curl subprocess for the fetch,
+    ``xml.etree.ElementTree`` for tolerant parsing.
+    """
+    if keywords is None:
+        keywords = {"red": [], "degraded": []}
+    red_words = [w for w in keywords.get("red", []) if w]
+    degraded_words = [w for w in keywords.get("degraded", []) if w]
+
+    cmd = [
+        "curl", "-s", "-o", "-", "-w", "\n%{http_code}",
+        "--proto-default", "http",
+        "--proto-redir", "-all,http,https",
+        "--max-time", str(timeout),
+        "--max-filesize", str(RSS_MAX_BYTES),
+        "--max-redirs", str(CURL_MAX_REDIRS),
+        "-L", "--", url,
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True,
+            timeout=max(timeout + 5, CURL_MAX_REDIRS * 2 + 5),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None, None
+
+    stdout = result.stdout or ""
+    if "\n" not in stdout:
+        return None, None
+    parts = stdout.rsplit("\n", 1)
+    resp_body, code_str = parts[0], parts[1].strip()
+    if not code_str.isdigit():
+        return None, None
+    code = int(code_str)
+    if code == 0 or code > 599:
+        return None, None
+    if code != 200:
+        return None, code
+
+    try:
+        root = ET.fromstring(resp_body)
+    except ET.ParseError:
+        return None, code
+
+    # Collect entry title/description/summary text for RSS (<item>) and
+    # Atom (<entry>). Local-name matching keeps it namespace-agnostic
+    # (Atom feeds declare a default namespace: {…}entry, not item).
+    def _local(tag) -> str:
+        return tag.rpartition("}")[2] if isinstance(tag, str) else ""
+
+    texts = []
+    entry_count = 0
+    for entry in root.iter():
+        if _local(entry.tag) not in ("item", "entry"):
+            continue
+        entry_count += 1
+        if entry_count > RSS_MAX_ITEMS:
+            break
+        for el in entry:
+            if _local(el.tag) in ("title", "description", "summary") and el.text:
+                texts.append(el.text)
+
+    hay = " \n".join(texts).lower()
+    if red_words and any(w in hay for w in red_words):
+        return "red", code
+    if degraded_words and any(w in hay for w in degraded_words):
+        return "degraded", code
+    return "green", code
+
+
 def _set_health_status(name: str, desired_status: str):
     """Set a DB item's status to match the healthcheck result (green/degraded/red).
 
@@ -385,11 +513,15 @@ def _set_health_status(name: str, desired_status: str):
                     "VALUES (?, 'status', ?, ?, ?)",
                     (row["id"], current, desired_status, ts),
                 )
+                # Prune to the last N rows FOR THIS ITEM only. (Without the
+                # outer item_id filter the subquery only contains this item's
+                # ids, so NOT IN would wipe every other item's history the
+                # moment this item flips — breaking multi-service feeds.)
                 conn.execute(
-                    "DELETE FROM status_history WHERE id NOT IN ("
+                    "DELETE FROM status_history WHERE item_id = ? AND id NOT IN ("
                     "  SELECT id FROM status_history WHERE item_id = ? ORDER BY id DESC LIMIT ?"
                     ")",
-                    (row["id"], _get_max_history_per_item()),
+                    (row["id"], row["id"], _get_max_history_per_item()),
                 )
             except Exception:
                 pass
@@ -399,15 +531,18 @@ def _set_health_status(name: str, desired_status: str):
             conn.close()
 
 
-def _healthcheck_worker():
+def _healthcheck_worker(stop_event: threading.Event | None = None):
     """Background thread that polls each service on its own interval.
 
     A file-based advisory lock (instance/.healthcheck.lock, fcntl) ensures only
     one worker process runs the loop at a time. The worker holds NO persistent
     DB connection: it opens a WAL connection only briefly when flipping a
     status, so it never contends with admin writes or DB rebuilds.
+
+    An optional ``stop_event`` lets callers (tests) halt the loop cleanly; the
+    app's own worker runs without one and lives for the process lifetime.
     """
-    _shutdown = threading.Event()
+    _shutdown = stop_event if stop_event is not None else threading.Event()
 
     if _DB_PATH is None:
         raise RuntimeError("Healthcheck not configured. Call configure_healthcheck() first.")
@@ -461,7 +596,25 @@ def _healthcheck_worker():
                 if not hc:
                     continue
 
-                if hc.get("type") == "ping":
+                if hc.get("type") == "rss":
+                    rss_result, code = _run_rss_feed_check(
+                        url=hc["url"], timeout=hc["timeout"],
+                        keywords=hc.get("keywords"),
+                    )
+                    check_info = f"rss code={code} result={rss_result}"
+                    if rss_result in ("red", "degraded"):
+                        # Feed fetched fine but announced red/degraded.
+                        # Map to desired state immediately; the retry counter
+                        # is reserved for un-fetchable feeds (None).
+                        current = fail_count.get(name, 0)
+                        if current > 0:
+                            print(f"Healthcheck OK [{name}] {check_info} (recovered)")
+                        fail_count[name] = 0
+                        _set_health_status(name, rss_result)
+                        next_fire[name] = time.time() + hc["interval"]
+                        continue
+                    is_healthy = (rss_result == "green")
+                elif hc.get("type") == "ping":
                     is_healthy = _run_ping_check(hc["host"], hc["timeout"])
                     check_info = f"ping {hc['host']}"
                 elif hc.get("type") == "tcp":
@@ -512,8 +665,7 @@ def _healthcheck_worker():
                 _shutdown.wait(timeout=HEALTHCHECK_INTERVAL_DEFAULT)
 
     finally:
-        # Release lock on shutdown
-        _shutdown.set()
+        # Release the lock; the stop event (if any) stays caller-owned.
         try:
             lock_file.close()
         except Exception:
@@ -541,6 +693,14 @@ def run_healthchecks_once() -> dict[str, dict]:
                 expected_string=hc.get("expected_string", ""),
             )
             results[name] = {"type": "soap", "status_code": code, "healthy": is_healthy}
+        elif hc.get("type") == "rss":
+            rss_result, code = _run_rss_feed_check(
+                url=hc["url"], timeout=hc["timeout"],
+                keywords=hc.get("keywords"),
+            )
+            results[name] = {"type": "rss", "url": hc["url"],
+                             "status_code": code, "result": rss_result,
+                             "healthy": rss_result == "green"}
         else:
             code = _run_curl_check(hc["url"], hc["timeout"])
             healthy = (code is not None and code in hc.get("healthy_codes", {200}))

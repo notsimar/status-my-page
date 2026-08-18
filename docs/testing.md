@@ -74,6 +74,12 @@ End-to-end HTTP tests that verify the API behavior against a running server with
 
 Quick shell-based health check: pings the root endpoint and asserts HTTP 200. Runs in under 1 second, suitable for CI pre-checks.
 
+### Healthcheck Admin CRUD + RSS Feed — `tests/test_healthcheck_admin.py` + `tests/test_rss_feed.py` + `tests/test_rss_healthcheck.py`
+
+- **test_healthcheck_admin.py**: Full admin CRUD for the healthchecks map — `POST /api/healthchecks` (create, all 5 types incl. `rss`), `GET /api/healthchecks` (list), `PUT /api/healthchecks/<name>` (update: partial field merge or full type migration incl. into/out of `rss`), `DELETE /api/healthchecks/<name>`; validation rejects (unknown type, missing/bad url, bad numeric fields, malformed `keywords`, duplicate name 409, 404 for missing name). Runs against a fully isolated temp app (temp DB, temp config.yaml, patched `CONFIG_PATH`/`DB_PATH`) so it never touches the live server.
+- **test_rss_feed.py**: The public status feed `GET /feed.xml` — XML well-formedness, `<lastBuildDate>`/`<pubDate>` advance on status change, only status events surfaced (notes/rename filtered), `rss: {enabled: false}` → 404, admin toggle `POST /api/rss`, title/max_items clamping, empty-history feed shape.
+- **test_rss_healthcheck.py**: The `rss` healthcheck type end-to-end — a real local HTTP server serves synthetic feeds; parse cases (RSS 2.0 `<item>`, Atom `<entry>` with default namespace, truncated >512 KB / >20 entries, malformed XML → fetch-failure); runtime keyword precedence (red beats degraded, case-insensitive, description+summary scanned); one-shot `run_healthchecks_once` result shape; and a full **E2E worker test** that points a live worker thread at a mutable local feed and asserts the DB item flips green→red→green with history rows recorded.
+
 ### Restart Persistence — `tests/test_restart_persistence.py`
 
 2 critical restart-simulation tests:
@@ -244,6 +250,8 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 
 **Current coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
 
+**Test suite size: 427 tests** (as of 2026-08-17).
+
 ---
 
 ## 7. Adding New Tests
@@ -276,4 +284,4 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 
 ---
 
-*Document version: 2.0 | Last updated: 2026-08-15 | Author: Simar Sahni*
+*Document version: 2.1 | Last updated: 2026-08-17 | Author: Simar Sahni*
