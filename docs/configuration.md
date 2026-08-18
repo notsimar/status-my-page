@@ -134,14 +134,25 @@ healthchecks:
     retries: 3
 ```
 
+**HTTP (curl) options:**
+| Key | Description | Default |
+|---|---|---|
+| `url` | REQUIRED; the HTTP/HTTPS endpoint URL (http/https only) | — |
+| `healthy_codes` | List of HTTP status codes considered healthy | `[200]` |
+| `failure_keyword` | String that flags OUTAGE/RED if present in the response body (case-insensitive) | *(none)* |
+| `degraded_keyword` | String that flags DEGRADED/YELLOW if present in the response body (case-insensitive) | *(none)* |
+| `service` | Optional target dashboard service to update (defaults to check name if omitted) | *(check name)* |
+
 **SOAP options:**
 | Key | Description | Default |
 |---|---|---|
 | `url` | REQUIRED; the SOAP endpoint URL (http/https only) | — |
 | `soap_action` | The `SOAPAction` header value | *(optional)* |
 | `body` | Custom XML payload to POST | Minimal SOAP envelope with empty `<Body/>` |
+| `expected_string` | String that must appear in the response body for healthy status | *(none)* |
 | `failure_keyword` | String that flags OUTAGE/RED if present in the response body (case-insensitive) | *(none)* |
 | `degraded_keyword` | String that flags DEGRADED/YELLOW if present in the response body (case-insensitive) | *(none)* |
+| `service` | Optional target dashboard service to update (defaults to check name if omitted) | *(check name)* |
 
 **RSS feed options:**
 

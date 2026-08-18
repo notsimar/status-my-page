@@ -405,6 +405,16 @@ Enables/disables the public `/feed.xml` status feed. Persists to `config.yaml` `
 **Response Body:** `{ "ok": true, "enabled": true }`
 **Status Codes:** `200 OK` | `400 Bad Request` (missing/non-bool `enabled`) | `401`/`403`/`429`
 
+### GET `/api/export/static` — Export Standalone Static Page
+
+Generates and downloads a self-contained static HTML file with inlined styles and the current service status state, designed for static hosting (S3/CDN/Nginx) for mass delivery.
+
+**Query Parameters:**
+- `download` (optional, default `true`): If `true`, adds `Content-Disposition: attachment; filename="status.html"`.
+
+**Response Body:** Full standalone HTML document (`text/html; charset=utf-8`).
+**Status Codes:** `200 OK` | `401 Unauthorized` / `403 Forbidden`
+
 ---
 
 ## Error Responses
