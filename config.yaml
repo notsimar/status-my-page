@@ -1,12 +1,13 @@
 items:
-- Slack
-- Glean
-- Google workspace
-- ServiceNow
-- MS365
-- Azure
-- Workday
-- Atlassian
+  - Slack
+  - Glean
+  - Google workspace
+  - ServiceNow
+  - MS365
+  - Azure
+  - Workday
+  - Atlassian
+
 _base:
   admin:
     user: admin
@@ -14,98 +15,21 @@ _base:
     host: 0.0.0.0
     port: 8920
     secret_key_env: STATUS_SECRET_KEY
-_runtime:
-  status:
-    Primary Internet: degraded
-    Slack: red
-    Glean: degraded
-  notes:
-    Slack: Custom retention policy failing
-    Primary Internet: High latency
-    Glean: Search slowness
-  history:
-    Primary Internet:
-    - event_type: status
-      old_value: green
-      new_value: degraded
-      occurred: '2026-08-16T01:13:05.891199Z'
-    - event_type: notes
-      old_value: Some intermittent latency
-      new_value: High latency
-      occurred: '2026-08-16T01:13:24.091839Z'
-    Google workspace:
-    - event_type: status
-      old_value: degraded
-      new_value: red
-      occurred: '2026-08-16T01:13:26.013594Z'
-    - event_type: status
-      old_value: red
-      new_value: green
-      occurred: '2026-08-16T01:13:26.598230Z'
-    - event_type: status
-      old_value: degraded
-      new_value: red
-      occurred: '2026-08-18T09:03:22.532619Z'
-    - event_type: status
-      old_value: red
-      new_value: green
-      occurred: '2026-08-18T09:03:23.470651Z'
-    Slack:
-    - event_type: status
-      old_value: green
-      new_value: degraded
-      occurred: '2026-08-18T08:43:25.826254Z'
-    - event_type: status
-      old_value: degraded
-      new_value: red
-      occurred: '2026-08-18T08:43:26.484738Z'
-    - event_type: notes
-      old_value: High latency reported, investigating
-      new_value: Custom retention policy failing
-      occurred: '2026-08-18T08:43:49.777808Z'
-    Glean:
-    - event_type: status
-      old_value: red
-      new_value: green
-      occurred: '2026-08-18T09:01:54.998946Z'
-    - event_type: status
-      old_value: green
-      new_value: degraded
-      occurred: '2026-08-18T09:01:55.877631Z'
-    - event_type: notes
-      old_value: ''
-      new_value: Search slowness
-      occurred: '2026-08-18T09:02:43.650751Z'
-    - event_type: status
-      old_value: red
-      new_value: green
-      occurred: '2026-08-18T09:02:59.387337Z'
-    - event_type: status
-      old_value: green
-      new_value: degraded
-      occurred: '2026-08-18T09:03:00.887028Z'
-    - event_type: status
-      old_value: red
-      new_value: green
-      occurred: '2026-08-18T09:03:48.174752Z'
-    - event_type: status
-      old_value: green
-      new_value: degraded
-      occurred: '2026-08-18T09:03:48.744961Z'
+
 healthchecks:
   Google workspace:
     type: rss
     url: https://www.google.com/appsstatus/dashboard/en/feed.atom
     keywords:
       red:
-      - major issue
-      - major outage
-      - ongoing
+        - major issue
+        - major outage
+        - ongoing
       degraded:
-      - partial
-      - minor
-      - investigating
-      - experiencing issues
+        - partial
+        - minor
+        - investigating
+        - experiencing issues
     interval: 60
     timeout: 10
     retries: 2
@@ -113,7 +37,7 @@ healthchecks:
     type: curl
     url: https://status.glean.com/
     healthy_codes:
-    - 200
+      - 200
     interval: 60
     timeout: 10
     retries: 2
@@ -122,7 +46,7 @@ healthchecks:
     url: https://slack-status.com/feed/rss
     keywords:
       red:
-      - incident
+        - incident
       degraded: []
     interval: 60
     timeout: 10

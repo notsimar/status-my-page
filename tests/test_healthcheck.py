@@ -1046,11 +1046,15 @@ class TestSetHealthStatus:
     def test_flips_green_to_degraded(self, A):
         with open(str(A.CONFIG_PATH), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
-        # Ensure SvcA is green.
+        # Ensure SvcA is in DB
         with A.app.test_request_context():
             row = A.get_db().execute(
                 "SELECT id FROM status_items WHERE name='SvcA'"
             ).fetchone()
+            if not row:
+                A.get_db().execute("INSERT INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
+                A.get_db().commit()
+                row = A.get_db().execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
             item_id = row["id"]
 
         conn = A._health_db()

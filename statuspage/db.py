@@ -92,36 +92,29 @@ def create_history_table(db: sqlite3.Connection) -> None:
 # ── Seeding & Sync ──────────────────────────────────────────────────
 
 def compute_seed_items() -> list[str]:
-    """Compute the list of items to seed from config + runtime."""
-    from statuspage.config import _load_runtime
-    rt = _load_runtime()
-    runtime_items: list[str] = rt.get("items", [])
+    """Compute the list of items to seed from config.yaml."""
+    items = load_config().get("items", []) or []
     seed_items = list(dict.fromkeys(
-        [n.strip() for n in load_config().get("items", []) if n.strip()] +
-        [n.strip() for n in runtime_items if n.strip()]
+        [n.strip() for n in items if isinstance(n, str) and n.strip()]
     )) or DEFAULT_SEED_ITEMS
     return seed_items
 
 
-def sync_db_to_config(db: sqlite3.Connection, seed_items: list[str]) -> tuple[int, int]:
-    """Sync DB rows to match seed_items. Returns (deleted_count, inserted_count)."""
-    seed_set = set(seed_items)
-    existing_rows = {name: rid for name, rid in
-                     db.execute("SELECT name, id FROM status_items").fetchall()}
-
+def sync_db_to_config(db: sqlite3.Connection, config_items: list[str]) -> tuple[int, int]:
+    """Sync DB rows to add any newly defined items from config_items without deleting existing items in DB.
+    
+    config.yaml is read-only input used to seed/add items.
+    The database is the single source of truth for existing items and their state.
+    Returns (deleted_count, inserted_count) where deleted_count is 0.
+    """
     deleted_count = 0
     inserted_count = 0
 
-    # Delete items no longer in config
-    for name in list(existing_rows):
-        if name not in seed_set:
-            db.execute("DELETE FROM status_items WHERE id = ?", [existing_rows[name]])
-            deleted_count += 1
+    existing_rows = {row[0] for row in
+                     db.execute("SELECT name FROM status_items").fetchall()}
 
-    # Insert new items (not yet in DB)
-    existing_after_delete = {row[0] for row in
-                             db.execute("SELECT name, id FROM status_items").fetchall()}
-    new_items = [n for n in seed_items if n not in existing_after_delete]
+    # Insert new items from config not yet in DB
+    new_items = [n for n in config_items if n not in existing_rows]
     if new_items:
         max_pos = (db.execute("SELECT COALESCE(MAX(position), 0) FROM status_items").fetchone()[0])
         db.executemany(
@@ -130,95 +123,17 @@ def sync_db_to_config(db: sqlite3.Connection, seed_items: list[str]) -> tuple[in
         )
         inserted_count = len(new_items)
 
-    # Re-index positions to match config order — DO NOT reset status/notes here.
-    # Status/notes are only changed by admin actions or healthcheck worker.
-    for i, name in enumerate(seed_items):
-        row = db.execute("SELECT id FROM status_items WHERE name = ?", [name]).fetchone()
-        if row:
-            db.execute(
-                "UPDATE status_items SET position=? WHERE id=?",
-                (i, row[0])
-            )
-
     return deleted_count, inserted_count
 
 
 def restore_runtime_overrides(db: sqlite3.Connection, seed_set: set[str]) -> None:
-    """Restore status, notes, and reorder overrides from _runtime YAML."""
-    from statuspage.config import _load_runtime
-    rt = _load_runtime()
-    # Status overrides: {item_name: "degraded"|"red"}
-    for item_name, new_state in rt.get("status", {}).items():
-        if item_name not in seed_set or new_state in ("green", ""):
-            continue
-        row = db.execute(
-            "SELECT id FROM status_items WHERE name = ?", [item_name]
-        ).fetchone()
-        if row:
-            db.execute(
-                "UPDATE status_items SET status=? WHERE id=?",
-                (new_state, row["id"]),
-            )
-
-    # Notes overrides: {item_name: note_text}
-    for item_name, note_text in rt.get("notes", {}).items():
-        if item_name not in seed_set or not note_text.strip():
-            continue
-        row = db.execute(
-            "SELECT id FROM status_items WHERE name = ?", [item_name]
-        ).fetchone()
-        if row:
-            db.execute(
-                "UPDATE status_items SET notes=? WHERE id=?",
-                (note_text, row["id"]),
-            )
-
-    # Reorder overrides: [name, name, ...]
-    reorder_list = rt.get("reorder", None)
-    if reorder_list and isinstance(reorder_list, list):
-        for i, item_name in enumerate(reorder_list):
-            row = db.execute(
-                "SELECT id FROM status_items WHERE name = ?", [item_name]
-            ).fetchone()
-            if row:
-                db.execute(
-                    "UPDATE status_items SET position=? WHERE id=?",
-                    (i + 1, row["id"]),
-                )
+    """No-op: DB maintains its own state."""
+    pass
 
 
 def restore_history_from_yaml(db: sqlite3.Connection) -> None:
-    """Restore history entries from _runtime.history.
-
-    Idempotent: before re-inserting the YAML mirror, remove the rows it
-    would duplicate (matched by the unique ``occurred`` timestamp). Without
-    this, every restart re-INSERTs the same YAML rows and the table grows by
-    the full mirror size on every boot (reproduced: 1 → 2 → 3 rows for one
-    event). DB-only entries beyond the YAML cap (HISTORY_RUNTIME_CAP) are
-    preserved.
-    """
-    from statuspage.config import _load_runtime
-    rt = _load_runtime()
-    for item_name, entries in rt.get("history", {}).items():
-        row = db.execute(
-            "SELECT id FROM status_items WHERE name = ?", [item_name]
-        ).fetchone()
-        if not row:
-            continue
-        occurred_vals = [e.get("occurred") for e in entries if e.get("occurred")]
-        if occurred_vals:
-            placeholders = ",".join("?" * len(occurred_vals))
-            db.execute(
-                f"DELETE FROM status_history WHERE item_id = ? AND occurred IN ({placeholders})",
-                [row["id"], *occurred_vals],
-            )
-        for entry in entries:
-            db.execute(
-                "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
-                (row["id"], entry.get("event_type", "status"),
-                 entry.get("old_value", ""), entry.get("new_value", ""),
-                 entry.get("occurred", "1970-01-01T00:00:00Z")),
-            )
+    """No-op: DB maintains its own state."""
+    pass
 
 
 def init_db() -> None:
@@ -382,20 +297,6 @@ def reorder(db: sqlite3.Connection, order_map: dict[int, int]) -> None:
 
 
 def set_notes(db: sqlite3.Connection, item_id: int, notes: str) -> None:
-    # Get current notes for history tracking
-    current_row = db.execute("SELECT id, name, notes FROM status_items WHERE id=?", (item_id,)).fetchone()
-    if not current_row:
-        return
-    old_notes = current_row["notes"] or ""
-
-    # Persist notes to yaml _runtime.notes (if non-empty)
-    if current_row and notes.strip():
-        from statuspage.config import _load_runtime, _save_runtime
-        rt = _load_runtime()
-        item_name = current_row["name"]
-        rt.setdefault("notes", {})[item_name] = notes
-        _save_runtime(rt)
-
     db.execute(
         "UPDATE status_items SET notes = ? WHERE id = ?",
         (notes, item_id),
@@ -408,14 +309,7 @@ def add_item(db: sqlite3.Connection, name: str) -> int:
         "INSERT INTO status_items (name, status, position) VALUES (?, 'green', ?)",
         (name, max_pos + 1),
     )
-    new_id = cursor.lastrowid
-    # Persist item names to _runtime.items so they survive restarts
-    all_names = [r["name"] for r in db.execute("SELECT name FROM status_items ORDER BY position").fetchall()]
-    from statuspage.config import _load_runtime, _save_runtime
-    rt = _load_runtime()
-    rt["items"] = all_names
-    _save_runtime(rt)
-    return new_id
+    return cursor.lastrowid or 0
 
 
 def delete_item(db: sqlite3.Connection, item_id: int) -> str | None:
@@ -430,21 +324,7 @@ def delete_item(db: sqlite3.Connection, item_id: int) -> str | None:
     for i, r in enumerate(remaining):
         db.execute("UPDATE status_items SET position = ? WHERE id = ?", (i, r["id"]))
 
-    # Update runtime config to prune deleted item
-    from statuspage.config import _load_runtime, _save_runtime
-    rt = _load_runtime()
-    if "items" in rt and name in rt["items"]:
-        rt["items"] = [n for n in rt["items"] if n != name]
-    if "status" in rt:
-        rt["status"].pop(name, None)
-    if "notes" in rt:
-        rt["notes"].pop(name, None)
-    if "history" in rt:
-        rt["history"].pop(name, None)
-    _save_runtime(rt)
-
-    # Prune healthcheck config for the deleted item so admin endpoints and
-    # the worker don't keep probing a name that no longer maps to an item.
+    # Prune healthcheck config for the deleted item
     from statuspage.config import _load_healthchecks, _save_healthchecks
     hcs = _load_healthchecks()
     if name in hcs:
@@ -473,25 +353,6 @@ def record_history(db: sqlite3.Connection, item_id: int, event_type: str, old_va
         ")",
         (item_id, item_id, MAX_HISTORY_PER_ITEM),
     )
-
-    # ── Persist to YAML _runtime.history so it survives restarts ──
-    row_name = db.execute(
-        "SELECT name FROM status_items WHERE id=?", (item_id,)
-    ).fetchone()
-    if row_name:
-        from statuspage.config import _load_runtime, _save_runtime
-        rt = _load_runtime()
-        hist = rt.setdefault("history", {})
-        item_hist = hist.setdefault(row_name["name"], [])
-        item_hist.append({
-            "event_type": event_type,
-            "old_value": old_value,
-            "new_value": new_value,
-            "occurred": ts,
-        })
-        # Keep only the most recent HISTORY_RUNTIME_CAP entries per item in YAML
-        hist[row_name["name"]] = item_hist[-HISTORY_RUNTIME_CAP:]
-        _save_runtime(rt)
 
 
 def get_history(db: sqlite3.Connection, item_id: int):

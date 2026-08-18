@@ -178,52 +178,13 @@ def _rotate_backups() -> None:
 
 
 def _load_runtime() -> dict:
-    """Return {status: {name→state}, notes: {name→text}} from config.yaml."""
-    try:
-        data = load_config()
-        return data.get("_runtime", {}) or {}
-    except Exception:
-        return {}
+    """Return empty dict (runtime state is maintained in SQLite database)."""
+    return {}
 
 
 def _save_runtime(data: dict) -> None:
-    """Atomically write runtime overrides into config.yaml._runtime.
-
-    Before each write, rotates existing backups (current → bak1 → bak2 → ... → bak5),
-    keeping the last 5 versions so you can recover from bad automation or accidental changes.
-    """
-    with _CONFIG_LOCK:
-        # 1. Read current config FIRST (consistent snapshot before any file ops)
-        cfg_data = load_config()
-        if not isinstance(cfg_data, dict):
-            cfg_data = {"items": list(_ITEM_NAMES), "_base": {}}
-
-        # 2. Preserve known top-level keys under _base during a rewrite
-        for section in ("admin", "server"):
-            if section in cfg_data and section not in cfg_data.get("_base", {}):
-                cfg_data.setdefault("_base", {})[section] = cfg_data.pop(section, {})
-
-        # 3. Apply runtime data
-        cfg_data["_runtime"] = data
-
-        # 4. Rotate backups of the ORIGINAL file (before we overwrite it)
-        _rotate_backups()
-
-        # 5. Atomic write: temp file + os.replace
-        if CONFIG_PATH is None:
-            return
-        path = CONFIG_PATH
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as fh:
-                yaml.dump(cfg_data, fh, default_flow_style=False, sort_keys=False)
-            os.replace(tmp_path, path)
-        finally:
-            # Clean up temp file if replace failed
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    """No-op: config.yaml is read-only input, runtime state is maintained in DB."""
+    pass
 
 
 # ── Healthchecks config persistence ────────────────────────────────

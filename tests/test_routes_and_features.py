@@ -298,8 +298,8 @@ class TestItemMutations:
         assert r.get_json() == {"ok": True}
 
 
-    def test_toggle_back_to_green_clears_runtime_status(self, admin, token, A):
-        """Toggling status back to green removes the entry from _runtime.status."""
+    def test_toggle_cycles_status_in_db(self, admin, token, A):
+        """Toggling status cycles green -> degraded -> red -> green directly in DB."""
         db = sqlite3.connect(str(A.DB_PATH))
         db.execute("UPDATE status_items SET status='green' WHERE name='SvcA'")
         db.commit()
@@ -308,33 +308,32 @@ class TestItemMutations:
         assert row is not None
         item_id = row[0]
 
-        # Reset runtime status
-        rt = A._load_runtime()
-        rt.setdefault("status", {}).pop("SvcA", None)
-        A._save_runtime(rt)
-
-        # SvcA is in config.yaml items
         # Cycle 1: green -> degraded
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r1 = admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
         assert r1.get_json()["status"] == "degraded"
-        rt = A._load_runtime()
-        assert rt.get("status", {}).get("SvcA") == "degraded"
+        db = sqlite3.connect(str(A.DB_PATH))
+        st1 = db.execute("SELECT status FROM status_items WHERE id=?", (item_id,)).fetchone()[0]
+        db.close()
+        assert st1 == "degraded"
 
         # Cycle 2: degraded -> red
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r2 = admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
         assert r2.get_json()["status"] == "red"
-        rt = A._load_runtime()
-        assert rt.get("status", {}).get("SvcA") == "red"
+        db = sqlite3.connect(str(A.DB_PATH))
+        st2 = db.execute("SELECT status FROM status_items WHERE id=?", (item_id,)).fetchone()[0]
+        db.close()
+        assert st2 == "red"
 
         # Cycle 3: red -> green
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r3 = admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
         assert r3.get_json()["status"] == "green"
-        rt = A._load_runtime()
-        # Should be removed from _runtime.status when back to green
-        assert "SvcA" not in rt.get("status", {})
+        db = sqlite3.connect(str(A.DB_PATH))
+        st3 = db.execute("SELECT status FROM status_items WHERE id=?", (item_id,)).fetchone()[0]
+        db.close()
+        assert st3 == "green"
 
 
 class TestSecurityHeadersAndBackups:
@@ -367,12 +366,11 @@ class TestSecurityHeadersAndBackups:
         assert "name" in data["items"][0]
         assert "status" in data["items"][0]
 
-    def test_backup_rotation_on_runtime_save(self, A):
-        """_save_runtime rotates backup files up to _NUM_BACKUPS."""
+    def test_backup_rotation_on_healthcheck_save(self, A):
+        """_save_healthchecks rotates backup files up to _NUM_BACKUPS."""
+        from statuspage.config import _save_healthchecks
         for i in range(7):
-            rt = A._load_runtime()
-            rt["_test_counter"] = i
-            A._save_runtime(rt)
+            _save_healthchecks({"_test": {"type": "curl", "url": f"http://test-{i}.local"}})
 
         cfg_base = A.CONFIG_PATH
         baks = [cfg_base.parent / f"{cfg_base.name}.bak{i}" for i in range(1, A._NUM_BACKUPS + 1)]

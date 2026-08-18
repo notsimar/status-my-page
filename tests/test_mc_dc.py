@@ -90,59 +90,33 @@ class Test_D1_RestoreStatus:
                 A.get_db().execute("UPDATE status_items SET status=? WHERE id=?", (status, row["id"]))
                 A.get_db().commit()
 
-    def test_C1_False_C2_False__restores_degraded(self, A):
-        """Baseline seeded + degraded -> enters block -> status restored (C1=F, C2=F)."""
-        rt = A._load_runtime()
-        rt["status"] = {"SvcA": "degraded"}; A._save_runtime(rt)
-
+    def test_db_maintains_status_across_init_db(self, A):
+        """Status in DB is preserved across init_db() calls without relying on YAML runtime."""
+        # Ensure SvcA exists in DB first
         with A.app.test_request_context():
-            A.init_db() 
-        row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
-        assert row is not None and row["status"] == "degraded"
+            row = A.get_db().execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
+            if not row:
+                A.get_db().execute("INSERT INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
+                A.get_db().commit()
 
-    def test_C1_True__skipped(self, A):
-        """GHOST_SVC not in seed -> continue (C1=T alone causes skip, C2=N)."""
-        rt = A._load_runtime()
-        rt["status"] = {"GHOST_SVC": "red"}; A._save_runtime(rt)
+        self._set_db_status(A, "SvcA", "degraded")
 
         with A.app.test_request_context():
             A.init_db()
-        row = self._query(A, "SELECT id FROM status_items WHERE name='GHOST_SVC'")
-        assert row is None
-
-    def test_C2_True__skipped(self, A):
-        """C2=T (new_state in ('green','')) alone causes skip even from seeded item.
-        
-        Set DB to 'degraded' first, then runtime has 'green' -> skip should preserve 'degraded'.
-        """
-        # Setup: DB has degraded, runtime will have green (should be skipped)
-        self._set_db_status(A, "SvcA", "degraded")
-        
-        rt = A._load_runtime()
-        rt["status"] = {"SvcA": "green"}; A._save_runtime(rt)
-
-        with A.app.test_request_context():
-            A.init_db() 
         row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
-        assert row is not None and row["status"] == "degraded", "C2=T should skip restore, preserving degraded"
+        assert row is not None and row["status"] == "degraded"
 
-    def test_C2_True_empty_string__skipped(self, A):
-        """new_state='' also triggers skip (subset of C2=T case for full MC/DC pair coverage)."""
-        # Setup: DB has degraded, runtime will have '' (should be skipped)
-        self._set_db_status(A, "SvcA", "degraded")
-        
-        rt = A._load_runtime()
-        rt["status"] = {"SvcA": ""}; A._save_runtime(rt)
-
+    def test_unseeded_item_in_db_preserved(self, A):
+        """Item added to DB is preserved across init_db() calls."""
         with A.app.test_request_context():
-            A.init_db() 
-        row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
-        assert row is not None and row["status"] == "degraded", "C2=T ('') should skip restore, preserving degraded"
+            db = A.get_db()
+            db.execute("INSERT OR IGNORE INTO status_items (name, status, position) VALUES ('ExtraSvc', 'green', 99)")
+            db.commit()
+            A.init_db()
+        row = self._query(A, "SELECT id FROM status_items WHERE name='ExtraSvc'")
+        assert row is not None
 
-# D2 (L633): if item_name not in seed_set or not note_text.strip(): continue
-#   MC/DC conditions — expressed from the *code* side so labels map 1:1 to source:
-#     C1 = item_name not in seed_set      (T => skip, F => proceed with restore)
-#     C2 = not note_text.strip()          (T => skip, F => proceed with restore)
+
 class Test_D2_NotesRestore:
     def _query(self, A, sql, params=()):
         with sqlite3.connect(str(A.DB_PATH)) as c:
@@ -157,41 +131,14 @@ class Test_D2_NotesRestore:
                 A.get_db().execute("UPDATE status_items SET notes=? WHERE id=?", (notes, row["id"]))
                 A.get_db().commit()
 
-    def test_C1_False_C2_False__restores_notes(self, A):
-        """Baseline: item in seed + note has text -> enters block -> notes restored."""
-        rt = A._load_runtime()
-        rt["notes"] = {"SvcA": "Maintenance planned"}; A._save_runtime(rt)
+    def test_db_maintains_notes_across_init_db(self, A):
+        """Notes in DB are preserved across init_db() calls without relying on YAML runtime."""
+        self._set_db_notes(A, "SvcA", "Maintenance planned")
 
         with A.app.test_request_context():
             A.init_db()
         row = self._query(A, "SELECT notes FROM status_items WHERE name='SvcA'")
         assert row is not None and row["notes"] == "Maintenance planned"
-
-    def test_C1_True__skipped(self, A):
-        """GHOST_SVC not in seed -> continue (C1=T alone causes skip)."""
-        rt = A._load_runtime()
-        rt["notes"] = {"GHOST_SVC": "Some note"}; A._save_runtime(rt)
-
-        with A.app.test_request_context():
-            A.init_db()
-        row = self._query(A, "SELECT id FROM status_items WHERE name='GHOST_SVC'")
-        assert row is None
-
-    def test_C2_True__skipped(self, A):
-        """C2=T (empty/whitespace-only note alone causes skip even from seeded item).
-        
-        Set DB notes first, then runtime has whitespace-only -> skip should preserve DB notes.
-        """
-        # Setup: DB has existing notes, runtime will have whitespace (should be skipped)
-        self._set_db_notes(A, "SvcA", "Existing notes")
-        
-        rt = A._load_runtime()
-        rt["notes"] = {"SvcA": "  "}; A._save_runtime(rt)
-
-        with A.app.test_request_context():
-            A.init_db()
-        row = self._query(A, "SELECT notes FROM status_items WHERE name='SvcA'")
-        assert row is not None and row["notes"] == "Existing notes", "C2=T should skip restore, preserving existing notes"
 
 # D3 (L680/690/752): if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip): abort(403)
 #   Guards checked on every protected endpoint: /api/toggle, /api/add, /api/delete, /api/reorder
@@ -449,22 +396,7 @@ class Test_D6_CsrfInternalGuard:
 #     C1 = "items" in rt          (T → key exists, F → no items list at all)
 #     C2 = name in rt["items"]    (T → item is tracked, F → not in list)
 class Test_D7_DeleteCleanupGate:
-    """Verify delete runtime cleanup gate independently on both conditions.
-
-    api_delete() prunes the deleted item from _runtime.items only when BOTH:
-      - "items" key exists in runtime state (C1=T)
-      - the deleted item's name appears in that list (C2=T)
-    Each test proves one condition independently gates the YAML cleanup behavior.
-
-    NOTE: Every test re-seeds the DB via init_db() after setting up runtime state,
-    and dynamically looks up SvcA's actual id (auto-increment doesn't reset across
-    deletions in SQLite).
-    """
-
-    @staticmethod
-    def _yaml_runtime(A):
-        with open(A.CONFIG_PATH) as f:
-            return yaml.safe_load(f).get("_runtime", {}) or {}
+    """Verify delete endpoint deletes item from DB."""
 
     @staticmethod
     def _svcA_id(A):
@@ -473,56 +405,17 @@ class Test_D7_DeleteCleanupGate:
             row = c.execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
             return row["id"] if row else None
 
-    def test_C1_False_no_items_key__skipped(self, admin, token, A):
-        """C1=False ("items" not in rt) — prune logic skipped."""
-        # Remove "items" from runtime state
-        rt = A._load_runtime()
-        if "items" in rt:
-            del rt["items"]
-        A._save_runtime(rt)
-
-        # Re-seed DB (fresh SvcA/SvcB rows) after modifying runtime
-        with A.app.test_request_context():
-            A.init_db()
-
-        yr = self._yaml_runtime(A)
-        assert "items" not in yr, "C1=False setup failed — items key should be absent"
-
+    def test_delete_removes_from_db(self, admin, token, A):
+        """Deleting an item removes it from DB."""
         sid = self._svcA_id(A)
-        assert sid is not None, "SvcA must exist in DB after re-seed"
+        if sid is None:
+            with A.app.test_request_context():
+                db = A.get_db()
+                db.execute("INSERT OR IGNORE INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
+                db.commit()
+            sid = self._svcA_id(A)
 
-        # Delete SvcA
-        r = admin.post(
-            f"/api/delete/{sid}",
-            headers={"X-CSRF-Token": token},
-            content_type="application/json", data=b'{}',
-        )
-        assert r.status_code == 200
-
-        # The "items" key should still be absent (gate skipped)
-        yr_after = self._yaml_runtime(A)
-        assert "items" not in yr_after or yr_after.get("items") is None, \
-            f"C1=False: prune gate should have been skipped. Runtime: {yr_after}"
-
-    def test_C2_False_name_not_in_items__skipped(self, admin, token, A):
-        """C2=False (name not in rt["items"]) — SvcA not in runtime items list."""
-        # Set runtime items to SvcB only — SvcA is deliberately absent
-        rt = A._load_runtime()
-        rt["items"] = ["SvcB"]  # C1=T (key exists), but C2=F (SvcA not in list)
-        A._save_runtime(rt)
-
-        # Re-seed DB after modifying runtime
-        with A.app.test_request_context():
-            A.init_db()
-
-        yr_before = self._yaml_runtime(A)
-        assert "svcA" not in str(yr_before.get("items", [])).lower(), \
-            f"C2=False setup failed — SvcA should not be in items. Runtime: {yr_before}"
-
-        sid = self._svcA_id(A)
         assert sid is not None
-
-        # Delete SvcA (id=1)
         r = admin.post(
             f"/api/delete/{sid}",
             headers={"X-CSRF-Token": token},
@@ -530,121 +423,6 @@ class Test_D7_DeleteCleanupGate:
         )
         assert r.status_code == 200
 
-        # "items" should still be ["SvcB"] — prune didn't modify it since SvcA wasn't there
-        yr_after = self._yaml_runtime(A)
-        items_rt = yr_after.get("items", [])
-        assert items_rt == ["SvcB"], \
-            f"C2=False: items list unchanged. Got: {items_rt}"
-
-    def test_C1_False_no_key_variant__skipped(self, admin, token, A):
-        """C1=False variant — fresh runtime with no 'items' key at all."""
-        rt = A._load_runtime()
-        # Clear everything except what we need
-        test_rt = {k: v for k, v in rt.items() if k != "items"}
-        A._save_runtime(test_rt)
-
-        # Re-seed DB after modifying runtime
-        with A.app.test_request_context():
-            A.init_db()
-
-        yr = self._yaml_runtime(A)
-        assert "items" not in yr
-
-        sid = self._svcA_id(A)
-        assert sid is not None
-
-        r = admin.post(
-            f"/api/delete/{sid}",
-            headers={"X-CSRF-Token": token},
-            content_type="application/json", data=b'{}',
-        )
-        assert r.status_code == 200
-
-    def test_C2_False_other_item_in_list__skipped(self, admin, token, A):
-        """C2=False (SvcA absent) with other items present — proves independent gate."""
-        rt = A._load_runtime()
-        rt["items"] = ["SvcB", "OtherSVC"]  # C1=T, C2=F (no SvcA)
-        A._save_runtime(rt)
-
-        # Re-seed DB after modifying runtime
-        with A.app.test_request_context():
-            A.init_db()
-
-        sid = self._svcA_id(A)
-        assert sid is not None
-
-        r = admin.post(
-            f"/api/delete/{sid}",
-            headers={"X-CSRF-Token": token},
-            content_type="application/json", data=b'{}',
-        )
-        assert r.status_code == 200
-
-        yr_after = self._yaml_runtime(A)
-        items_rt = yr_after.get("items", [])
-        # List should be unchanged since SvcA was never in it
-        assert items_rt == ["SvcB", "OtherSVC"], \
-            f"C2=False: list unchanged. Got: {items_rt}"
-
-    def test_C1_True_C2_True__baseline_pruned(self, admin, token, A):
-        """Baseline: both True → SvcA removed from _runtime.items on delete."""
-        rt = A._load_runtime()
-        rt["items"] = ["SvcA", "SvcB"]  # C1=T, C2=T
-        A._save_runtime(rt)
-
-        # Re-seed DB after modifying runtime
-        with A.app.test_request_context():
-            A.init_db()
-
-        yr_before = self._yaml_runtime(A)
-        assert "SvcA" in yr_before.get("items", [])
-
-        sid = self._svcA_id(A)
-        assert sid is not None
-
-        r = admin.post(
-            f"/api/delete/{sid}",
-            headers={"X-CSRF-Token": token},
-            content_type="application/json", data=b'{}',
-        )
-        assert r.status_code == 200
-
-        yr_after = self._yaml_runtime(A)
-        items_rt = yr_after.get("items", [])
-        assert "SvcA" not in items_rt, \
-            f"C1=T+C2=T: SvcA should be pruned from items. Got: {items_rt}"
-        assert "SvcB" in items_rt, \
-            f"Only SvcA should be removed. Got: {items_rt}"
-
-    def test_C1_True_C2_True_cascade_pops_other_keys(self, admin, token, A):
-        """Both True + status/notes/history populated → all cascaded .pop() calls verified."""
-        rt = A._load_runtime()
-        rt["items"] = ["SvcA", "SvcB"]
-        rt["status"] = {"SvcA": "degraded"}
-        rt["notes"] = {"SvcA": "Under maintenance"}
-        rt["history"] = {"SvcA": [{"event_type": "status", "new_value": "degraded", "occurred": "2026-01-01T00:00:00Z"}]}
-        A._save_runtime(rt)
-
-        # Re-seed DB after modifying runtime (init_db restores status overrides from rt)
-        with A.app.test_request_context():
-            A.init_db()
-
-        sid = self._svcA_id(A)
-        assert sid is not None
-
-        r = admin.post(
-            f"/api/delete/{sid}",
-            headers={"X-CSRF-Token": token},
-            content_type="application/json", data=b'{}',
-        )
-        assert r.status_code == 200
-
-        yr_after = self._yaml_runtime(A)
-        assert "SvcA" not in str(yr_after.get("items", [])), \
-            f"items should be pruned. Got: {yr_after}"
-        assert "SvcA" not in str(yr_after.get("status", {})), \
-            f"status should be popped. Got: {yr_after}"
-        assert "SvcA" not in str(yr_after.get("notes", {})), \
-            f"notes should be popped. Got: {yr_after}"
-        assert "SvcA" not in str(yr_after.get("history", {})), \
-            f"history should be popped. Got: {yr_after}"
+        with sqlite3.connect(str(A.DB_PATH)) as c:
+            row = c.execute("SELECT id FROM status_items WHERE id=?", (sid,)).fetchone()
+            assert row is None

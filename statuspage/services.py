@@ -17,13 +17,12 @@ from statuspage.db import (
     record_history,
     get_history,
 )
-from statuspage.config import _save_runtime, _load_runtime
 
 
 # ── Status Service ──────────────────────────────────────────────────
 
 def toggle_item(item_id: int) -> str:
-    """Cycle: green → degraded → red → green (also persists to yaml)."""
+    """Cycle: green → degraded → red → green."""
     with get_connection() as db:
         row = get_item_by_id(db, item_id)
         if not row:
@@ -32,41 +31,18 @@ def toggle_item(item_id: int) -> str:
         status = db_toggle_status(db, item_id)
         # Record history
         record_history(db, item_id, "status", old_status, status)
-        # Persist status changes to yaml _runtime.status
-        item_name = row["name"]
-        rt = _load_runtime()
-        rt_status = rt.setdefault("status", {})
-        if status != "green":
-            rt_status[item_name] = status
-        else:
-            rt_status.pop(item_name, None)
-        _save_runtime(rt)
         db.commit()
     return status
 
 
 def rename_item(item_id: int, name: str) -> tuple[bool, str]:
     with get_connection() as db:
-        # Capture the old name BEFORE the rename so _runtime references can be re-keyed
         row = get_item_by_id(db, item_id)
         if not row:
             return False, "Not found"
-        old_name = row["name"]
         ok, msg = db_update_name(db, item_id, name)
         if not ok:
             return ok, msg
-        # Update references in _runtime (items list + status/notes/history keys)
-        rt = _load_runtime()
-        updated = False
-        if "items" in rt and old_name in rt["items"]:
-            rt["items"] = [name if n == old_name else n for n in rt["items"]]
-            updated = True
-        for section in ("status", "notes", "history"):
-            if section in rt and old_name in rt[section]:
-                rt[section][name] = rt[section].pop(old_name)
-                updated = True
-        if updated:
-            _save_runtime(rt)
         db.commit()
     return ok, msg
 
