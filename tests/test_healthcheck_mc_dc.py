@@ -20,6 +20,7 @@ Prerequisites:
 import json
 import os
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -207,13 +208,6 @@ class Test_Dhc2_UrlSanitisation:
         )
         hc = A._parse_healthchecks()
         assert "SvcA" in hc
-
-
-# ─── CLI entry point ──────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys as _sys
-    _sys.exit(pytest.main([__file__, "-v"]))
 
 
 # ─── D_hc3: Type auto-detection logic ─────────────────────────────
@@ -518,6 +512,289 @@ class Test_Dhc7_SoapResultGate:
         assert code in healthy_codes and (not expected_string or expected_string in resp_body)
 
 
+# ─── D_hc8: RSS response gate ──────────────────────────────────────
+# Expression (_run_rss_feed_check L441-457): sequential guard chain over the
+# raw curl output (body + "\n" + http_code):
+#   C1 = "\n" in stdout                    (no newline -> malformed, None)
+#   C2 = code_str.isdigit()                (non-numeric code -> None)
+#   C3 = code == 0 or code > 599           (invalid code range -> None)
+#   C4 = code != 200                       (non-200 -> (None, code))
+#   C5 = ET.ParseError on body             (malformed XML -> (None, code))
+# All False -> parse proceeds -> keyword mapping runs.
+#
+# Each C flips the outcome independently (subprocess.run is monkeypatched to
+# deliver a controlled curl result — no network, deterministic per branch):
+#
+# ┌────────┬────┬───────────────────────────────────────────────────┐
+# │ Test   │ C  │ Observable effect                                 │
+# ├────────┼────┼───────────────────────────────────────────────────┤
+# │ base   │ -- │ (green, 200) — fetch succeeded, clean feed        │
+# │ T_hc8a │C1=F│ (None, None) — no newline in stdout               │
+# │ T_hc8b │C2=T│ (None, None) — non-numeric code                   │
+# │ T_hc8c │C3=T│ (None, None) — code out of 1..599                 │
+# │ T_hc8d │C4=T│ (None, 404) — non-200 http status                 │
+# │ T_hc8e │C5=T│ (None, 200) — 200 but body is not XML             │
+# └────────┴────┴───────────────────────────────────────────────────┘
+
+FEED_BODY = '<?xml version="1.0"?><rss><channel><title>T</title></channel></rss>'
+EMPTY_WORDS = {"red": [], "degraded": []}
+
+
+def _fake_run(stdout_str):
+    """subprocess.run stand-in: a CALLABLE returning a fixed curl stdout."""
+    def _run(*args, **kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(stdout=stdout_str)
+    return _run
+
+
+class Test_Dhc8_RssResponseGate:
+    """MC/DC for the 5-condition curl-response guard in _run_rss_feed_check()."""
+
+    def _check(self, A, monkeypatch, stdout, words=None):
+        monkeypatch.setattr(subprocess, "run", _fake_run(stdout))
+        return A._run_rss_feed_check("http://vendor.example/feed", 5, words or EMPTY_WORDS)
+
+    def test_all_False__baseline_green(self, A, monkeypatch):
+        """All guards pass: valid 200 + XML -> keyword mapping runs (green)."""
+        result, code = self._check(A, monkeypatch, FEED_BODY + "\n200")
+        assert (result, code) == ("green", 200)
+
+    def test_C1_False_no_newline__fetch_failure(self, A, monkeypatch):
+        """C1=False: stdout without a delimiter newline -> (None, None)."""
+        assert self._check(A, monkeypatch, "no body here, no newline") == (None, None)
+
+    def test_C2_True_non_numeric_code__fetch_failure(self, A, monkeypatch):
+        """C2=True: code part is not an integer -> (None, None)."""
+        assert self._check(A, monkeypatch, FEED_BODY + "\nabc") == (None, None)
+
+    def test_C3_True_code_zero__fetch_failure(self, A, monkeypatch):
+        """C3=True (code==0, curl transport error) -> (None, None)."""
+        assert self._check(A, monkeypatch, FEED_BODY + "\n0") == (None, None)
+
+    def test_C3_True_code_above_599__fetch_failure(self, A, monkeypatch):
+        """C3=True (code>599, impossible HTTP status) -> (None, None)."""
+        assert self._check(A, monkeypatch, FEED_BODY + "\n600") == (None, None)
+
+    def test_C4_True_non_200_status__fetch_failure(self, A, monkeypatch):
+        """C4=True: HTTP 404 -> (None, 404) — status surfaced, no keyword scan."""
+        assert self._check(A, monkeypatch, FEED_BODY + "\n404") == (None, 404)
+
+    def test_C5_True_malformed_xml__fetch_failure(self, A, monkeypatch):
+        """C5=True: 200 OK but body is not parseable XML -> (None, 200).
+        An HTML status page must never read as 'all clear'. The unescaped
+        '&' guarantees ET.ParseError (a well-shaped <html> tree would parse).
+        """
+        html = "<html><body>Page moved & relocated <A HREF='x'>here</A></body></html>\n200"
+        assert self._check(A, monkeypatch, html) == (None, 200)
+
+
+# ─── D_hc9: RSS keyword precedence mapping ─────────────────────────
+# Expressions (_run_rss_feed_check L478-482):
+#   if red_words and any(w in hay for w in red_words):          return "red"
+#   if degraded_words and any(w in hay for w in degraded_words): return "degraded"
+#   return "green"
+# Conditions:
+#   C1 = red_words non-empty        C2 = a red word matches hay
+#   C3 = degraded_words non-empty   C4 = a degraded word matches hay
+#
+# ┌───────────┬────┬────┬──────┬─────────────────────────────────────────┐
+# │ Test      │ C1 │ C2 │ C3/C4 │ Effect (hay controlled via feed body)  │
+# ├───────────┼────┼────┼───────┼─────────────────────────────────────────┤
+# │ baseline  │ T  │ T  │  x    │ "red" — C1+C2 true flips red           │
+# │ T_hc9a    │ F  │ T* │ F     │ "green" — empty red list: no red flip  │
+# │ T_hc9b    │ T  │ F  │ F     │ "green" — no matching red word         │
+# │ T_hc9c    │ F  │ x  │ F,T   │ "degraded" — degraded path taken        │
+# │ T_hc9d    │ F  │ x  │ F,F   │ "green" — no matching degraded word    │
+# │ T_hc9e    │ T  │ T  │ F,T   │ "red" — red precedence over degraded   │
+# └───────────┴────┴────┴───────┴─────────────────────────────────────────┘
+# T_hc9a's C2 column is the would-be match: with the red LIST empty the same
+# outage text no longer flips red (proof C1 independently controls outcome).
+# T_hc9e: feed announces BOTH red and degraded markers; red must win.
+
+FEED_RED_TXT = FEED_BODY.replace("<title>T</title>", "<item><title>Major outage now</title></item>")
+FEED_DEG_TXT = FEED_BODY.replace(
+    "<title>T</title>", "<item><title>Partial degradation under way</title></item>"
+)
+FEED_BOTH_TXT = FEED_BODY.replace(
+    "<title>T</title>",
+    "<item><title>Major outage</title><description>Partial degradation</description></item>",
+)
+WS_RED = {"red": ["outage"], "degraded": []}
+WS_DEG = {"red": [], "degraded": ["degradation"]}
+WS_BOTH = {"red": ["outage"], "degraded": ["degradation"]}
+
+
+class Test_Dhc9_RssKeywordPrecedence:
+    """MC/DC for the red/degraded/green mapping at the tail of the check."""
+
+    def _check(self, A, monkeypatch, body, words):
+        monkeypatch.setattr(subprocess, "run", _fake_run(body + "\n200"))
+        return A._run_rss_feed_check("http://vendor.example/feed", 5, words)
+
+    def test_C1T_C2T__baseline_red(self, A, monkeypatch):
+        """C1=True (red list set) + C2=True (feed has 'outage') -> red."""
+        assert self._check(A, monkeypatch, FEED_RED_TXT, WS_RED) == ("red", 200)
+
+    def test_C1_False_empty_red_list__not_red(self, A, monkeypatch):
+        """C1=False: same outage feed, but red list empty -> falls through
+        to green (no degraded configured either). Proves C1 independently
+        gates the red branch."""
+        assert self._check(A, monkeypatch, FEED_RED_TXT, {"red": [], "degraded": []}) == ("green", 200)
+
+    def test_C1_True_C2_False_no_red_match__not_red(self, A, monkeypatch):
+        """C1=True but C2=False: red list set, feed has no red word -> green."""
+        assert self._check(A, monkeypatch, FEED_DEG_TXT, WS_RED) == ("green", 200)
+
+    def test_C3_True_C4_True__degraded(self, A, monkeypatch):
+        """C1=False (no red list), C3+C4 True (degraded word present)
+        -> degraded path."""
+        assert self._check(A, monkeypatch, FEED_DEG_TXT, WS_DEG) == ("degraded", 200)
+
+    def test_C3_True_C4_False_no_degraded_match__green(self, A, monkeypatch):
+        """C3=True but C4=False: degraded list set, feed has no degraded
+        word -> green."""
+        assert self._check(A, monkeypatch, FEED_RED_TXT, WS_DEG) == ("green", 200)
+
+    def test_red_precedence_over_degraded(self, A, monkeypatch):
+        """T_hc9e: feed announces BOTH a red and a degraded marker with both
+        lists configured -> red. C2(red) wins before the degraded check runs."""
+        assert self._check(A, monkeypatch, FEED_BOTH_TXT, WS_BOTH) == ("red", 200)
+
+
+# ─── D_hc10: rss parse url guard (explicit type) ───────────────────
+# Expression (_parse_healthchecks L211-216): for `type: rss` entries
+#   C1 = not url                       (missing key / None)
+#   C2 = not isinstance(url, str)      (non-string, e.g. numeric)
+#   C3 = not url.strip()               (empty / whitespace-only)
+#   C4 = not _safe_url(url.strip())    (bad scheme / unsafe host)
+# Any True -> entry skipped. All False -> parsed as type "rss" with an
+# (possibly empty) keyword map. Note: rss is NEVER auto-detected — a bare
+# url still maps to curl (covered by test_healthcheck_admin.py).
+#
+# ┌────────────┬────────────────────────────────────────────────────────┐
+# │ Test       │ Condition flipped (others at baseline values)          │
+# ├────────────┼────────────────────────────────────────────────────────┤
+# │ T_hc10a    │ C1=True  — url key absent        -> {}                 │
+# │ T_hc10b    │ C2=True  — url: 12345 (int)      -> {}                 │
+# │ T_hc10c    │ C3=True  — url: "   "            -> {}                 │
+# │ T_hc10d    │ C4=True  — url: "ftp://x/feed"   -> {}                 │
+# │ baseline   │ all False — valid http url       -> parsed (type=rss)  │
+# └────────────┴────────────────────────────────────────────────────────┘
+
+class Test_Dhc10_RssUrlGuard:
+    """MC/DC for the 4-condition url guard on the rss parse branch."""
+
+    def _write(self, A, details):
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": details}},
+                f, default_flow_style=False, sort_keys=False,
+            )
+
+    def test_C1_True_missing_url__skipped(self, A):
+        """C1=True: type=rss with no url -> entry rejected."""
+        self._write(A, {"type": "rss"})
+        assert A._parse_healthchecks() == {}
+
+    def test_C2_True_non_string_url__skipped(self, A):
+        """C1=False (key present), C2=True (int) -> rejected."""
+        self._write(A, {"type": "rss", "url": 12345})
+        assert A._parse_healthchecks() == {}
+
+    def test_C3_True_whitespace_url__skipped(self, A):
+        """C1=C2=False (present, str), C3=True (blank) -> rejected."""
+        self._write(A, {"type": "rss", "url": "   "})
+        assert A._parse_healthchecks() == {}
+
+    def test_C4_True_bad_scheme__skipped(self, A):
+        """C1..C3=False, C4=True (ftp scheme fails _safe_url) -> rejected."""
+        self._write(A, {"type": "rss", "url": "ftp://vendor.example/feed"})
+        assert A._parse_healthchecks() == {}
+
+    def test_all_False__parsed_as_rss(self, A):
+        """All False: valid http url -> parsed as rss with default empty
+        keyword lists and sane numerics."""
+        self._write(A, {"type": "rss", "url": "http://vendor.example/feed"})
+        hc = A._parse_healthchecks()
+        assert "SvcA" in hc
+        entry = hc["SvcA"]
+        assert entry["type"] == "rss"
+        assert entry["url"] == "http://vendor.example/feed"
+        assert entry["keywords"] == {"red": [], "degraded": []}
+
+
+# ─── D_hc11: RSS entry tag filter ──────────────────────────────────
+# Expression (_run_rss_feed_check L465-475): the scan window is
+#   for el in entry: if _local(el.tag) in ("title", "description", "summary")
+# reached ONLY when _local(entry.tag) in ("item", "entry").
+# Conditions (per feed element at iteration depth):
+#   C1 = element is an item/entry tag       (else never scanned)
+#   C2 = child is title/description/summary (else its text is ignored)
+# Consequence: keywords appearing ONLY in channel-level metadata (the channel
+# <title>/<description>, feed <title>) can never flip the status — those
+# elements are not items. Proving this pins the namespace-agnostic local-name
+# filter and the item-scope boundary in one shot.
+#
+# ┌────────────┬─────────────────────────────────────────────────────────┐
+# │ Test       │ Independent condition proven                            │
+# ├────────────┼─────────────────────────────────────────────────────────┤
+# │ baseline   │ C1=True (keyword in <item><title>) -> red               │
+# │ T_hc11a    │ C1=False (keyword ONLY in channel <title>/<description> │
+# │            │   or feed <title>) -> green — non-item text never       │
+# │            │   reaches the keyword scan                              │
+# └────────────┴─────────────────────────────────────────────────────────┘
+
+FEED_ITEM_MATCH = (
+    '<?xml version="1.0"?>'
+    '<rss version="2.0"><channel>'
+    "<title>Vendor Status</title>"
+    "<item><title>Major outage declared</title></item>"
+    "</channel></rss>"
+)
+FEED_CHANNEL_ONLY = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<rss version="2.0"><channel>'
+    "<title>Major outage declared in channel title</title>"
+    "<description>Major outage declared in channel description</description>"
+    "<item><title>All systems operational</title>"
+    "<description>No active incidents</description></item>"
+    "</channel></rss>"
+)
+ATOM_CHANNEL_ONLY = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<feed xmlns="http://www.w3.org/2005/Atom">'
+    "<title>Major outage declared in atom feed title</title>"
+    "<entry><title>All systems operational</title>"
+    "<summary>No active incidents</summary></entry>"
+    "</feed>"
+)
+
+
+class Test_Dhc11_RssEntryFilter:
+    """MC/DC for the item/entry tag filter scoping the keyword scan."""
+
+    def _check(self, A, monkeypatch, body, words):
+        monkeypatch.setattr(subprocess, "run", _fake_run(body + "\n200"))
+        return A._run_rss_feed_check("http://vendor.example/feed", 5, words)
+
+    def test_baseline_item_title_matched__red(self, A, monkeypatch):
+        """C1=True: keyword inside <item><title> -> scanned -> red."""
+        assert self._check(A, monkeypatch, FEED_ITEM_MATCH, WS_RED) == ("red", 200)
+
+    def test_keyword_only_in_channel_metadata__green(self, A, monkeypatch):
+        """C1=False: keyword appears only in channel <title> and
+        <description> (non-item metadata) -> never scanned -> green."""
+        result = self._check(A, monkeypatch, FEED_CHANNEL_ONLY, WS_RED)[0]
+        assert result == "green", "channel-level metadata must not trip keywords"
+
+    def test_keyword_only_in_atom_feed_title__green(self, monkeypatch, A):
+        """Same property for Atom: a keyword in the feed-level <title>
+        (outside any <entry>) must not match."""
+        result = self._check(A, monkeypatch, ATOM_CHANNEL_ONLY, WS_RED)[0]
+        assert result == "green", "atom feed-level title must not trip keywords"
+
+
 # ─── Additional tests for healthcheck worker ──────────────────────
 
 class TestHealthcheckWorkerLock:
@@ -600,3 +877,9 @@ class TestHealthcheckWorkerLock:
         finally:
             fcntl.flock(held_lock.fileno(), fcntl.LOCK_UN)
             held_lock.close()
+
+# ─── CLI entry point ──────────────────────────────────────
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(pytest.main([__file__, "-v"]))

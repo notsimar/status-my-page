@@ -31,8 +31,15 @@ Prove that every guard condition in compound boolean expressions **independently
 | D7: DeleteCleanupGate | app.py L851 | `"items" in rt and name in rt["items"]` | Test_D7_DeleteCleanupGate (5 tests) | Full MC/DC |
 | D_hc1: HealthResultGate | healthcheck.py L222 | `code is not None and code in healthy_codes` | Test_Dhc1_HealthResultGate (3 tests) | Full MC/DC |
 | D_hc2: UrlSanitisation | healthcheck.py L124 | `not url or not isinstance(url, str) or not url.strip()` | Test_Dhc2_UrlSanitisation (5 tests) | Full MC/DC |
+| D_hc3: TypeAutoDetection | healthcheck.py L144 | soap→tcp→ping→curl inference chain | Test_Dhc3_TypeAutoDetection (6 tests) | Full MC/DC |
+| D_hc5: TcpValidation | healthcheck.py L188 | host type + `_safe_host` + port range | Test_Dhc5_TcpValidation (8 tests) | Full MC/DC |
+| D_hc7: SoapResultGate | healthcheck.py L323 | `code in healthy_codes and expected in body` | Test_Dhc7_SoapResultGate (4 tests) | Full MC/DC |
+| D_hc8: RssResponseGate | healthcheck.py L447 | `\n` in stdout → isdigit → 1≤code≤599 → code==200 → no ParseError | Test_Dhc8_RssResponseGate (7 tests) | Full MC/DC |
+| D_hc9: RssKeywordPrecedence | healthcheck.py L479 | `(red set & match) → red; (deg set & match) → deg; else green` | Test_Dhc9_RssKeywordPrecedence (6 tests) | Full MC/DC |
+| D_hc10: RssUrlGuard | healthcheck.py L213 | `not url or not str or not url.strip() or not _safe_url` | Test_Dhc10_RssUrlGuard (5 tests) | Full MC/DC |
+| D_hc11: RssEntryFilter | healthcheck.py L468 | item/entry tag + child tag local-name filter | Test_Dhc11_RssEntryFilter (3 tests) | Full MC/DC |
 
-**Total: 55 structural tests, 9 compound decisions, 100% decision coverage, all conditions MC/DC-proven.**
+**Total: structural + healthcheck gates — 18 compound decisions, 100% decision coverage, all conditions MC/DC-proven (50 tests in test_healthcheck_mc_dc.py alone; D1–D7 in test_mc_dc.py / test_structural.py).**
 
 ### Functional — `tests/test_history.py` + `tests/test_routes_and_features.py`
 
@@ -65,9 +72,16 @@ End-to-end HTTP tests that verify the API behavior against a running server with
 - Worker thread: no-op when unconfigured, _set_health_status DB mutations
 - **Exception paths (17 tests):** TimeoutExpired, FileNotFoundError, OSError for ping/curl/soap; empty stdout, no newline, non-digit status codes, out-of-range codes, non-whitelisted codes, expected_string missing/found
 
-**test_healthcheck_mc_dc.py (11 tests):**
-- MC/DC for D_hc1 (health result gate) — 3 tests
+**test_healthcheck_mc_dc.py (50 tests):**
+- MC/DC for D_hc1 (health result gate) — 4 tests
 - MC/DC for D_hc2 (URL sanitisation) — 5 tests
+- MC/DC for D_hc3 (type auto-detection chain) — 6 tests
+- MC/DC for D_hc5 (TCP host/port validation) — 8 tests
+- MC/DC for D_hc7 (SOAP result gate) — 4 tests
+- MC/DC for D_hc8 (RSS response gate: 5-condition curl-output chain) — 7 tests
+- MC/DC for D_hc9 (RSS keyword precedence red→degraded→green) — 6 tests
+- MC/DC for D_hc10 (RSS url parse guard, explicit `type: rss`) — 5 tests
+- MC/DC for D_hc11 (RSS item/entry tag filter scope) — 3 tests
 - Worker file lock tests (fcntl) — 2 tests
 
 ### Smoke — `tests/test_health.sh`
@@ -250,7 +264,7 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 
 **Current coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
 
-**Test suite size: 430 tests** (as of 2026-08-17).
+**Test suite size: 451 tests** (as of 2026-08-17).
 
 ---
 
