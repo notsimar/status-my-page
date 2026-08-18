@@ -1,51 +1,16 @@
 """Modified Condition/Decision Coverage (MC/DC) tests for status-my-page.
 
 This suite proves that every guard condition independently determines the
-outcome of compound boolean expressions in five critical code paths:
+outcome of compound boolean expressions in critical code paths:
 
-  1. YAML runtime state restoration — status overrides from _runtime.status,
-     notes overrides from _runtime.notes (app.py L341–L365)
+  1. DB initialization and item preservation across restarts
   2. Mutation API security gate — auth → CSRF → rate-limit trio on every
-     protected endpoint (app.py L957 / 1092 / 1102)
-  3. Healthcheck curl result gate — green vs degraded/red path inside the
-     worker loop (app.py L222, D_hc1)
-  4. Healthcheck config URL sanitisation — three-condition skip guard on
-     malformed YAML entries (app.py L124, D_hc2)
+     protected endpoint (app.py)
+  3. CSRF token validation and session wipe guards
+  4. Delete endpoint item pruning
 
 Each class tests one compound decision by varying exactly one condition per
-test while holding all others constant, demonstrating that each condition is
-**independent** (i.e. changing it alone can flip the outcome). Together these
-tests certify that no guard in a compound expression is redundant — removing
-any single condition would allow an attack or data-loss scenario.
-
-Test matrix — full MC/DC proof for every compound decision:
-
-┌───────────┬───────┬───────────────────┬────┬───┬─────────────────────────────────────────────────────────┐
-│ Test ID   │ Class│ Code path         │ D- │ C1│ Independent failure test(s)                              │
-│           │  ss  │                   │ ID │     ├───┬───┬───┬───┤                                  │
-│           │      │                   │    │   │ C2│ C3│ C4│                                  │
-│           │      │                   │    │   ├───┼───┤───┤──────────────────────────────────────┤  │
-│ T1/T5/T8  │ D1   │ runtime status re-│ L34│F×F│ T │ × │ × │ baseline restores degraded           │  │
-│ /T9       │      │ store (L620)      │ 2  │T× │ × │ × │ C1=True skips unseeded item              │  │
-│           │      │                   │    │   └───┴───┴───┤ (C2=T) on 'green' / ''               │  │
-│ T10/T4/T7 │ D2   │ runtime notes re- │ L63│F×F│ T │ × │ baseline restores notes text       │  │
-│           │      │ store (L633)      │ 3  │T× │ × │ × │ C1=True skips unseeded item              │  │
-│           │      │                   │    │   └───┴───┤ (C2=T: empty note) → skip          │  │
-│ T11/T14.. │ D3   │ security gate on  │ L95│T×T│ T │ T │ T │ baseline: toggle → 200           │  │
-│ .T23      │      │ all mut endpoints │ 7  │F × │ F │ × │ × │ C1=F: admin missing → 403     │  │
-│           │      │ (toggle/add/del/  │    │   │ × │ F │ × │ C2=F: bad CSRF → 403        │  │
-│           │      │ reorder/run-hc)   │    │   └───┴───┤×┤×┤×┤ C3=F: rate limited → 403│  │
-│ T24/T25/T │ D_hc1│ health result gate│ L22│T×F│ T │ × │ C1=F -> none from conn error        │  │
-│ 26        │      │ (L222)            │ 2  │F×T│ F │ × │ baseline green (both True)         │  │
-│           │      │                   │    │   └───┴───┤ C2=F -> code not in whitelist       │  │
-│ T27..     │ D_hc2│ URL sanitisation  │ L12│T×F│ T │ × │ C1=T -> url key missing/None        │  │
-│ .T30      │      │ skip guard (L124) │    │F×T│ F │ × │ C2=T -> type is not str           │  │
-│           │      │                   │    │   └───┴───┤ C3=T -> empty/whitespace string     │  │
-└───────────┴───────┴───────────────────┴────┴───┴───┴───┴───┴───────────────────────────────────────────────┘
-
-Line refs use the canonical location of each `if ... continue` or guard compound.
-Each test varies exactly one condition while holding all others constant —
-changing it alone flips outcome ✅ (independence proven).
+test while holding all others constant.
 
 Prerequisites (automated by session-scoped fixture A):
   - A fresh temp SQLite DB (separate from the live instance)
@@ -55,16 +20,6 @@ Prerequisites (automated by session-scoped fixture A):
 
 Usage:
     pytest tests/test_mc_dc.py -v       # run all MC/DC tests
-    pytest tests/test_mc_dc.py::Test_D1_RestoreStatus -v  # guard D1 only
-
-Note on isolation:
-  The session fixture A uses a temp directory with isolated config.yaml,
-  DB_PATH, and archives_dir so that runtime state from one test class
-  does not leak into another. Tests within a class share the same temp DB
-  but cleanup is explicit (see _load_runtime/_save_runtime calls).
-
-See README_MCDC.md for the full proof matrices mapping every assertion to
-a specific condition in decision D1, D2, D3 and their true/false variants.
 """
 import datetime as dt
 import sqlite3

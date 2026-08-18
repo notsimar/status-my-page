@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify UI-added items survive DB re-initialization (restart simulation).
 
-Tests the round-trip:  add item via API → init_db() re-seeds from config + _runtime.items →
+Tests the round-trip: add item via API → init_db() preserves existing items in DB →
 item is still present in the DB.
 """
 
