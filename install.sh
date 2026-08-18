@@ -61,9 +61,9 @@ echo ""
 echo "=== Installing system dependencies ==="
 if [ "$PKG_MGR" = "apt" ]; then
     export DEBIAN_FRONTEND=noninteractive
-    apt update -qq && apt install -y python3 python3-venv python3-pip gunicorn 2>&1 | grep -v "^+" | tail -5
+    apt update -qq && apt install -y python3 python3-venv python3-pip gunicorn curl iputils-ping 2>&1 | grep -v "^+" | tail -5
 elif [ "$PKG_MGR" = "dnf" ] || [ "$PKG_MGR" = "yum" ]; then
-    $PKG_MGR install -y python3 python3-venv python3-pip python3-gunicorn 2>&1 | tail -5
+    $PKG_MGR install -y python3 python3-venv python3-pip python3-gunicorn curl iputils 2>&1 | tail -5
 fi
 
 echo ""

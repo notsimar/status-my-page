@@ -79,33 +79,59 @@ Both conditions must be True for notes to persist to `_runtime.notes`. set_notes
 
 ## How to Run Tests
 
-MC/DC structural tests for D1–D5 are located in two files:
+MC/DC structural tests are located in three files:
 
 ```bash
-# Original test file (D1, D2, D3)
+# App.py decisions (D1, D2, D3, D6, D7)
 ./.venv/bin/pytest tests/test_mc_dc.py -v
 
-# Extended test file (D4, D5) — NEW!
+# App.py decisions (D4, D5)
 ./.venv/bin/pytest tests/test_structural.py -v
 
+# Healthcheck worker decisions (D_hc1–D_hc11) + worker lock
+./.venv/bin/pytest tests/test_healthcheck_mc_dc.py -v
+
 # All structural tests together
-./.venv/bin/pytest tests/test_mc_dc.py tests/test_structural.py -v
+./.venv/bin/pytest tests/test_mc_dc.py tests/test_structural.py \
+    tests/test_healthcheck_mc_dc.py -v
 ```
 
 ## Implementation Notes
-- **Isolation**: Session-scoped fixture repoints `CONFIG_PATH` and `DB_PATH` to temporary directories, preventing tests from mutating the real environment.
-- **State Mutation**: For rate-limit testing ($\\text{C}_3$), we directly mutate `_mutation_rates` to simulate high-traffic IP without 60+ real requests.
+- **Isolation**: Session/function-scoped fixtures repoint `CONFIG_PATH` and `DB_PATH` to temporary directories, preventing tests from mutating the real environment.
+- **State Mutation**: For rate-limit testing ($\text{C}_3$), we directly mutate `_mutation_rates` to simulate a high-traffic IP without 60+ real requests.
 - **Contexts**: All DB calls wrapped in `app.test_request_context()` for Flask's `g` object.
-- **D5 YAML Verification**: set_notes() always returns HTTP 200; MC/DC proofs verify `_runtime.notes` state via `$ yaml.safe_load(open(CONFIG_PATH))`, not HTTP status codes.
+- **D5 YAML Verification**: set_notes() always returns HTTP 200; MC/DC proofs verify `_runtime.notes` state via `yaml.safe_load(open(CONFIG_PATH))`, not HTTP status codes.
+- **Healthcheck decisions**: `_run_rss_feed_check` and its siblings are pure over the curl output string, so `subprocess.run` is monkeypatched to a fixed stdout — each condition is flipped in exactly one test with no network access.
+
+## Healthcheck Decision Proofs (D_hc1–D_hc11)
+
+Proven in `tests/test_healthcheck_mc_dc.py` against the pure parsing/dispatch functions (no network, no DB — `subprocess.run` and config are monkeypatched per test):
+
+| Decision | Location | Expression | Tests |
+|------|----------|------------|-------|
+| D_hc1: HealthResultGate | `healthcheck.py` `_run_curl_check` | `code in healthy_codes and (not expected or expected in body)` | 4 |
+| D_hc2: UrlSanitisation | `healthcheck.py` `_parse_healthchecks` (curl) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(...)` | 5 |
+| D_hc3: TypeAutoDetection | `healthcheck.py` `_parse_healthchecks` | soap → tcp → ping → curl elif chain | 6 |
+| D_hc5: TcpValidation | `healthcheck.py` `_parse_healthchecks` (tcp) | `not host or not isinstance(host, str) or not _safe_host(host) or port not 1..65535` | 8 |
+| D_hc7: SoapValidation | `healthcheck.py` `_parse_healthchecks` (soap) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(url.strip())` | 4 |
+| D_hc8: RssResponseGate | `healthcheck.py` `_run_rss_feed_check` | `"\n" in stdout and code.isdigit() and 1≤code≤599 and code==200 and no ET.ParseError` | 7 |
+| D_hc9: RssKeywordPrecedence | `healthcheck.py` `_run_rss_feed_check` | `red set & match → red; degraded set & match → degraded; else green` (red precedence) | 6 |
+| D_hc10: RssUrlGuard | `healthcheck.py` `_parse_healthchecks` (rss) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(...)` | 5 |
+| D_hc11: RssEntryFilter | `healthcheck.py` `_run_rss_feed_check` | tag in `item`/`entry` **and** local-name in `title`/`description`/`summary` | 3 |
+
+Plus 2 worker single-instance lock tests (fcntl `LOCK_EX | LOCK_NB`).
 
 ## Structural Coverage Summary
 
-| Decision | Line(s) | Conditions | Tests | Status |
-|----------|---------|------------|-------|--------|
-| D1: RestoreStatus | L342 | 2 (C1,C2) | 4 tests | ✅ Complete |
-| D2: NotesRestore | L354 | 2 (C1,C2) | 3 tests | ✅ Complete |
-| D3: SecurityGate | L679,689,701,743,766,786 | 3 (C1,C2,C3) | 15 tests across 4 endpoints | ✅ Complete |
-| D4: ReorderOverride | L395 | 2 (C1,C2) | 7 tests | ✅ Complete **[NEW]** |
-| D5: SetNotesGuard | L547 | 2 (C1,C2) | 7 tests | ✅ Complete **[NEW]** |
+| Decision | Test File | Conditions | Tests | Status |
+|----------|-----------|------------|-------|--------|
+| D1: RestoreStatus | test_mc_dc.py | 2 (C1,C2) | 4 tests | ✅ Complete |
+| D2: NotesRestore | test_mc_dc.py | 2 (C1,C2) | 3 tests | ✅ Complete |
+| D3: SecurityGate | test_mc_dc.py | 3 (C1,C2,C3) | 16 tests across 4 endpoints | ✅ Complete |
+| D4: ReorderOverride | test_structural.py | 2 (C1,C2) | 7 tests | ✅ Complete |
+| D5: SetNotesGuard | test_structural.py | 2 (C1,C2) | 7 tests | ✅ Complete |
+| D6: CsrfInternalGuard | test_mc_dc.py | 2 (C1,C2) | 4 tests | ✅ Complete |
+| D7: DeleteCleanupGate | test_mc_dc.py | 2 (C1,C2) | 5 tests | ✅ Complete |
+| D_hc1–D_hc11 | test_healthcheck_mc_dc.py | 2–5 each | 48 tests | ✅ Complete |
 
-**Total structural coverage: 5/5 decisions with complete MC/DC proofs (100%).**
+**Total: 18 compound decisions with complete MC/DC proofs (100%) — 73 structural MC/DC tests.**

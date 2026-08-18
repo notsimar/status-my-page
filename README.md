@@ -24,12 +24,12 @@ A dark-themed, mobile-responsive dashboard showing monitored services with color
 
 ## 📋 Prerequisites
 
-| Requirement | Minimum Version | Notes |
-|-------------|-----------------|-------|
-| Python | 3.10+ | Tested on 3.12–3.14 with CPython |
-| pip | Any recent version | Used only for `requirements.txt` (flask, pyyaml) |
-| SQLite | Bundled with Python | Database lives in `instance/status.db` (WAL mode auto) |
-| Optional: gunicorn | 20+ | Production WSGI server (used by `install.sh`) |
+| Requirement        | Minimum Version     | Notes                                                  |
+|--------------------|---------------------|--------------------------------------------------------|
+| Python             | 3.10+               | Tested on 3.12–3.14 with CPython                       |
+| pip                | Any recent version  | Used only for `requirements.txt` (flask, pyyaml)       |
+| SQLite             | Bundled with Python | Database lives in `instance/status.db` (WAL mode auto) |
+| Optional: gunicorn | 20+                 | Production WSGI server (used by `install.sh`)          |
 
 **OS support:** Any Linux distro (Ubuntu, Debian, Fedora, RHEL, Arch, etc.) and macOS. The install script detects `apt`, `dnf`, or `yum` package managers automatically.
 
@@ -334,13 +334,13 @@ healthchecks:
 
 **Healthcheck Types:**
 
-| Type | Required Keys | Optional Keys | Use Case |
-|------|---------------|---------------|----------|
-| `ping` | `host` | `interval`, `timeout`, `retries` | ICMP reachability (routers, hosts) |
-| `tcp` | `host`, `port` | `interval`, `timeout`, `retries` | TCP port connectivity (DB, Redis, SMTP) |
-| `curl` | `url` | `healthy_codes`, `interval`, `timeout`, `retries` | HTTP/HTTPS REST APIs |
-| `soap` | `url` | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services |
-| `rss` | `url` | `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries` | Vendor status pages (RSS/Atom feeds) |
+| Type   | Required Keys | Optional Keys                                                                               | Use Case                                |
+|--------|---------------|---------------------------------------------------------------------------------------------|-----------------------------------------|
+| `ping` | `host`        | `interval`, `timeout`, `retries`                                                            | ICMP reachability (routers, hosts)      |
+| `tcp`  | `host`, `port`| `interval`, `timeout`, `retries`                                                            | TCP port connectivity (DB, Redis, SMTP) |
+| `curl` | `url`         | `healthy_codes`, `interval`, `timeout`, `retries`                                           | HTTP/HTTPS REST APIs                    |
+| `soap` | `url`         | `soap_action`, `body`, `expected_string`, `healthy_codes`, `interval`, `timeout`, `retries` | SOAP/XML web services                   |
+| `rss`  | `url`         | `keywords.red`, `keywords.degraded`, `interval`, `timeout`, `retries`                       | Vendor status pages (RSS/Atom feeds)    |
 
 **Auto-detection:** If `type` is omitted, the parser infers it:
 - `host` + `port` → `tcp`
@@ -366,12 +366,12 @@ with no keywords, only fetch failures change the status.
 
 ### Environment variables
 
-| Variable | Purpose | Required | Example |
-|----------|---------|----------|---------|
-| `STATUS_ADMIN_USER` | Override admin username from config.yaml | No | `john` |
-| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production) | **Yes** | `scrypt$72816$...` |
-| `STATUS_SECRET_KEY` | Flask session signing key (auto-generated if unset) | No | Any random string |
-| `STATUS_NO_ARCHIVE=1` | Skip DB archival on restart (dev/testing only) | No | — |
+| Variable                 | Purpose                                             | Required | Example            |
+|--------------------------|-----------------------------------------------------|----------|--------------------|
+| `STATUS_ADMIN_USER`      | Override admin username from config.yaml            | No       | `john`             |
+| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production)         | **Yes**  | `scrypt$72816$...` |
+| `STATUS_SECRET_KEY`      | Flask session signing key (auto-generated if unset) | No       | Any random string  |
+| `STATUS_NO_ARCHIVE=1`    | Skip DB archival on restart (dev/testing only)      | No       | —                  |
 
 **Generate a hash:**
 
@@ -425,16 +425,21 @@ cp config.yaml.bak1 config.yaml
 
 ### Test Coverage Summary
 
-| Test Suite | Coverage | Description |
-|------------|----------|-------------|
-| `test_input_filter.py` | **100%** | 80+ assertions: XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, and safe-string passthrough |
-| `test_healthcheck.py` | 76% | Healthcheck parsing, endpoints, worker lock, and 20 exception-path tests (timeout, missing binaries, bad curl output) — includes TCP, ping, curl, SOAP |
-| `test_mc_dc.py` | — | **MC/DC formal verification** of 7 compound decisions (admin+CSRF+rate-limit gates, YAML restore filters, CSRF internals, delete cleanup) |
-| `test_structural.py` | — | MC/DC for reorder override (D4) and set_notes YAML persist gate (D5) |
-| `test_history.py` | — | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning |
-| `test_routes_and_features.py` | — | Auth, mutations, security headers, backups, admin credential validation |
-| `test_restart_persistence.py` | — | 2 critical restart-simulation tests (add/delete survival) |
-| `test_healthcheck_mc_dc.py` | — | MC/DC for healthcheck decisions: result gate (D_hc1), URL sanitisation (D_hc2), type auto-detection (D_hc3), TCP validation (D_hc5), SOAP result gate (D_hc7), worker lock |
+| Test Suite                     | Coverage | Description                                                                                                                                        |
+|--------------------------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `test_input_filter.py`         | **100%** | 95 assertions: XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, safe-string passthrough                                      |
+| `test_healthcheck.py`          | 76%      | 91 tests: healthcheck parsing across all 5 types, endpoints, worker lock, exception paths (timeout, missing binaries, bad curl/ping/soap output)   |
+| `test_healthcheck_admin.py`    | —        | 82 tests: admin healthcheck CRUD + per-type validation (curl/ping/tcp/soap/rss), public feed toggle + endpoints                                    |
+| `test_healthcheck_one_shot.py` | —        | One-shot `/api/healthcheck/run` flow for each type, incl. rss + worker restart                                                                     |
+| `test_healthcheck_worker.py`   | —        | Worker thread lifecycle: E2E green→red→green, history rows, single-instance lock, hot restart                                                      |
+| `test_rss_healthcheck.py`      | —        | 20 tests: rss runtime (red/degraded/green map, precedence, Atom, case-folding), edge cases (empty feed, entry cap, >512 KB body), prune regression |
+| `test_rss_feed.py`             | —        | 26 tests: public `/feed.xml` output — well-formedness, escaping, guid/publish dates, enabled/disabled toggle                                       |
+| `test_mc_dc.py`                | —        | **MC/DC formal verification** of app.py decisions D1, D2, D3 (security gate ×4 endpoints), D6 (CSRF internals), D7 (delete cleanup)                |
+| `test_structural.py`           | —        | MC/DC for reorder override (D4) and set_notes YAML persist gate (D5)                                                                               |
+| `test_history.py`              | —        | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning                                                                 |
+| `test_routes_and_features.py`  | —        | Auth, mutations, security headers, backups, admin credential validation                                                                            |
+| `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
+| `test_healthcheck_mc_dc.py`    | —        | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests                |
 
 **Overall coverage: 88%** (app.py 92%, healthcheck.py 76%, input_filter.py 100%)
 
@@ -460,19 +465,19 @@ cp config.yaml.bak1 config.yaml
 
 ### Structural Verification (MC/DC)
 
-This project employs **Modified Condition/Decision Coverage** to prove that critical security guards and restoration filters are logically sound.
+This project employs **Modified Condition/Decision Coverage** to prove that critical security guards, restoration filters, and healthcheck decision logic are logically sound.
 
 - **Coverage Target**: Every condition in compound boolean expressions independently affects the outcome.
-- **Verified Guards**: Admin authentication, CSRF validation, Rate limiting, YAML runtime restoration logic, reorder override, set_notes persistence gate, CSRF internal guard, delete cleanup cascade.
-- **Healthcheck Guards**: Curl result gate (D_hc1), URL sanitisation (D_hc2), Type auto-detection (D_hc3), TCP validation (D_hc5), SOAP result gate (D_hc7), Worker lock
-- **Documentation**: See [README_MCDC.md](./README_MCDC.md) for the full mapping table and proof matrices.
+- **App Decisions (D1–D7)**: `test_mc_dc.py` — status/note restore filters (D1, D2), the 3-layer security guard (D3), CSRF internals (D6), delete cleanup cascade (D7); `test_structural.py` — reorder override (D4), notes YAML-persist gate (D5).
+- **Healthcheck Decisions (D_hc1–D_hc11)**: `test_healthcheck_mc_dc.py` (50 tests) — curl result gate (D_hc1), URL sanitisation (D_hc2), type auto-detection chain (D_hc3), TCP validation (D_hc5), SOAP result gate (D_hc7), plus the rss decision family: response gate (D_hc8), keyword precedence (D_hc9), rss url parse guard (D_hc10), item/entry tag filter (D_hc11).
+- **Documentation**: See [README_MCDC.md](./README_MCDC.md) for the full mapping table, and [docs/testing.md](./docs/testing.md) for the current per-decision counts and proof matrices.
 
 ```bash
 # Run MC/DC structural coverage
 .venv/bin/pytest tests/test_mc_dc.py tests/test_structural.py tests/test_healthcheck_mc_dc.py -v
 ```
 
-The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, YAML restoration filters, `_runtime` key filtering, healthcheck result evaluation, URL sanitisation, worker locking). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
+The structural test suite uses fixture-based HTTP clients to simulate authenticated requests, then probes compound boolean expressions (auth guards, CSRF validation, rate-limiting thresholds, YAML restoration filters, `_runtime` key filtering, healthcheck result evaluation, URL sanitisation, rss feed gates, worker locking). Each assertion maps to a condition in the MC/DC proof matrix documented in [README_MCDC.md](./README_MCDC.md).
 
 ### Quick Health Check (Shell)
 
@@ -517,31 +522,39 @@ status-my-page/
 
 ## 🔒 Security checklist
 
-| Feature | Implementation |
-|---------|---------------|
-| **Authentication** | Flask signed sessions only — no plaintext cookie fallback; `STATUS_ADMIN_PASS_HASH` env var **required** |
-| **CSRF protection** | Per-request secret token (header-only, no query param leakage), rotated on every successful mutation; 3-strike session wipe |
-| **Login rate-limit** | 5 failed attempts per IP → 30-second lockout |
-| **Mutation rate-limit** | 60 mutations per IP per 60-second window |
-| **Password storage** | werkzeug `scrypt` hashing with timing-safe HMAC comparison |
-| **Input sanitization** | Centralized `input_filter.py` layer — blocks XSS, SQLi, path traversal, shell injection, null bytes, and oversized payloads on every mutation route |
-| **Content Security Policy** | `default-src 'self'`; inline CSS via `'unsafe-inline'` on style-src only |
-| **Additional headers** | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, Permissions-Policy |
+| Feature                     | Implementation                                                                                                                                      |
+|-----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Authentication**          | Flask signed sessions only — no plaintext cookie fallback; `STATUS_ADMIN_PASS_HASH` env var **required**                                            |
+| **CSRF protection**         | Per-request secret token (header-only, no query param leakage), rotated on every successful mutation; 3-strike session wipe                         |
+| **Login rate-limit**        | 5 failed attempts per IP → 30-second lockout                                                                                                        |
+| **Mutation rate-limit**     | 60 mutations per IP per 60-second window                                                                                                            |
+| **Password storage**        | werkzeug `scrypt` hashing with timing-safe HMAC comparison                                                                                          |
+| **Input sanitization**      | Centralized `input_filter.py` layer — blocks XSS, SQLi, path traversal, shell injection, null bytes, and oversized payloads on every mutation route |
+| **Content Security Policy** | `default-src 'self'`; inline CSS via `'unsafe-inline'` on style-src only                                                                            |
+| **Additional headers**      | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, Permissions-Policy                                                                   |
 
 ## 💻 API endpoints
 
-| Route | Method | Auth | Action |
-|-------|--------|------|--------|
-| `/` | `GET` | Public | Render full status page |
-| `/api/history/<id>` | `GET` | Public | Return change timeline for a service |
-| `/api/toggle/<id>` | `POST` | 🔒 Admin+CSRF | Cycle: green → degraded → red |
-| `/api/notes/<id>` | `POST` | 🔒 Admin+CSRF | Save/update freeform note text |
-| `/api/add` | `POST` | 🔒 Admin+CSRF | Create new service item |
-| `/api/delete/<id>` | `POST` | 🔒 Admin+CSRF | Remove service + compact positions + prune history |
-| `/api/rename/<id>` | `POST` | 🔒 Admin+CSRF | Update service display name |
-| `/api/reorder` | `POST` | 🔒 Admin+CSRF | Apply drag-drop position map |
-| `/api/csrf-token` | `GET` | 🔒 Admin | Fetch fresh CSRF token |
-| `/login` / `/logout` / `/auth-check` | — | Public | Session management |
+| Route                                | Method   | Auth          | Action                                                       |
+|--------------------------------------|----------|---------------|--------------------------------------------------------------|
+| `/`                                  | `GET`    | Public        | Render full status page                                      |
+| `/api/history/<id>`                  | `GET`    | Public        | Return change timeline for a service                         |
+| `/feed.xml` (alias `/rss`)           | `GET`    | Public        | RSS 2.0 status-change feed                                   |
+| `/api/rss`                           | `GET`    | Public        | Feed availability + metadata for the UI                      |
+| `/api/healthchecks`                  | `GET`    | Public        | List configured healthchecks (read-only view)                |
+| `/api/toggle/<id>`                   | `POST`   | 🔒 Admin+CSRF | Cycle: green → degraded → red                                |
+| `/api/notes/<id>`                    | `POST`   | 🔒 Admin+CSRF | Save/update freeform note text                               |
+| `/api/add`                           | `POST`   | 🔒 Admin+CSRF | Create new service item                                      |
+| `/api/delete/<id>`                   | `POST`   | 🔒 Admin+CSRF | Remove service + compact positions + prune history           |
+| `/api/rename/<id>`                   | `POST`   | 🔒 Admin+CSRF | Update service display name                                  |
+| `/api/reorder`                       | `POST`   | 🔒 Admin+CSRF | Apply drag-drop position map                                 |
+| `/api/healthcheck/run`               | `POST`   | 🔒 Admin+CSRF | One-shot healthcheck run for a service (immediate result)    |
+| `/api/healthchecks`                  | `POST`   | 🔒 Admin+CSRF | Register a healthcheck (curl/ping/tcp/soap/rss)              |
+| `/api/healthchecks/<name>`           | `PUT`    | 🔒 Admin+CSRF | Update a healthcheck (partial body), hot-restarts the worker |
+| `/api/healthchecks/<name>`           | `DELETE` | 🔒 Admin+CSRF | Remove a healthcheck                                         |
+| `/api/rss`                           | `POST`   | 🔒 Admin+CSRF | Toggle the public status feed on/off                         |
+| `/api/csrf-token`                    | `GET`    | 🔒 Admin      | Fetch fresh CSRF token                                       |
+| `/login` / `/logout` / `/auth-check` | —        | Public        | Session management                                           |
 
 ### Quick curl examples
 
@@ -555,8 +568,7 @@ curl -b cookies.json -s -X POST http://localhost:8920/login \
   -d '{"user":"admin","pass":"your-password"}'
 
 # Toggle service #1
-export CSRF_TOKEN=...   # from page or /api/csrf-token
-curl -X POST http://localhost:8920/api/toggle/1 \
+export CSRF_TOKEN=...   # from page or /api/csrf-tokencurl -X POST http://localhost:8920/api/toggle/1 \
   -H "X-CSRF-Token: $CSRF_TOKEN"
 ```
 

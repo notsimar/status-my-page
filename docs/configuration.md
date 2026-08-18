@@ -169,7 +169,7 @@ failures change status.
 healthchecks:
   Google Workspace:
     type: rss
-    url: https://www.google.com/appsstatus/dashboard/
+    url: https://www.google.com/appsstatus/dashboard/en/feed.atom
     keywords:
       red: [outage, major issue]
       degraded: [degraded, minor, investigating]
@@ -177,6 +177,8 @@ healthchecks:
     timeout: 30
     retries: 2
 ```
+
+> Use the vendor's **feed URL**, not the dashboard page URL. A plain HTML page parses as "not well-formed XML" and reads as a fetch failure every poll, not as "all clear".
 
 ---
 
@@ -352,4 +354,4 @@ Before modifying config.yaml structure:
 
 ---
 
-*Document version: 1.1 | Last updated: 2026-08-17 | Author: Simar Sahni*
+*Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*

@@ -298,4 +298,4 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 
 ---
 
-*Document version: 2.1 | Last updated: 2026-08-17 | Author: Simar Sahni*
+*Document version: 2.3 | Last updated: 2026-08-18 | Author: Simar Sahni*

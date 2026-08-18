@@ -60,7 +60,7 @@ sudo ./install.sh /srv/status-dashboard
 1. Installs system packages (`python3`, `python3-venv`, `gunicorn`) via apt/dnf/yum auto-detect
 2. Creates a dedicated `statuspage` system user (no shell, no home directory)
 3. Deploys application files to `<install_path>/status-my-page` (default: `/opt/status-my-page`)
-4. Creates Python virtual environment and installs dependencies (`flask`, `pyyaml`)
+4. Creates Python virtual environment and installs dependencies (`flask`, `pyyaml`), plus `curl` and `iputils-ping` for the healthcheck worker
 5. Seeds the SQLite database from `config.yaml` service names
 6. Prompts for admin credentials interactively (username + password, hashed as scrypt)
 7. Writes credentials to `/etc/status-page/env` with mode `0640` (owner read/write only)
@@ -112,8 +112,10 @@ If you cannot use `install.sh`, here is a complete manual configuration for Ubun
 
 ### Step 1 — Install system dependencies
 ```bash
-sudo apt update && sudo apt install -y python3 python3-venv gunicorn
+sudo apt update && sudo apt install -y python3 python3-venv gunicorn curl iputils-ping
 ```
+
+> `curl` and `ping` are required at runtime for the healthcheck worker (curl/ping/tcp/rss check types use the CLI binaries directly). Without them those healthchecks fail with "command not found" and the item stays degraded/red.
 
 ### Step 2 — Clone and setup the application
 ```bash
@@ -213,9 +215,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;  # Critical for secure cookies!
-
-        # Increase timeout for SSE connections
-        proxy_read_timeout 86400s;
     }
 }
 
@@ -245,7 +244,6 @@ Caddy will automatically obtain and renew Let's Encrypt SSL certificates for `st
 ### Proxy Configuration Notes
 
 - **X-Forwarded-Proto** must be set so Flask knows the request is over HTTPS — this triggers secure cookie behavior
-- SSE endpoint `/events` has an 86400s (24hr) proxy read timeout to keep connections open during idle periods
 - The WSGI app runs behind Gunicorn, not direct Flask development server
 
 ---
@@ -432,12 +430,6 @@ This means Nginx can't connect to Gunicorn. Common causes:
 - Wrong bind address in systemd unit — must be `127.0.0.1:8920` (not `0.0.0.0`)
 - SELinux/AppArmor blocking — temporarily disable to test: `sudo setenforce 0`
 
-### SSE not working (auto-refresh doesn't trigger)
-
-- Check browser developer console for EventSource connection errors
-- Verify `/events` endpoint is reachable: `curl -N http://localhost:8920/events`
-- Ensure the reverse proxy has adequate `proxy_read_timeout` for long-lived connections (default 60s may close SSE prematurely)
-
 ### High memory usage on server restart
 
 On first boot after seeding a large number of services, `_load_runtime()` loads everything into memory. If you have >500 service items, monitor peak RSS with `ps aux --sort=-%mem | head`:
@@ -449,4 +441,4 @@ sudo systemctl start status-page
 
 ---
 
-*Document version: 1.0 | Last updated: 2026-08-13 | Author: Simar Sahni*
+*Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*

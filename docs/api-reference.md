@@ -223,7 +223,7 @@ Where status values: `green` | `yellow` | `red`
 
 ### POST `/api/notes/<item_id>` — Update Notes Text
 
-Saves or updates freeform notes for a specific service. Triggers real-time SSE broadcast to all connected browsers.
+Saves or updates freeform note text for a specific service. The change is recorded in `status_history` and appears in the public `/feed.xml` on the next feed fetch.
 
 **Request Parameters:**
 - `item_id` (path): Integer ID of the service
@@ -407,36 +407,6 @@ Enables/disables the public `/feed.xml` status feed. Persists to `config.yaml` `
 
 ---
 
-## SSE Endpoint (Real-Time Broadcast)
-
-### GET `/events` — Server-Sent Events Stream
-
-Establishes an EventSource connection for receiving real-time reload notifications. All mutation endpoints call `broadcast_reload()` which flushes a `{event: 'reload', data: ''}` message to every subscriber.
-
-**Request:** None
-**Response:** Text/event-stream with continuous SSE frames
-
-```
-event: reload
-
-event: reload
-
-... (sends event on admin mutation, client auto-refreshes UI)
-```
-
-**Client Integration (app.js):**
-```javascript
-const source = new EventSource('/events');
-source.addEventListener('reload', () => {
-  location.reload();  // or fetch fresh data and re-render
-});
-source.onerror = () => source.close();
-```
-
-**Status Codes:** `200 OK` with `text/event-stream` content type | Connection stays open indefinitely until client disconnects
-
----
-
 ## Error Responses
 
 All error responses return JSON:
@@ -447,13 +417,13 @@ All error responses return JSON:
 }
 ```
 
-| Status Code | Meaning | Typical Cause |
-|-------------|---------|---------------|
-| `400 Bad Request` | Malformed incoming request | Missing required field, bad JSON |
-| `401 Unauthorized` | Not authenticated | No valid session cookie |
-| `403 Forbidden` | Authenticated but denied | Wrong CSRF token, insufficient permissions |
-| `429 Too Many Requests` | Rate limit exceeded | More than 5 mutations per IP in 60 seconds |
-| `404 Not Found` | Resource does not exist | Invalid item_id |
+| Status Code             | Meaning                    | Typical Cause                              |
+|-------------------------|----------------------------|--------------------------------------------|
+| `400 Bad Request`       | Malformed incoming request | Missing required field, bad JSON           |
+| `401 Unauthorized`      | Not authenticated          | No valid session cookie                    |
+| `403 Forbidden`         | Authenticated but denied   | Wrong CSRF token, insufficient permissions |
+| `429 Too Many Requests` | Rate limit exceeded        | More than 5 mutations per IP in 60 seconds |
+| `404 Not Found`         | Resource does not exist    | Invalid item_id                            |
 
 ---
 
@@ -487,4 +457,4 @@ curl http://localhost:8920/api/history/1 | python3 -m json.tool
 
 ---
 
-*Document version: 1.0 | Last updated: 2026-08-13 | Author: Simar Sahni*
+*Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*
