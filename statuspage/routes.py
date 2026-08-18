@@ -93,7 +93,124 @@ def api_healthchecks():
     return jsonify(hc)
 
 
-# ── Auth routes ─────────────────────────────────────────────────────
+def generate_static_html() -> str:
+    """Generate standalone static HTML containing the current status page state.
+
+    Inlines CSS and embeds the complete static markup without login or admin elements,
+    suitable for hosting on mass-delivery static web servers, S3/CloudFront, GitHub Pages, etc.
+    """
+    import datetime as dt
+    from pathlib import Path
+    from flask import current_app
+
+    items = get_all_status_items()
+
+    # Determine overall status badge
+    has_red = any(it["status"] == "red" for it in items)
+    has_degraded = any(it["status"] == "degraded" for it in items)
+
+    if has_red:
+        badge_class = "red"
+        badge_text = "System Outage"
+    elif has_degraded:
+        badge_class = "degraded"
+        badge_text = "Degraded Performance"
+    else:
+        badge_class = "green"
+        badge_text = "All Systems Operational"
+
+    css_path = Path(current_app.root_path) / "static" / "css" / "style.css"
+    css_content = ""
+    if css_path.exists():
+        css_content = css_path.read_text(encoding="utf-8")
+
+    generated_time = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    status_rows_html = []
+    for item in items:
+        status = item["status"]
+        status_label = "Operational" if status == "green" else ("Degraded" if status == "degraded" else "Outage")
+        notes = (item["notes"] or "").strip() if "notes" in item.keys() else ""
+        show_notes_class = " show-notes" if status != "green" and notes else ""
+
+        notes_html = f'<div class="static-notes">{notes}</div>' if notes else ''
+
+        row_html = f"""
+        <div class="status-row{show_notes_class}" data-id="{item['id']}">
+            <div class="status-main">
+                <span class="status-dot {status}"></span>
+                <span class="status-name">{item['name']}</span>
+                <span class="status-label {status}">{status_label}</span>
+            </div>
+            {notes_html}
+        </div>"""
+        status_rows_html.append(row_html)
+
+    status_list_html = "\n".join(status_rows_html)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Application Status</title>
+    <style>
+{css_content}
+        /* Standalone static additions */
+        .static-notes {{
+            flex: 1;
+            padding: 0.8rem 1rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            line-height: 1.4;
+            display: flex;
+            align-items: center;
+        }}
+        .status-row.show-notes .static-notes {{
+            display: flex;
+        }}
+        .status-row:not(.show-notes) .static-notes {{
+            display: none;
+        }}
+        .static-footer {{
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Application Status</h1>
+            <div class="overall-badge {badge_class}">{badge_text}</div>
+        </header>
+
+        <div class="status-list">
+{status_list_html}
+        </div>
+
+        <div class="static-footer">
+            Generated: {generated_time}
+        </div>
+    </div>
+</body>
+</html>"""
+    return html
+
+
+@require_admin(require_csrf=False, require_rate_limit=False)
+def api_export_static():
+    """Admin endpoint to download or export the current page as standalone static HTML."""
+    from flask import Response
+    html_content = generate_static_html()
+    as_attachment = request.args.get("download", "true").lower() == "true"
+    resp = Response(html_content, mimetype="text/html; charset=utf-8")
+    if as_attachment:
+        resp.headers["Content-Disposition"] = 'attachment; filename="status.html"'
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 # These are just re-exports
 login = login_route

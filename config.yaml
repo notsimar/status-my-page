@@ -1,13 +1,12 @@
 items:
-  - Slack
-  - Glean
-  - Google workspace
-  - ServiceNow
-  - MS365
-  - Azure
-  - Workday
-  - Atlassian
-
+- Slack
+- Glean
+- Google workspace
+- ServiceNow
+- MS365
+- Azure
+- Workday
+- Atlassian
 _base:
   admin:
     user: admin
@@ -15,39 +14,8 @@ _base:
     host: 0.0.0.0
     port: 8920
     secret_key_env: STATUS_SECRET_KEY
-
-healthchecks:
-  Google workspace:
-    type: rss
-    url: https://www.google.com/appsstatus/dashboard/en/feed.atom
-    keywords:
-      red:
-        - major issue
-        - major outage
-        - ongoing
-      degraded:
-        - partial
-        - minor
-        - investigating
-        - experiencing issues
-    interval: 60
-    timeout: 10
-    retries: 2
-  Glean:
-    type: curl
-    url: https://status.glean.com/
-    healthy_codes:
-      - 200
-    interval: 60
-    timeout: 10
-    retries: 2
-  Slack:
-    type: rss
-    url: https://slack-status.com/feed/rss
-    keywords:
-      red:
-        - incident
-      degraded: []
-    interval: 60
-    timeout: 10
-    retries: 2
+healthchecks: {}
+rss:
+  enabled: false
+  max_items: 50
+  title: Application Status

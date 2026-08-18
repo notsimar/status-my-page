@@ -47,7 +47,10 @@
         </form>
         <div class="admin-bar">
             <span>⚡ Admin mode — click dots to toggle, drag to reorder · auto-logout after 5 min idle</span>
-            <button id="logoutBtn" class="btn-logout">Logout</button>
+            <div class="admin-actions-right">
+                <a href="/api/export/static?download=true" class="btn-export" id="exportStaticBtn" title="Export standalone static HTML page for mass delivery CDN/web servers">📦 Export Static Page</a>
+                <button id="logoutBtn" class="btn-logout">Logout</button>
+            </div>
         </div>
     </div>
 

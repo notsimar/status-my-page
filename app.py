@@ -45,6 +45,7 @@ from statuspage.routes import (
     api_delete,
     api_healthcheck_run,
     api_reorder,
+    api_export_static,
 )
 
 
@@ -405,6 +406,7 @@ app.add_url_rule("/api/add", "api_add", api_add, methods=["POST"])
 app.add_url_rule("/api/delete/<int:item_id>", "api_delete", api_delete, methods=["POST"])
 app.add_url_rule("/api/healthcheck/run", "api_healthcheck_run", api_healthcheck_run, methods=["POST"])
 app.add_url_rule("/api/reorder", "api_reorder", api_reorder, methods=["POST"])
+app.add_url_rule("/api/export/static", "api_export_static", api_export_static, methods=["GET", "POST"])
 
 
 # ── Initialize DB and start healthchecks ───────────────────────────

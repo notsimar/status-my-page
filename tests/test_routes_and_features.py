@@ -336,6 +336,21 @@ class TestItemMutations:
         assert st3 == "green"
 
 
+    def test_export_static_admin_success(self, admin):
+        """Admin can export static page."""
+        r = admin.get("/api/export/static")
+        assert r.status_code == 200
+        assert "Application Status" in r.text
+        assert "<style>" in r.text
+        assert "Operational" in r.text or "Degraded" in r.text or "Outage" in r.text
+        assert "attachment; filename=\"status.html\"" in r.headers.get("Content-Disposition", "")
+
+    def test_export_static_unauthorized(self, client):
+        """Non-admin cannot export static page."""
+        r = client.get("/api/export/static")
+        assert r.status_code == 403
+
+
 class TestSecurityHeadersAndBackups:
     def test_security_headers(self, client):
         """Response includes all required security headers."""

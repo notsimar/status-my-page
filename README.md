@@ -445,7 +445,7 @@ cp config.yaml.bak1 config.yaml
 | `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
 | `test_healthcheck_mc_dc.py` | — | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests |
 
-**Overall coverage: 88%** (435 tests, measured 2026-08-18)
+**Overall coverage: 88%** (437 tests, measured 2026-08-18)
 
 | Module | Coverage |
 |--------|----------|
@@ -573,6 +573,7 @@ status-my-page/
 | `/api/delete/<id>`                   | `POST`   | 🔒 Admin+CSRF | Remove service + compact positions + prune history           |
 | `/api/rename/<id>`                   | `POST`   | 🔒 Admin+CSRF | Update service display name                                  |
 | `/api/reorder`                       | `POST`   | 🔒 Admin+CSRF | Apply drag-drop position map                                 |
+| `/api/export/static`                 | `GET`    | 🔒 Admin      | Export standalone static HTML page for mass delivery CDN/servers |
 | `/api/healthcheck/run`               | `POST`   | 🔒 Admin+CSRF | One-shot healthcheck run for a service (immediate result)    |
 | `/api/healthchecks`                  | `POST`   | 🔒 Admin+CSRF | Register a healthcheck (curl/ping/tcp/soap/rss)              |
 | `/api/healthchecks/<name>`           | `PUT`    | 🔒 Admin+CSRF | Update a healthcheck (partial body), hot-restarts the worker |

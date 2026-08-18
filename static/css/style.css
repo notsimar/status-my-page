@@ -294,6 +294,31 @@ body.admin .btn-delete { display: flex; }
     color: var(--text-muted);
 }
 
+.admin-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-export {
+    background: rgba(91, 141, 239, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(91, 141, 239, 0.3);
+    padding: 0.35rem 0.9rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.btn-export:hover {
+    background: rgba(91, 141, 239, 0.25);
+    border-color: var(--accent);
+}
+
 .btn-logout {
     background: transparent;
     color: var(--red);
