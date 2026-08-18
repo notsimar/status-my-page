@@ -29,59 +29,59 @@
 ┌─────────────────────────────────────────────────────────┐
 │                  Flask Application Server               │
 │                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │              URL Router (Flask, app.py)         │   │
-│  │  GET    /               → render index.html     │   │
-│  │  GET    /feed.xml, rss → public RSS 2.0 feed    │   │
-│  │  GET    /api/rss        → feed availability     │   │
-│  │  GET/POST /api/*   → status CRUD, healthchecks  │   │
-│  └────────────────────────┬────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │              URL Router (Flask, app.py)         │    │
+│  │  GET    /               → render index.html     │    │
+│  │  GET    /feed.xml, rss → public RSS 2.0 feed    │    │
+│  │  GET    /api/rss        → feed availability     │    │
+│  │  GET/POST /api/*   → status CRUD, healthchecks  │    │
+│  └────────────────────────┬────────────────────────┘    │
 │                           │                             │
-│  ┌────────────────────────▼────────────────────────┐   │
-│  │      Request Validation Layer (statuspage/auth) │   │
-│  │  • CSRF token verification (timing-safe)        │   │
-│  │  • Authentication check (_not_admin)            │   │
-│  │  • Rate-limiting (_check_mutation_rate)         │   │
-│  │  • Login lockout (failed-attempt window)        │   │
-│  └────────────────────────┬────────────────────────┘   │
+│  ┌────────────────────────▼────────────────────────┐    │
+│  │      Request Validation Layer (statuspage/auth) │    │
+│  │  • CSRF token verification (timing-safe)        │    │
+│  │  • Authentication check (_not_admin)            │    │
+│  │  • Rate-limiting (_check_mutation_rate)         │    │
+│  │  • Login lockout (failed-attempt window)        │    │
+│  └────────────────────────┬────────────────────────┘    │
 │                           │                             │
-│  ┌────────────────────────▼────────────────────────┐   │
-│  │     Business Logic Layer (statuspage/services)  │   │
-│  │  • toggle_item()       → cycles status          │   │
-│  │  • rename_item()       → updates name           │   │
-│  │  • delete_item()       → removes + compacts     │   │
-│  │  • set_notes()         → writes notes + YAML    │   │
-│  │  • reorder_items()     → applies position map   │   │
-│  │  • record_mutation()   → inserts history row    │   │
-│  └────────────────────────┬────────────────────────┘   │
+│  ┌────────────────────────▼────────────────────────┐    │
+│  │     Business Logic Layer (statuspage/services)  │    │
+│  │  • toggle_item()       → cycles status          │    │
+│  │  • rename_item()       → updates name           │    │
+│  │  • delete_item()       → removes + compacts     │    │
+│  │  • set_notes()         → writes notes + YAML    │    │
+│  │  • reorder_items()     → applies position map   │    │
+│  │  • record_mutation()   → inserts history row    │    │
+│  └────────────────────────┬────────────────────────┘    │
 │                           │                             │
-│  ┌────────────────────────▼────────────────────────┐   │
-│  │        Persistence Layer (statuspage/db)        │   │
-│  │  • SQLite (WAL mode, instance/status.db)        │   │
-│  │  • YAML config.yaml (_runtime section)          │   │
-│  │  • archives/ JSON snapshots                     │   │
-│  └─────────────────────────────────────────────────┘   │
+│  ┌────────────────────────▼────────────────────────┐    │
+│  │        Persistence Layer (statuspage/db)        │    │
+│  │  • SQLite (WAL mode, instance/status.db)        │    │
+│  │  • YAML config.yaml (_runtime section)          │    │
+│  │  • archives/ JSON snapshots                     │    │
+│  └─────────────────────────────────────────────────┘    │
 │                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │   Healthcheck worker thread (healthcheck.py)    │   │
-│  │   daemon, fcntl single-instance lock            │   │
-│  │   curl / ping / tcp / soap / rss dispatch       │   │
-│  │   → writes status + status_history via db.py    │   │
-│  └─────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │   Healthcheck worker thread (healthcheck.py)    │    │
+│  │   daemon, fcntl single-instance lock            │    │
+│  │   curl / ping / tcp / soap / rss dispatch       │    │
+│  │   → writes status + status_history via db.py    │    │
+│  └─────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ### 1.2 Tier Breakdown
 
-| Tier | Component | Responsibility |
-|------|-----------|----------------|
-| **Presentation** | `templates/index.html` + `static/css/style.css` + `static/js/app.js`, `healthchecks.js`, `rss.js` | Client-side rendering, DOM manipulation, event binding, drag-drop reorder, healthcheck admin UI |
-| **Web Server** | Flask app with gunicorn or werkzeug dev server | HTTP routing, session management, response generation |
-| **Validation Gate** | `_not_admin()`, `_check_csrf()`, `_check_mutation_rate()` (in `statuspage/auth.py`) | Security guards applied before any mutation |
-| **Domain Logic** | `toggle_item()`, `set_notes()`, `reorder_items()` etc. (in `statuspage/services.py`) | Core business operations, state transitions |
-| **Background Workers** | `healthcheck.py` worker thread | Polling of healthcheck endpoints (curl/ping/tcp/soap/rss) and automatic status transitions |
-| **Public Feed** | `statuspage/rss.py` (`build_feed_xml`) | RSS 2.0 feed of status-change history for external consumption |
-| **Persistence** | SQLite (WAL), YAML config, JSON archive snapshots | Data storage and backup |
+| Tier                   | Component                                                                                         | Responsibility                                                                                  |
+|------------------------|---------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| **Presentation**       | `templates/index.html` + `static/css/style.css` + `static/js/app.js`, `healthchecks.js`, `rss.js` | Client-side rendering, DOM manipulation, event binding, drag-drop reorder, healthcheck admin UI |
+| **Web Server**         | Flask app with gunicorn or werkzeug dev server                                                    | HTTP routing, session management, response generation                                           |
+| **Validation Gate**    | `_not_admin()`, `_check_csrf()`, `_check_mutation_rate()` (in `statuspage/auth.py`)               | Security guards applied before any mutation                                                     |
+| **Domain Logic**       | `toggle_item()`, `set_notes()`, `reorder_items()` etc. (in `statuspage/services.py`)              | Core business operations, state transitions                                                     |
+| **Background Workers** | `healthcheck.py` worker thread                                                                    | Polling of healthcheck endpoints (curl/ping/tcp/soap/rss) and automatic status transitions      |
+| **Public Feed**        | `statuspage/rss.py` (`build_feed_xml`)                                                            | RSS 2.0 feed of status-change history for external consumption                                  |
+| **Persistence**        | SQLite (WAL), YAML config, JSON archive snapshots                                                 | Data storage and backup                                                                         |
 
 ### 1.3 Design Decisions
 
@@ -190,19 +190,19 @@ if '_runtime' in cfg_data:
 
 ## 3. Technology Stack
 
-| Layer | Technology | Version Constraint | Justification |
-|-------|-----------|-------------------|---------------|
-| Runtime | Python | 3.10+ (tested 3.12–3.14) | stdlib sqlite3, yaml via pyyaml |
-| Web Framework | Flask | Latest from requirements.txt | Lightweight WSGI, built-in sessions |
-| Database | SQLite | Bundled with Python 3 | Zero-config file-based DB, WAL mode |
-| Config Format | YAML (PyYAML) | — | Human-editable, standard for config files |
-| Password Hashing | Werkzeug scrypt | Bundled with Flask | FIPS-compliant cryptographic hash |
-| WSGI Server | Gunicorn | 20+ (production only) | Pre-fork worker model, signal handling |
-| External Checks | curl (CLI) / ping (CLI) | System packages | `--proto`, `--max-filesize`, `--max-redirs` caps; zero Python HTTP deps |
-| Feed Parsing | stdlib `xml.etree.ElementTree` | Python stdlib | Namespace-agnostic local-name scan; tolerant of RSS 2.0 + Atom |
-| Feed Output | stdlib `xml.sax.saxutils` escape | Python stdlib | Well-formed RSS 2.0 without a template |
-| Frontend | Vanilla JS | ES6+ | Zero dependencies, fast load times |
-| Styling | CSS3 | Modern browsers | CSS custom properties, flexbox, media queries |
+| Layer            | Technology                       | Version Constraint           | Justification                                                           |
+|------------------|----------------------------------|------------------------------|-------------------------------------------------------------------------|
+| Runtime          | Python                           | 3.10+ (tested 3.12–3.14)     | stdlib sqlite3, yaml via pyyaml                                         |
+| Web Framework    | Flask                            | Latest from requirements.txt | Lightweight WSGI, built-in sessions                                     |
+| Database         | SQLite                           | Bundled with Python 3        | Zero-config file-based DB, WAL mode                                     |
+| Config Format    | YAML (PyYAML)                    | —                            | Human-editable, standard for config files                               |
+| Password Hashing | Werkzeug scrypt                  | Bundled with Flask           | FIPS-compliant cryptographic hash                                       |
+| WSGI Server      | Gunicorn                         | 20+ (production only)        | Pre-fork worker model, signal handling                                  |
+| External Checks  | curl (CLI) / ping (CLI)          | System packages              | `--proto`, `--max-filesize`, `--max-redirs` caps; zero Python HTTP deps |
+| Feed Parsing     | stdlib `xml.etree.ElementTree`   | Python stdlib                | Namespace-agnostic local-name scan; tolerant of RSS 2.0 + Atom          |
+| Feed Output      | stdlib `xml.sax.saxutils` escape | Python stdlib                | Well-formed RSS 2.0 without a template                                  |
+| Frontend         | Vanilla JS                       | ES6+                         | Zero dependencies, fast load times                                      |
+| Styling          | CSS3                             | Modern browsers              | CSS custom properties, flexbox, media queries                           |
 
 ### Runtime Dependency Graph
 
@@ -270,7 +270,7 @@ Incoming POST/PUT/DELETE /api/*
          │ True
   ┌──────▼──────────┐   Mismatch ┌───────────────┐
   │ _check_csrf()   ├───────────>│ 403 Forbidden │ (+ strike++)
-  └──────┬─────────┘            └───────────────┘
+  └──────┬──────────┘            └───────────────┘
          │ Match
   ┌──────▼──────────────────────┐ True (rate exceeded)  ┌─────────────┐
   │ _check_mutation_rate(ip)    ├──────────────────────>│ 429 Too Many│
@@ -333,20 +333,21 @@ worker loop (one thread, fcntl-locked to a single instance)
 
 ### 6.1 Threat Model
 
-| Attack Vector | Mitigation | Location in Code |
-|--------------|-----------|------------------|
-| Brute-force credential guessing | `LOCKOUT_SECONDS × 2` lockout (60s) after 5 failed attempts per IP; random wait added for timing | `auth.py` (lockout helpers) + login route |
-| Session hijacking | Signed session cookies with `secure`, `httponly`, `samesite` flags; auto-rotated CSRF token; 5-min idle expiry | `auth.py`, `app.py` session-cookie config |
-| Session fixation | Session regenerated on login | `auth.py` `login` route |
-| Cross-Site Request Forgery (CSRF) | Per-request secret token in hidden form field + header; 3-strike policy wipes entire session on mismatch | `auth.py` `_check_csrf()`; token injected via `<meta>` tag for CSP compliance |
-| Query-string CSRF bypass | Token read from `form` or `request.body`, NOT from `request.args` | all mutation routes |
-| XSS | Zero `innerHTML` of user data; all sensitive content via `textContent`; DOM built with `createElement()` | `static/js/*.js` |
-| SQL Injection | Parameterized queries (`?` placeholders); no string interpolation into SQL | `statuspage/db.py`, `services.py` |
-| Plaintext password disclosure | Only scrypt hashes in `.env` / config; never logged or returned | `auth.py`, `config.py` `_base` filtering |
-| Configuration exposure | `_base.admin` (hash + secret) filtered from `_runtime.config.data`; `.env` is 0600 | `config.py` `_load_runtime()` |
-| SSRF via healthcheck URLs | `_safe_url` (http/https only, no userinfo, host allowlist of TLDs) + curl `--proto` pinned to http/https; `_safe_host` for ping/tcp | `config.py` validation, `healthcheck.py` dispatch |
-| Feed injection | Feed output escaped via `xml.sax.saxutils.escape`; feed is read-only (no admin token in it) | `statuspage/rss.py` |
-| Healthcheck DoS | per-check timeout + worker-thread cap + curl `--max-time`; feed body cap 512 KB | `healthcheck.py`, `constants.py` |
+| Attack Vector                     | Mitigation                                                                                                                          | Location in Codea                                   |
+|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------|
+| Brute-force credential guessing   | `LOCKOUT_SECONDS × 2` lockout (60s) after 5 failed attempts per IP; random wait added for timing                                    | `auth.py` (lockout helpers) + login route           |
+| Session hijacking                 | Signed session cookies with `secure`, `httponly`, `samesite` flags; auto-rotated CSRF token; 5-min idle expiry                      | `auth.py`, `app.py` session-cookie config           |
+| Session fixation                  | Session regenerated on login                                                                                                        | `auth.py` `login` route                             |
+| Cross-Site Request Forgery (CSRF) | Per-request secret token in hidden form field + header; 3-strike policy wipes entire session on mismatch                            | `auth.py` `_check_csrf()`;                          |
+|                                   |                                                                                                                                     |  token injected via `<meta>` tag for CSP compliance |
+| Query-string CSRF bypass          | Token read from `form` or `request.body`, NOT from `request.args`                                                                   | all mutation routes                                 |
+| XSS                               | Zero `innerHTML` of user data; all sensitive content via `textContent`; DOM built with `createElement()`                            | `static/js/*.js`                                    |
+| SQL Injection                     | Parameterized queries (`?` placeholders); no string interpolation into SQL                                                          | `statuspage/db.py`, `services.py`                   |
+| Plaintext password disclosure     | Only scrypt hashes in `.env` / config; never logged or returned                                                                     | `auth.py`, `config.py` `_base` filtering            |
+| Configuration exposure            | `_base.admin` (hash + secret) filtered from `_runtime.config.data`; `.env` is 0600                                                  | `config.py` `_load_runtime()`                       |
+| SSRF via healthcheck URLs         | `_safe_url` (http/https only, no userinfo, host allowlist of TLDs) + curl `--proto` pinned to http/https; `_safe_host` for ping/tcp | `config.py` validation, `healthcheck.py` dispatch   |
+| Feed injection                    | Feed output escaped via `xml.sax.saxutils.escape`; feed is read-only (no admin token in it)                                         | `statuspage/rss.py`                                 |
+| Healthcheck DoS                   | per-check timeout + worker-thread cap + curl `--max-time`; feed body cap 512 KB                                                     | `healthcheck.py`, `constants.py`                    |
 
 ### 6.2 Defense-in-Depth Layers
 
