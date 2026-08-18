@@ -235,12 +235,14 @@ class TestHealthcheckCreate:
         name = _name("HC Curl FK")
         r = _mutate(admin, "POST", "/api/healthchecks", {
             "name": name, "type": "curl", "url": "http://localhost/health",
+            "service": "CustomServiceName",
             "failure_keyword": "Error",
             "degraded_keyword": "Slow",
         })
         assert r.status_code == 200
         disk = _read_hc_yaml()[name]
         assert disk["type"] == "curl"
+        assert disk["service"] == "CustomServiceName"
         assert disk["failure_keyword"] == "Error"
         assert disk["degraded_keyword"] == "Slow"
 

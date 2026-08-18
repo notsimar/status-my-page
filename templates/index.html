@@ -129,8 +129,14 @@
                 <input type="hidden" id="healthcheckOriginalName" value="">
                 
                 <div class="form-row">
-                    <label for="hcName">Name <span class="required">*</span></label>
-                    <input type="text" id="hcName" placeholder="e.g., API Gateway" required maxlength="128">
+                    <label for="hcName">Check Name <span class="required">*</span></label>
+                    <input type="text" id="hcName" placeholder="e.g., Primary Gateway Ping" required maxlength="128">
+                </div>
+
+                <div class="form-row">
+                    <label for="hcService">Target Service <span class="help-text">(optional link)</span></label>
+                    <input type="text" id="hcService" placeholder="e.g., Primary Internet (defaults to Check Name if blank)" maxlength="128">
+                    <small class="help-text">The status dashboard service to update when this healthcheck fails/recovers.</small>
                 </div>
                 
                 <div class="form-row">

@@ -57,6 +57,7 @@ const healthcheckModalTitle = document.getElementById('healthcheckModalTitle');
 const hcMode = document.getElementById('healthcheckMode');
 const hcOriginalName = document.getElementById('healthcheckOriginalName');
 const hcName = document.getElementById('hcName');
+const hcService = document.getElementById('hcService');
 const hcType = document.getElementById('hcType');
 const hcUrl = document.getElementById('hcUrl');
 const hcHealthyCodes = document.getElementById('hcHealthyCodes');
@@ -159,6 +160,7 @@ function openModal(mode, data = null) {
         document.getElementById('submitHealthcheck').textContent = 'Update';
 
         hcName.value = data.name;
+        hcService.value = data.service || '';
         hcType.value = data.type || '';
 
         if (data.type === 'curl' || data.type === 'soap' || data.type === 'rss') {
@@ -199,10 +201,12 @@ function closeModal() {
 
 function collectFormData() {
     const type = hcType.value;
+    const service = hcService.value.trim();
     const data = {
         name: hcName.value.trim(),
         type: type,
     };
+    if (service) data.service = service;
 
     if (type === 'curl' || type === 'soap' || type === 'rss') {
         data.url = hcUrl.value.trim();
@@ -287,9 +291,10 @@ function renderHealthchecks(checks) {
 
         // Type badge
         const typeBadge = `<span class="type-badge type-${hc.type}">${hc.type.toUpperCase()}</span>`;
+        const linkedService = hc.service && hc.service !== name ? `<div class="hc-service-link">🔗 ${escapeHtml(hc.service)}</div>` : '';
 
         row.innerHTML = `
-            <td class="hc-name">${escapeHtml(name)}</td>
+            <td class="hc-name">${escapeHtml(name)}${linkedService}</td>
             <td>${typeBadge}</td>
             <td class="hc-target">${escapeHtml(target)}</td>
             <td>${hc.interval || 60}s</td>

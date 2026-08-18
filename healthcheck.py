@@ -149,6 +149,8 @@ def _parse_healthchecks() -> dict[str, dict]:
         expected_string = details.get("expected_string", details.get("expected", ""))
         failure_keyword = details.get("failure_keyword", details.get("failure_string", details.get("fail_keyword", "")))
         degraded_keyword = details.get("degraded_keyword", details.get("degraded_string", details.get("deg_keyword", "")))
+        target_service = details.get("service", details.get("service_name", details.get("item", details.get("item_name", ""))))
+        target_service = str(target_service).strip() if target_service else ""
 
         # Auto-detect check_type if not explicitly set
         if not check_type:
@@ -188,6 +190,7 @@ def _parse_healthchecks() -> dict[str, dict]:
             healthchecks[name.strip()] = {
                 "type": "ping",
                 "host": target_host,
+                "service": target_service or name.strip(),
                 "interval": max(interval, 1),
                 "timeout": max(timeout_val, 1),
                 "retries": max(retries, 1),
@@ -206,6 +209,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                 "type": "tcp",
                 "host": target_host,
                 "port": int(target_port),
+                "service": target_service or name.strip(),
                 "interval": max(interval, 1),
                 "timeout": max(timeout_val, 1),
                 "retries": max(retries, 1),
@@ -241,6 +245,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                 "type": "rss",
                 "url": url.strip(),
                 "keywords": keywords,
+                "service": target_service or name.strip(),
                 "interval": max(interval, 1),
                 "timeout": max(timeout_val, 1),
                 "retries": max(retries, 1),
@@ -270,6 +275,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                     "expected_string": str(expected_string).strip() if expected_string else "",
                     "failure_keyword": str(failure_keyword).strip() if failure_keyword else "",
                     "degraded_keyword": str(degraded_keyword).strip() if degraded_keyword else "",
+                    "service": target_service or name.strip(),
                     "interval": max(interval, 1),
                     "timeout": max(timeout_val, 1),
                     "retries": max(retries, 1),
@@ -281,6 +287,7 @@ def _parse_healthchecks() -> dict[str, dict]:
                     "url": url.strip(),
                     "failure_keyword": str(failure_keyword).strip() if failure_keyword else "",
                     "degraded_keyword": str(degraded_keyword).strip() if degraded_keyword else "",
+                    "service": target_service or name.strip(),
                     "interval": max(interval, 1),
                     "timeout": max(timeout_val, 1),
                     "retries": max(retries, 1),
@@ -628,6 +635,8 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
                 if not hc:
                     continue
 
+                svc_name = hc.get("service") or name
+
                 if hc.get("type") == "rss":
                     rss_result, code = _run_rss_feed_check(
                         url=hc["url"], timeout=hc["timeout"],
@@ -640,9 +649,9 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
                         # is reserved for un-fetchable feeds (None).
                         current = fail_count.get(name, 0)
                         if current > 0:
-                            print(f"Healthcheck OK [{name}] {check_info} (recovered)")
+                            print(f"Healthcheck OK [{name} -> {svc_name}] {check_info} (recovered)")
                         fail_count[name] = 0
-                        _set_health_status(name, rss_result)
+                        _set_health_status(svc_name, rss_result)
                         next_fire[name] = time.time() + hc["interval"]
                         continue
                     is_healthy = (rss_result == "green")
@@ -670,16 +679,16 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
                     is_healthy = (code is not None and code in hc.get("healthy_codes", {200}) and body_ok)
                     check_info = f"code={code}"
                     if not is_healthy and res_status == "degraded":
-                        _set_health_status(name, "degraded")
+                        _set_health_status(svc_name, "degraded")
                         next_fire[name] = time.time() + hc["interval"]
                         continue
 
                 if is_healthy:
                     # Healthy — reset fail counter
                     if fail_count.get(name, 0) > 0:
-                        print(f"Healthcheck OK [{name}] {check_info} (recovered)")
+                        print(f"Healthcheck OK [{name} -> {svc_name}] {check_info} (recovered)")
                     fail_count[name] = 0
-                    _set_health_status(name, "green")
+                    _set_health_status(svc_name, "green")
 
                 else:
                     # Unhealthy — increment counter
@@ -689,8 +698,8 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
 
                     if attempts >= threshold:
                         status = "red" if attempts >= threshold * 3 else "degraded"
-                        _set_health_status(name, status)
-                        print(f"Healthcheck FAIL [{name}] attempt={attempts}/{threshold} "
+                        _set_health_status(svc_name, status)
+                        print(f"Healthcheck FAIL [{name} -> {svc_name}] attempt={attempts}/{threshold} "
                               f"{check_info} -> {status}")
 
                 # Schedule next check for this service on its own interval

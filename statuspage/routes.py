@@ -382,6 +382,11 @@ def api_healthchecks_create():
         if keywords is not None:
             hc_config["keywords"] = keywords
 
+    # Optional target service linking (defaults to check name if omitted)
+    service = str(data.get("service", "")).strip()
+    if service:
+        hc_config["service"] = service
+
     numeric, err = _validate_numeric_fields(data)
     if err:
         return jsonify(error=err), 400
@@ -439,6 +444,14 @@ def api_healthchecks_update(name: str):
             if err:
                 return jsonify(error=err), 400
             hc_config["url"] = url
+
+        service = data.get("service")
+        if service is not None:
+            service = str(service).strip()
+            if service:
+                hc_config["service"] = service
+            elif "service" in hc_config:
+                del hc_config["service"]
 
         for key in ("failure_keyword", "degraded_keyword"):
             val = data.get(key)
