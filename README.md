@@ -9,9 +9,9 @@
 - **Status History**: Every toggle and notes update is timestamped — open the 🕙 history panel per service to see the full change timeline
 - **Dark Theme UI**: Responsive layout (≤640px & ≤425px breakpoints), mobile-first CSS with proper touch targets
 - **Admin Controls**: Session-based auth, drag-and-drop reorder, inline rename, add/delete items, auto-saving notes
-- **Config-Driven**: `config.yaml` controls everything — service names, credentials, server settings
-- **Auto-Archival**: Pre-reset DB snapshots (JSON into `archives/`) saved on every restart so state survives seeding
-- **YAML Backup Rotation**: Last 5 versions of `config.yaml` preserved automatically before each runtime save
+- **Config-Driven**: `config.yaml` provides read-only provisioning input for services, credentials, and initial healthcheck definitions
+- **Database Persistence**: SQLite (`instance/status.db`) is the single source of truth for all service items, statuses, notes, positions, and mutation history
+- **Auto-Archival & Backups**: Pre-reset JSON snapshots (`archives/`) on restart, and atomic backup rotation (`.bak1`–`.bak5`) for `config.yaml` healthcheck edits
 - **Input Sanitization**: Every user-supplied field is validated through a dedicated filter layer — blocks XSS payloads, SQL injection patterns, path traversal, shell metacharacters, and fuzzing attacks
 
 ## 📸 Preview
@@ -408,6 +408,9 @@ cp config.yaml.bak1 config.yaml
 | `rebuild.sh` | Full dep install + DB migrations + restart | `./rebuild.sh` |
 | `install.sh` | Production deploy wizard (systemd, user, gunicorn) | `sudo ./install.sh[/path]` |
 | `cleanup.sh` | Archive manager for `archives/` JSON snapshots | See commands below |
+| `scripts/backup.sh` | Database backup, restore, list, and pruning CLI wrapper | `./scripts/backup.sh -l` |
+| `scripts/backup_db.py` | Python script for consistent SQLite backup API snapshots | `python3 scripts/backup_db.py` |
+| `scripts/export_db.py` | Database export utility | `python3 scripts/export_db.py` |
 
 ### `cleanup.sh` commands
 
@@ -442,7 +445,7 @@ cp config.yaml.bak1 config.yaml
 | `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
 | `test_healthcheck_mc_dc.py` | — | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests |
 
-**Overall coverage: 88%** (451 tests, measured 2026-08-18)
+**Overall coverage: 88%** (430 tests, measured 2026-08-18)
 
 | Module | Coverage |
 |--------|----------|
@@ -509,26 +512,34 @@ This shell script validates: page load, static assets, auth-check, login, mutati
 
 ```
 status-my-page/
-├── config.yaml              # Service names, admin creds, server cfg, runtime overrides
+├── config.yaml              # Read-only service definitions, admin creds, server cfg
 ├── input_filter.py          # Centralized input validation (XSS, SQLi, fuzzing sanitization)
-├── app.py                   # Flask routes + SQLite DB logic (history, archival, auth)
+├── app.py                   # Flask composition root & bootstrap
+├── statuspage/              # Application package (db, services, routes, auth, healthcheck, rss)
+├── scripts/
+│   ├── backup.sh            # Backup/restore CLI wrapper
+│   ├── backup_db.py         # Consistent SQLite snapshot & restore tool
+│   └── export_db.py         # DB export script
 ├── cleanup.sh               # Archive manager: list / show / prune / report
-├── requirements.txt         # flask, pyyaml only!
+├── requirements.txt         # flask, pyyaml
 ├── static/
 │   ├── css/style.css        # Dark theme, 3 breakpoints (≤640px, ≤425px)
-│   └── js/app.js            # Vanilla JS: toggle, drag-drop, notes, history modal
+│   └── js/                  # Vanilla JS: app.js, healthchecks.js, rss.js
 ├── templates/index.html     # Jinja2-rendered UI with login & history modals
 ├── start.sh / stop.sh / restart.sh / rebuild.sh / install.sh
 ├── tests/
 │   ├── conftest.py              # Shared fixtures (temp DB, admin auth, CSRF)
 │   ├── test_input_filter.py     # 80+ assertions: XSS, SQLi, fuzzing, sanitization
-│   ├── test_structural.py       # Per-route mutation logic & YAML persistence (MC/DC D4, D5)
+│   ├── test_structural.py       # Reorder & notes DB mutations
 │   ├── test_history.py          # Automated API/DB history test suite (13 scenarios)
-│   ├── test_mc_dc.py            # MC/DC structural coverage for 7 critical guards
+│   ├── test_mc_dc.py            # MC/DC structural coverage
 │   ├── test_healthcheck.py      # Healthcheck functional + 17 exception-path tests
-│   ├── test_healthcheck_mc_dc.py # Healthcheck MC/DC (D_hc1, D_hc2) + worker lock
+│   ├── test_healthcheck_admin.py # Healthcheck Admin CRUD & validation
+│   ├── test_healthcheck_mc_dc.py # Healthcheck MC/DC + worker lock
 │   ├── test_routes_and_features.py # Auth, mutations, headers, backups
 │   ├── test_restart_persistence.py # Restart simulation tests
+│   ├── test_rss_feed.py         # RSS 2.0 public feed tests
+│   ├── test_rss_healthcheck.py  # RSS healthcheck tests
 │   └── test_health.sh           # Quick health-check script for CI/CD
 ├── License.md               # MIT © 2026 Simar Sahni
 └── .venv/                   # (excluded from git/deploy)
