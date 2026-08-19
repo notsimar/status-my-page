@@ -20,10 +20,11 @@
 </head>
 <body class="{% if session_admin %}admin{% endif %}">
     <div class="container">
+        <div class="top-bar">
+            <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
+            {% if not session_admin %}<button id="loginBtn" class="login-btn" type="button">Admin Login</button>{% endif %}
+        </div>
         <header>
-            <div class="theme-actions">
-                <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
-            </div>
             <h1>Application Status</h1>
             <div class="overall-badge" id="overallBadge"></div>
         </header>
@@ -102,8 +103,6 @@
             <code id="rssAdminUrl" class="rss-url">/feed.xml</code>
         </div>
     </div>
-    {% else %}
-    <button id="loginBtn" class="login-btn">Admin Login</button>
     {% endif %}
     </div>
 
