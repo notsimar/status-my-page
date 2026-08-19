@@ -6,8 +6,8 @@
 
 - **3-State Status System**: Click services to cycle 🟢 Operational → 🟡 Degraded → 🔴 Outage
 - **Smart Notes**: Auto-show hidden notes only for degraded/outage states, auto-hide on green  
-- **Status History**: Every toggle and notes update is timestamped — open the 🕙 history panel per service to see the full change timeline
-- **Dark Theme UI**: Responsive layout (≤640px & ≤425px breakpoints), mobile-first CSS with proper touch targets
+- **Status History**: Every toggle and notes update is timestamped — enable the 🕙 history panel (admin → Page Settings) to see the full change timeline per service
+- **Dark/Light Theme UI**: User-selectable theme (per-browser, no first-paint flash), responsive layout (≤640px & ≤425px breakpoints), mobile-first CSS with proper touch targets
 - **Admin Controls**: Session-based auth, drag-and-drop reorder, inline rename, add/delete items, auto-saving notes, static page export
 - **Healthchecks**: Background probing via HTTP/HTTPS (`curl`), TCP, ICMP (`ping`), SOAP, and vendor RSS/Atom status feeds with custom failure/degraded keywords and service linking
 - **Static Page Export**: One-click standalone HTML export with inlined CSS for CDN/mass-delivery hosting
@@ -259,8 +259,9 @@ status.example.com {
 
 Every mutation (status toggle, notes update) is recorded in a `status_history` SQLite table.
 
+- **Off by default** — enable it from the admin UI (Page Settings → 🕙 History button) or via `settings: {history_enabled: true}` in `config.yaml`
 - **View**: Click the 🕙 clock icon on any service row → modal shows newest-first timeline
-- **API**: `GET /api/history/<item_id>` — public read, no auth required
+- **API**: `GET /api/history/<item_id>` — public read, no auth required (returns 404 while disabled)
 - **Format**: Entries include `event_type`, `old_value`, `new_value`, `occurred` (ISO-8601 UTC)
 
 ## 🔧 Configuration
@@ -568,7 +569,7 @@ status-my-page/
 | Route                                | Method   | Auth          | Action                                                       |
 |--------------------------------------|----------|---------------|--------------------------------------------------------------|
 | `/`                                  | `GET`    | Public        | Render full status page                                      |
-| `/api/history/<id>`                  | `GET`    | Public        | Return change timeline for a service                         |
+| `/api/history/<id>`                  | `GET`    | Public        | Return change timeline for a service (404 while history disabled) |
 | `/feed.xml` (alias `/rss`)           | `GET`    | Public        | RSS 2.0 status-change feed                                   |
 | `/api/rss`                           | `GET`    | Public        | Feed availability + metadata for the UI                      |
 | `/api/healthchecks`                  | `GET`    | Public        | List configured healthchecks (read-only view)                |

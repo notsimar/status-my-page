@@ -891,6 +891,11 @@ body.admin .btn-delete { display: flex; }
     color: var(--text-muted);
     min-width: 4.5rem;
 }
+.rss-admin-label {
+    font-size: 0.85rem;
+    color: var(--text);
+    flex: 1;
+}
 
 /* Toggle switch */
 .switch {

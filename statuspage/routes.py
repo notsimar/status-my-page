@@ -28,7 +28,10 @@ from statuspage.services import (
     delete_item,
     get_item_history,
 )
-from statuspage.config import _load_healthchecks, _save_healthchecks, _load_rss, _save_rss
+from statuspage.config import (
+    _load_healthchecks, _save_healthchecks, _load_rss, _save_rss,
+    _load_settings, _save_settings, history_enabled,
+)
 from statuspage import rss as rss_mod
 from input_filter import InputRejected, validate_json_data, validate_name, validate_notes, validate_int_param
 
@@ -40,7 +43,8 @@ def status_page():
     is_admin = session.get("admin", False)
     csrf = get_csrf() if is_admin else ""
     return render_template(
-        "index.html", items=items, session_admin=is_admin, csrf_token=csrf
+        "index.html", items=items, session_admin=is_admin, csrf_token=csrf,
+        history_enabled=history_enabled()
     )
 
 
@@ -79,7 +83,14 @@ def api_rss_status():
 
 
 def api_history(item_id: int):
-    """Return history for a service. Public read — anyone can see status timeline."""
+    """Return history for a service. Public read — anyone can see status timeline.
+
+    Respect the admin-configurable history_enabled setting; when disabled
+    the endpoint 404s so the timeline is unreachable, not just hidden.
+    """
+    if not history_enabled():
+        from flask import abort
+        abort(404)
     result = get_item_history(item_id)
     if result is None:
         from flask import abort
@@ -746,3 +757,35 @@ def api_rss_toggle():
 
     return jsonify(ok=True, enabled=enabled,
                    url=request.host_url.rstrip("/") + "/feed.xml")
+
+
+def api_settings_status():
+    """Public: current UI settings so the template/JS render the right state.
+
+    ``history_enabled`` controls the per-service history timeline (public
+    read visibility + API reachability).
+    """
+    return jsonify({
+        "history_enabled": history_enabled(),
+    })
+
+
+@require_admin()
+def api_settings_update():
+    """Update UI settings. Admin only.
+
+    ``POST /api/settings`` with JSON ``{"history_enabled": bool}``.
+    Persists to config.yaml ``settings: {history_enabled: ...}``.
+    """
+    data = validate_json_data(request.get_json(silent=True))
+    if "history_enabled" not in data:
+        return jsonify(error="history_enabled is required"), 400
+    enabled = data.get("history_enabled")
+    if not isinstance(enabled, bool):
+        return jsonify(error="history_enabled must be a boolean"), 400
+
+    settings = _load_settings()
+    settings["history_enabled"] = enabled
+    _save_settings(settings)
+
+    return jsonify(ok=True, history_enabled=enabled)

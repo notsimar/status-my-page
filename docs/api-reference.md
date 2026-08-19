@@ -45,6 +45,8 @@ Returns a fresh per-request CSRF token. Required for all mutation endpoints afte
 
 Returns the complete mutation history for a specific service, ordered newest-first.
 
+**Note:** Requires the history feature to be enabled (admin UI → Page Settings → 🕙 History button, or `settings.history_enabled: true` in `config.yaml`). Returns `404` while disabled.
+
 **Request Parameters:**
 - `item_id` (path): Integer ID of the service item
 
@@ -462,9 +464,43 @@ curl -b cookies.txt -s -X POST http://localhost:8920/api/toggle/1 \
 
 ### Check History
 ```bash
+# Returns 404 while history is disabled (default)
 curl http://localhost:8920/api/history/1 | python3 -m json.tool
 ```
 
 ---
 
-*Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*
+## Page Settings
+
+### GET `/api/settings` — Read Page Settings
+
+Public read of the current page-level settings.
+
+**Response Body:**
+```json
+{
+  "history_enabled": false
+}
+```
+
+### POST `/api/settings` — Update Page Settings
+
+🔒 Admin + CSRF. Update a page-level setting. Persists to `config.yaml` `settings:`.
+
+**Request Body:**
+```json
+{
+  "history_enabled": true
+}
+```
+
+**Response Body:**
+```json
+{ "ok": true, "history_enabled": true }
+```
+
+**Status Codes:** `200 OK` | `400 Bad Request` (`history_enabled` missing or not a boolean)
+
+---
+
+*Document version: 1.3 | Last updated: 2026-08-18 | Author: Simar Sahni*

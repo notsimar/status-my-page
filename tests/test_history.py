@@ -46,6 +46,20 @@ if str(BASE_DIR) not in sys.path:
 
 # ── Pytest Test Suite ────────────────────────────────────────────────
 
+@pytest.fixture(scope="module", autouse=True)
+def _history_on(A):
+    """This suite exercises the history feature — enable it first.
+
+    History is OFF by default for the public page; the suite turns it on
+    via the same admin-side persistence path (config.yaml settings
+    section) that the admin UI uses, and restores the default afterwards
+    so later test modules see pristine state.
+    """
+    A.config._save_settings({**A.config._load_settings(), "history_enabled": True})
+    yield
+    A.config._save_settings({**A.config._load_settings(), "history_enabled": False})
+
+
 class TestStatusHistory:
     def test_t0_server_reachable(self, client):
         """T0: Server responds with HTTP 200."""

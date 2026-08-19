@@ -29,6 +29,8 @@ from statuspage.routes import (
     feed_xml,
     api_rss_status,
     api_rss_toggle,
+    api_settings_status,
+    api_settings_update,
     api_history,
     api_healthchecks,
     api_healthchecks_create,
@@ -386,6 +388,8 @@ app.add_url_rule("/feed.xml", "feed_xml", feed_xml)
 app.add_url_rule("/rss", "feed_xml_alias", feed_xml, methods=["GET"])
 app.add_url_rule("/api/rss", "api_rss_status", api_rss_status, methods=["GET"])
 app.add_url_rule("/api/rss", "api_rss_toggle", api_rss_toggle, methods=["POST"])
+app.add_url_rule("/api/settings", "api_settings_status", api_settings_status, methods=["GET"])
+app.add_url_rule("/api/settings", "api_settings_update", api_settings_update, methods=["POST"])
 app.add_url_rule("/api/history/<int:item_id>", "api_history", api_history)
 app.add_url_rule("/api/healthchecks", "api_healthchecks", api_healthchecks)
 app.add_url_rule("/api/healthchecks", "api_healthchecks_create", api_healthchecks_create, methods=["POST"])

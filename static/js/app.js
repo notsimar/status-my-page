@@ -452,3 +452,49 @@ themeToggle && themeToggle.addEventListener('click', () => {
 });
 // Sync button label with the theme already applied by the inline boot script
 syncThemeUI();
+
+// ── Settings: history button on/off (admin only) ──────────────────
+const historyEnabled = document.getElementById('historyEnabled');
+const historyState = document.getElementById('historyState');
+
+historyEnabled && historyEnabled.addEventListener('change', async () => {
+    if (!document.body.classList.contains('admin')) return;
+    const target = historyEnabled.checked;
+    if (historyState) historyState.textContent = 'Saving…';
+    historyEnabled.disabled = true;
+    try {
+        const res = await csrfFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ history_enabled: target })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'unknown');
+        // Apply locally: swap rows' history buttons, no full reload needed.
+        list && list.querySelectorAll('.status-row').forEach(row => {
+            const id = row.dataset.id;
+            const existing = row.querySelector('.btn-history');
+            if (target) {
+                if (!existing) {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-history';
+                    btn.title = 'View history';
+                    btn.dataset.id = id;
+                    btn.textContent = '🕙';
+                    const del = row.querySelector('.btn-delete');
+                    del ? row.insertBefore(btn, del) : row.appendChild(btn);
+                }
+            } else if (existing) {
+                existing.remove();
+            }
+        });
+        // Also hide the history modal if it's open against a removed button.
+        closeHistoryModal();
+        if (historyState) historyState.textContent = target ? 'Enabled' : 'Disabled';
+    } catch (err) {
+        if (historyState) historyState.textContent = 'Error: ' + err.message;
+        historyEnabled.checked = !target;  // revert to the previous state
+    } finally {
+        historyEnabled.disabled = false;
+    }
+});

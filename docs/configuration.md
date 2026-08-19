@@ -36,11 +36,10 @@ server:
   port: 8920                 # Listening port
   secret_key_env: STATUS_SECRET_KEY  # Env var name containing Flask session signing key
 
-# ── Feature toggles ────────────────────────────────────────────
-features:
-  drag_drop_reorder: true    # Enable drag-and-drop item reordering UI
-  notes_enabled: true        # Enable per-service notes functionality
-  history_enabled: true      # Enable status history timeline feature
+# ── Page settings ─────────────────────────────────────────────
+# Optional. History is OFF by default — opt in per-deployment.
+settings:
+  history_enabled: false   # Show per-service 🕙 history button + /api/history
 ```
 
 ### Field Details
@@ -76,10 +75,16 @@ features:
 - **Purpose:** Environment variable name whose value is used as the Flask session signing key (via `app.config['SECRET_KEY']`). If unset, Flask generates a random key on startup (keys don't survive restarts — not recommended).
 - **Recommendation:** Always set `STATUS_SECRET_KEY` to a cryptographically random string of ≥32 characters.
 
-#### `features.*` (optional, all default: `true`)
+#### `settings.*` (optional)
 - **Type:** Boolean flags
-- **Purpose:** Feature toggles for optional functionality
-- Currently exposed flags: `drag_drop_reorder`, `notes_enabled`, `history_enabled`. Future versions may add more.
+- **Purpose:** Page-level feature toggles. Edited at runtime via the admin UI
+  (Page Settings → 🕙 History button), which persists back to this section
+  atomically (backup rotation).
+- Currently exposed flags:
+
+| Key | Purpose | Default |
+|---|---|---|
+| `history_enabled` | Show the per-service history button + make `GET /api/history/<id>` available | `false` |
 
 #### `rss` (optional)
 - **Type:** Dictionary

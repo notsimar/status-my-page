@@ -41,7 +41,9 @@
                     </span>
                 </div>
                 <textarea class="notes-input" placeholder="Add status notes…" data-id="{{ item.id }}">{{ item.notes }}</textarea>
+                {% if history_enabled %}
                 <button class="btn-history" title="View history" data-id="{{ item.id }}">🕙</button>
+                {% endif %}
                 <button class="btn-delete" title="Delete this item" data-id="{{ item.id }}">✕</button>
             </div>
             {% endfor %}
@@ -101,6 +103,20 @@
             </div>
             <span id="rssState" class="rss-state">—</span>
             <code id="rssAdminUrl" class="rss-url">/feed.xml</code>
+        </div>
+    </div>
+
+    <!-- UI Settings Admin Panel -->
+    <div class="admin-section" id="settingsAdmin">
+        <h2 class="admin-section-title">Page Settings</h2>
+        <div class="rss-admin-row">
+            <div class="switch" title="Show the per-service history button to visitors">
+                <input type="checkbox" id="historyEnabled"
+                       {% if history_enabled %}checked{% endif %}>
+                <label for="historyEnabled"></label>
+            </div>
+            <span class="rss-admin-label">🕙 History button</span>
+            <span id="historyState" class="rss-state">{{ 'Enabled' if history_enabled else 'Disabled' }}</span>
         </div>
     </div>
     {% endif %}

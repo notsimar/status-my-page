@@ -240,14 +240,37 @@ def _load_rss() -> dict:
 
 def _save_rss(rss: dict) -> None:
     """Atomically write rss section into config.yaml with backup rotation."""
+    _save_section("rss", rss)
+
+
+def _load_settings() -> dict:
+    """Return raw settings section from config.yaml ({} when absent)."""
+    data = load_config()
+    sec = data.get("settings")
+    return sec if isinstance(sec, dict) else {}
+
+
+def history_enabled() -> bool:
+    """Whether the per-service history timeline is exposed (default: off).
+
+    Read on every call so an admin toggle from another browser tab or a
+    direct config.yaml edit takes effect without a restart. Opt-in via
+    ``settings: {history_enabled: true}`` in config.yaml or the admin UI.
+    """
+    return bool(_load_settings().get("history_enabled", False))
+
+
+def _save_section(section: str, section_data: dict) -> None:
+    """Atomically rewrite one top-level config.yaml section (backup rotation)."""
     with _CONFIG_LOCK:
         cfg_data = load_config()
         if not isinstance(cfg_data, dict):
             cfg_data = {"items": list(_ITEM_NAMES), "_base": {}}
-        for section in ("admin", "server"):
-            if section in cfg_data and section not in cfg_data.get("_base", {}):
-                cfg_data.setdefault("_base", {})[section] = cfg_data.pop(section, {})
-        cfg_data["rss"] = rss
+        # Preserve known top-level keys under _base during a rewrite
+        for key in ("admin", "server"):
+            if key in cfg_data and key not in cfg_data.get("_base", {}):
+                cfg_data.setdefault("_base", {})[key] = cfg_data.pop(key, {})
+        cfg_data[section] = section_data
         _rotate_backups()
         if CONFIG_PATH is None:
             return
@@ -262,3 +285,8 @@ def _save_rss(rss: dict) -> None:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+def _save_settings(settings: dict) -> None:
+    """Atomically write settings section into config.yaml with backup rotation."""
+    _save_section("settings", settings)
