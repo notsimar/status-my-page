@@ -27,6 +27,7 @@ from statuspage.services import (
     add_item,
     delete_item,
     get_item_history,
+    clear_item_history,
 )
 from statuspage.config import (
     _load_healthchecks, _save_healthchecks, _load_rss, _save_rss,
@@ -96,6 +97,21 @@ def api_history(item_id: int):
         from flask import abort
         abort(404)
     return jsonify(result)
+
+
+@require_admin()
+def api_history_clear(item_id: int):
+    """Clear all history entries for a service. Admin + CSRF only.
+
+    The history feature setting does NOT gate this (an admin may want to wipe
+    the timeline while the public view is disabled); the button simply only
+    renders when it's enabled. Returns how many rows were removed.
+    """
+    removed = clear_item_history(item_id)
+    if removed is None:
+        from flask import abort
+        abort(404)
+    return jsonify(ok=True, removed=removed)
 
 
 def api_healthchecks():

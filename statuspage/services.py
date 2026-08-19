@@ -16,6 +16,7 @@ from statuspage.db import (
     delete_item as db_delete_item,
     record_history,
     get_history,
+    clear_history as db_clear_history,
 )
 
 
@@ -89,6 +90,15 @@ def delete_item(item_id: int) -> str | None:
 def get_item_history(item_id: int) -> dict | None:
     with get_connection() as db:
         return get_history(db, item_id)
+
+
+def clear_item_history(item_id: int) -> int | None:
+    """Delete all status_history rows for an item. Returns rows removed, or
+    None when the item does not exist. Caller commits via get_connection()."""
+    with get_connection() as db:
+        removed = db_clear_history(db, item_id)
+        db.commit()
+        return removed
 
 
 # ── Public query service ────────────────────────────────────────────

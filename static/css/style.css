@@ -484,6 +484,7 @@ body.admin .btn-delete { display: flex; }
     /* Touch-friendly delete / drag handles */
     .drag-handle { min-width: 44px; }
     .btn-delete   { min-width: 44px; height: 48px; }
+    .btn-history, .btn-history-clear { min-width: 44px; height: 48px; }
 
     /* Notes take full width below the main strip */
     textarea.notes-input { padding: 0.6rem 0.75rem; font-size: 15px; }
@@ -509,6 +510,48 @@ body.admin .btn-delete { display: flex; }
     background: var(--accent-dim-bg);
     color: var(--accent);
 }
+
+/* ── Clear-history button (admin only, mirrors .btn-delete) ─────── */
+.btn-history-clear {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+body.admin .btn-history-clear { display: flex; }
+.btn-history-clear:hover { background: var(--red-dim); color: var(--red); }
+.btn-history-clear:disabled { opacity: 0.4; cursor: wait; }
+
+/* ── Clear-history button in the history modal header ───────────── */
+.history-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.btn-clear-history {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 0.3rem 0.65rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+.btn-clear-history:hover {
+    border-color: var(--red);
+    background: rgba(244, 79, 91, 0.1);
+    color: var(--red);
+}
+.btn-clear-history:disabled { opacity: 0.4; cursor: wait; }
 
 /* ── History modal ─────────────────────────────────────────────── */
 .modal-wide {

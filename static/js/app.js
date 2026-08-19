@@ -46,8 +46,8 @@ const STATUS_LABELS = { green: 'Operational', degraded: 'Degraded', red: 'Outage
 list && list.addEventListener('click', async e => {
     const main = e.target.closest('.status-main');
     if (!main || !document.body.classList.contains('admin')) return;
-    // Don't toggle if clicking the drag handle, delete, or history buttons
-    if (e.target.closest('.drag-handle') || e.target.closest('.btn-delete') || e.target.closest('.btn-history')) return;
+    // Don't toggle if clicking the drag handle, delete, clear-history, or history buttons
+    if (e.target.closest('.drag-handle') || e.target.closest('.btn-delete') || e.target.closest('.btn-history') || e.target.closest('.btn-history-clear')) return;
 
     const row = main.closest('.status-row');
     const id = row.dataset.id;
@@ -153,6 +153,7 @@ if (addItemForm) {
                 </div>
                 <textarea class="notes-input" placeholder="Add status notes…" data-id="${item.id}"></textarea>
                 <button class="btn-history" title="View history" data-id="${item.id}">🕙</button>
+                <button class="btn-history-clear" title="Clear history for this service (admin)" data-id="${item.id}">🧹</button>
                 <button class="btn-delete" title="Delete this item" data-id="${item.id}">✕</button>
             `;
             row.querySelector('.status-name').textContent = item.name;
@@ -328,6 +329,7 @@ async function openHistory(itemId) {
         const res = await fetch('/api/history/' + itemId);
         if (!res.ok) return;
         const data = await res.json();
+        historyModalItemId = itemId;
 
         historyTitle.textContent = data.service + ' — History';
         historyTimeline.innerHTML = '';
@@ -389,6 +391,7 @@ async function openHistory(itemId) {
 function closeHistoryModal() {
     historyModal.classList.add('hidden');
     historyTimeline.innerHTML = '';
+    historyModalItemId = null;
 }
 
 // Close on button, backdrop click, Escape key
@@ -402,6 +405,18 @@ document.addEventListener('keydown', e => {
     }
 });
 
+// "Clear history" button in the modal header (admin only)
+const clearHistoryBtn = document.getElementById('clearHistory');
+clearHistoryBtn && document.body.classList.contains('admin') && clearHistoryBtn.classList.remove('hidden');
+clearHistoryBtn && clearHistoryBtn.addEventListener('click', async () => {
+    if (!historyModalItemId) return;
+    const ok = await clearHistoryData(historyModalItemId, null);
+    if (ok) {
+        const btnEl = list.querySelector('.btn-history-clear[data-id="' + historyModalItemId + '"]');
+        if (btnEl) btnEl.title = 'Cleared \u00B7 click again to clear more';
+    }
+});
+
 // Delegate click on history button via the status list
 list && list.addEventListener('click', async e => {
     const btn = e.target.closest('.btn-history');
@@ -409,6 +424,37 @@ list && list.addEventListener('click', async e => {
     e.stopPropagation();
     const id = btn.dataset.id;
     openHistory(id);
+});
+
+// ── Clear history (admin only) ──────────────────────────────────
+let historyModalItemId = null;  // service whose timeline the modal currently shows
+
+// Shared action: wipe a service's timeline, refresh the modal if it's open
+async function clearHistoryData(id, btn) {
+    const name = (btn.closest('.status-row')?.querySelector('.status-name')?.textContent) || ('#' + id);
+    if (!confirm('Clear all history for \u201C' + name + '\u201D?\nThis cannot be undone.')) return false;
+    if (btn) btn.disabled = true;
+    try {
+        const res = await csrfFetch('/api/history/' + id + '/clear', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to clear history');
+        if (historyModalItemId === id) await openHistory(id);  // refresh open modal
+        if (btn) btn.title = 'Cleared ' + (data.removed || 0) + ' entr' + ((data.removed || 0) === 1 ? 'y' : 'ies') + ' \u00B7 click again to clear more';
+        return true;
+    } catch (err) {
+        alert('Failed to clear history: ' + err.message);
+        return false;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// Per-row clear button (admin rows)
+list && list.addEventListener('click', e => {
+    const btn = e.target.closest('.btn-history-clear');
+    if (!btn || !document.body.classList.contains('admin')) return;
+    e.stopPropagation();
+    clearHistoryData(btn.dataset.id, btn);
 });
 
 

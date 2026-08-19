@@ -354,9 +354,140 @@ class TestStatusHistory:
         admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
 
         db = sqlite3.connect(str(A.DB_PATH))
-        count = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (item_id,)).fetchone()[0]
+        count = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?",(item_id,)).fetchone()[0]
         db.close()
         assert count <= A.MAX_HISTORY_PER_ITEM
+
+    # ── Clear history (POST /api/history/<id>/clear) ─────────────────
+
+    def test_t14_clear_admin_ok_and_rows_removed(self, admin, token, client, A):
+        """T14: Admin clear wipes only the target item's history, returns count."""
+        import sqlite3
+        name = f"ClearHist_{int(time.time() * 1000)}"
+        r_add = admin.post(
+            "/api/add",
+            data=json.dumps({"name": name}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": token},
+        )
+        assert r_add.status_code == 200
+        item_id = r_add.get_json()["item"]["id"]
+
+        # Create 3 history entries (2 toggles + 1 notes)
+        for i in range(2):
+            tok = admin.get("/api/csrf-token").get_json()["token"]
+            admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        admin.post(
+            f"/api/notes/{item_id}",
+            data=json.dumps({"notes": "about to clear"}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": tok},
+        )
+
+        # Sanity: 3 rows before the clear
+        db = sqlite3.connect(str(A.DB_PATH))
+        before = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (item_id,)).fetchone()[0]
+        db.close()
+        assert before == 3
+
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        r_clear = admin.post(f"/api/history/{item_id}/clear", headers={"X-CSRF-Token": tok})
+        assert r_clear.status_code == 200
+        data = r_clear.get_json()
+        assert data["ok"] is True
+        assert data["removed"] == 3
+
+        # DB is clean, item itself still exists
+        db = sqlite3.connect(str(A.DB_PATH))
+        rows = db.execute("SELECT id FROM status_history WHERE item_id=?", (item_id,)).fetchall()
+        item = db.execute("SELECT id FROM status_items WHERE id=?", (item_id,)).fetchone()
+        db.close()
+        assert len(rows) == 0
+        assert item is not None
+
+        # History endpoint now returns an empty entry list
+        r_hist = client.get(f"/api/history/{item_id}")
+        assert r_hist.status_code == 200
+        assert r_hist.get_json()["entries"] == []
+
+    def test_t15_clear_ignores_other_items(self, admin, token, A):
+        """T15: Clearing one item's history leaves other items' history intact."""
+        import sqlite3
+        name_a = f"ClearIsolateA_{int(time.time() * 1000)}"
+        name_b = f"ClearIsolateB_{int(time.time() * 1000)}"
+        id_a = id_b = None
+        try:
+            r_add = admin.post(
+                "/api/add",
+                data=json.dumps({"name": name_a}),
+                content_type="application/json",
+                headers={"X-CSRF-Token": token},
+            )
+            assert r_add.status_code == 200
+            id_a = r_add.get_json()["item"]["id"]
+
+            token = admin.get("/api/csrf-token").get_json()["token"]
+            r_add = admin.post(
+                "/api/add",
+                data=json.dumps({"name": name_b}),
+                content_type="application/json",
+                headers={"X-CSRF-Token": token},
+            )
+            assert r_add.status_code == 200
+            id_b = r_add.get_json()["item"]["id"]
+
+            # Give both items some history
+            for target in (id_a, id_b):
+                tok = admin.get("/api/csrf-token").get_json()["token"]
+                admin.post(f"/api/toggle/{target}", headers={"X-CSRF-Token": tok})
+            db = sqlite3.connect(str(A.DB_PATH))
+            other_before = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (id_b,)).fetchone()[0]
+            assert other_before >= 1
+
+            tok = admin.get("/api/csrf-token").get_json()["token"]
+            admin.post(f"/api/history/{id_a}/clear", headers={"X-CSRF-Token": tok})
+
+            db = sqlite3.connect(str(A.DB_PATH))
+            mine_after = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (id_a,)).fetchone()[0]
+            other_after = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (id_b,)).fetchone()[0]
+            db.close()
+            assert mine_after == 0
+            assert other_after == other_before  # untouched
+        finally:
+            # Clean up both fixtures so later tests see a known state
+            for i in (id_a, id_b):
+                if i is not None:
+                    tok = admin.get("/api/csrf-token").get_json()["token"]
+                    admin.post(f"/api/delete/{i}", headers={"X-CSRF-Token": tok})
+
+    def test_t16_clear_nonexistent_item_404(self, admin, token):
+        """T16: Clearing an unknown item id returns 404."""
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        r = admin.post("/api/history/999999/clear", headers={"X-CSRF-Token": tok})
+        assert r.status_code == 404
+
+    def test_t17_clear_requires_admin(self, client):
+        """T17: Non-admin cannot clear history (unauthenticated → rejected)."""
+        r = client.post("/api/history/1/clear")
+        assert r.status_code in (401, 403)
+
+    def test_t18_clear_empty_history_noop(self, admin, token):
+        """T18: Clearing an item with no history is a no-op (removed=0)."""
+        name = f"ClearEmpty_{int(time.time() * 1000)}"
+        r_add = admin.post(
+            "/api/add",
+            data=json.dumps({"name": name}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": token},
+        )
+        assert r_add.status_code == 200
+        item_id = r_add.get_json()["item"]["id"]
+
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        r = admin.post(f"/api/history/{item_id}/clear", headers={"X-CSRF-Token": tok})
+        assert r.status_code == 200
+        assert r.get_json() == {"ok": True, "removed": 0}
 
 
 # ── Standalone CLI Entry Point ────────────────────────────────────────

@@ -32,6 +32,7 @@ from statuspage.routes import (
     api_settings_status,
     api_settings_update,
     api_history,
+    api_history_clear,
     api_healthchecks,
     api_healthchecks_create,
     api_healthchecks_update,
@@ -347,7 +348,7 @@ def __dir__():
         "_run_ping_check", "_run_tcp_check", "_run_curl_check", "_run_soap_check",
         "_set_health_status", "_healthcheck_worker",
         "init_db", "config", "init_admin_auth", "configure_healthcheck_module",
-        "start_healthchecks", "status_page", "api_history", "api_healthchecks",
+        "start_healthchecks", "status_page", "api_history", "api_history_clear", "api_healthchecks",
         "login", "logout", "auth_check", "api_csrf", "api_toggle", "api_rename",
         "api_notes", "api_add", "api_delete", "api_healthcheck_run", "api_reorder",
         "handle_input_rejected", "security_headers",
@@ -391,6 +392,7 @@ app.add_url_rule("/api/rss", "api_rss_toggle", api_rss_toggle, methods=["POST"])
 app.add_url_rule("/api/settings", "api_settings_status", api_settings_status, methods=["GET"])
 app.add_url_rule("/api/settings", "api_settings_update", api_settings_update, methods=["POST"])
 app.add_url_rule("/api/history/<int:item_id>", "api_history", api_history)
+app.add_url_rule("/api/history/<int:item_id>/clear", "api_history_clear", api_history_clear, methods=["POST"])
 app.add_url_rule("/api/healthchecks", "api_healthchecks", api_healthchecks)
 app.add_url_rule("/api/healthchecks", "api_healthchecks_create", api_healthchecks_create, methods=["POST"])
 app.add_url_rule("/api/healthchecks/<string:name>", "api_healthchecks_update", api_healthchecks_update, methods=["PUT"])

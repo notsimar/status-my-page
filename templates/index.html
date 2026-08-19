@@ -44,6 +44,7 @@
                 {% if history_enabled %}
                 <button class="btn-history" title="View history" data-id="{{ item.id }}">🕙</button>
                 {% endif %}
+                <button class="btn-history-clear" title="Clear history for this service (admin)" data-id="{{ item.id }}">🧹</button>
                 <button class="btn-delete" title="Delete this item" data-id="{{ item.id }}">✕</button>
             </div>
             {% endfor %}
@@ -143,7 +144,10 @@
         <div class="modal-content modal-wide">
             <div class="history-header">
                 <h2 id="historyTitle">Service History</h2>
-                <button type="button" id="closeHistory" class="btn-close-modal">✕</button>
+                <div class="history-header-actions">
+                    <button type="button" id="clearHistory" class="btn-clear-history hidden" title="Delete all entries for this service">Clear history</button>
+                    <button type="button" id="closeHistory" class="btn-close-modal">✕</button>
+                </div>
             </div>
             <div id="historyTimeline" class="history-timeline"></div>
         </div>

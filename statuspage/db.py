@@ -374,10 +374,21 @@ def get_history(db: sqlite3.Connection, item_id: int):
         "entries": [
             {
                 "event_type": e["event_type"],
-                "old_value": e["old_value"],
-                "new_value": e["new_value"],
+                "old_value": e["old_value"] or "",
+                "new_value": e["new_value"] or "",
                 "occurred": e["occurred"],
             }
             for e in entries
-        ]
+        ],
     }
+
+
+def clear_history(db: sqlite3.Connection, item_id: int) -> int | None:
+    """Delete all history rows for an item. Returns row count, or None if item missing."""
+    row = db.execute(
+        "SELECT id FROM status_items WHERE id=?", (item_id,)
+    ).fetchone()
+    if not row:
+        return None
+    cur = db.execute("DELETE FROM status_history WHERE item_id = ?", (item_id,))
+    return cur.rowcount
