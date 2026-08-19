@@ -192,10 +192,10 @@ def generate_static_html() -> str:
 </head>
 <body>
     <div class="container">
+        <div class="top-bar">
+            <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
+        </div>
         <header>
-            <div class="theme-actions">
-                <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
-            </div>
             <h1>Application Status</h1>
             <div class="overall-badge {badge_class}">{badge_text}</div>
         </header>
