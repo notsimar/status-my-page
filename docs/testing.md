@@ -45,19 +45,19 @@ Prove that every guard condition in compound boolean expressions **independently
 
 End-to-end HTTP tests that verify the API behavior against a running server with a seeded database.
 
-**test_history.py (13 scenarios):**
-- **test_status_toggle**: Cycles status and records history entry
-- **test_notes_update**: Writes notes and verifies persistence
-- **test_history_newest_first**: Fetches history timeline, verifies reverse chronological order
-- **test_fields_present**: Validates each history record has event_type, item_id, old_value, new_value, occurred
-- **test_public_api_access**: Confirms /api/history/<id> is publicly readable
-- **test_api_errors**: Verifies proper HTTP status codes for bad requests
-- **test_cascade_delete**: Item deletion removes history from DB and YAML
-- **test_pruning_cap**: History table capped at MAX_HISTORY_PER_ITEM
+**test_history.py (19 scenarios, T0–T18):**
+- **T0–T2**: Server reachable, admin login, adding a service creates an item
+- **T3–T8**: Fresh item starts with empty history; status toggle and notes update each record an entry; entries carry `event_type`/`old_value`/`new_value`/`occurred` (ISO-8601 UTC); newest-first ordering; full green→degraded→red→green cycle captured
+- **T9–T11**: Non-existent item_id → 404; duplicate notes don't re-record; endpoint readable without authentication
+- **T12–T13**: Item deletion cascades to `status_history`; pruning caps entries at `MAX_HISTORY_PER_ITEM`
+- **T14–T18**: Admin history clear (`POST /api/history/<id>/clear`) — rows removed with count returned, other items untouched, 404 for missing item, admin+CSRF required, no-op on empty history
+
+Note: the module enables the (default-off) history feature via the `_history_on` fixture before the suite and restores the default afterwards.
 
 **test_routes_and_features.py:**
 - Auth: login, logout, rate limiting, auth-check, CSRF token endpoints
 - Mutations: add (409 conflict), rename, delete (404), reorder, toggle
+- **Page Settings (11 tests):** `GET /api/settings` public read; `POST /api/settings` admin+CSRF toggle (non-admin 403, missing key 400, non-bool 400); `/api/history/<id>` 404-while-disabled vs 200-when-enabled (proven by round-trip on the same item); 🕙 button present/absent in rendered HTML by state; writes persist to `settings:` in config.yaml without clobbering sibling sections
 - Security: headers, DB archive snapshots, backup rotation
 - Admin credential validation (missing STATUS_ADMIN_PASS_HASH)
 
@@ -262,21 +262,21 @@ python -m pytest tests/ -v
 
 The structural suite is deliberately **brittle** because it should fail if a guard's logic changes — the condition truth table will no longer match expected outputs. This is intentional: any regression in security guards or restoration logic must surface as a test failure.
 
-**Current coverage: 88% total** (451 tests, measured 2026-08-18)
+**Current coverage: 87% total** (453 tests, measured 2026-08-18)
 
 | Module | Coverage |
 |--------|----------|
 | `input_filter.py` | 100% |
 | `statuspage/auth.py` | 97% |
-| `statuspage/services.py` | 96% |
-| `statuspage/rss.py` | 94% |
-| `statuspage/db.py` | 93% |
-| `statuspage/routes.py` | 91% |
+| `statuspage/services.py` | 98% |
+| `statuspage/rss.py` | 96% |
+| `statuspage/db.py` | 90% |
+| `statuspage/routes.py` | 89% |
+| `statuspage/config.py` | 88% |
 | `healthcheck.py` | 84% |
-| `statuspage/config.py` | 86% |
-| `app.py` | 73% |
+| `app.py` | 74% |
 
-**Test suite size: 451 tests** (as of 2026-08-18).
+**Test suite size: 453 tests** (as of 2026-08-18).
 
 ---
 

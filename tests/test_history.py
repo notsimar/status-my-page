@@ -6,7 +6,7 @@ fidelity — capturing pre/post values, timestamps, and event type — and that
 the persistence layer survives across multiple operations including notes
 updates, multi-step state cycles, cleanup, and public read access.
 
-Test matrix (T0–T11 + Cleanup + Pruning):
+Test matrix (T0–T18):
   ┌─────┬───────────────────────────────────────────────────┐
   │ID   │ What it validates                                │
   ├─────┼───────────────────────────────────────────────────┤
@@ -26,7 +26,13 @@ Test matrix (T0–T11 + Cleanup + Pruning):
   │ T11 │ History endpoint works without authentication    │
   │ T12 │ Item deletion cascades to status_history table    │
   │ T13 │ History pruning respects MAX_HISTORY_PER_ITEM    │
+  │ T14–T18 │ Admin history clear (POST /api/history/<id>/clear): rows removed (count returned), other items untouched, 404 for missing item, admin+CSRF required, no-op on empty │
   └─────┴───────────────────────────────────────────────────┘
+
+History is OFF by default on the public page — this module enables it for
+the whole session via the same admin-side persistence path (config.yaml
+``settings`` section, see the ``_history_on`` fixture) and disables it
+again after the module finishes, so other test modules see the default.
 """
 
 import datetime as dt

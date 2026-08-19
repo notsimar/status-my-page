@@ -74,6 +74,21 @@ Returns the complete mutation history for a specific service, ordered newest-fir
 
 **event_type values:** `status_toggle` | `note_update` | `name_change` | `item_added` | `item_deleted`
 
+**Status Codes:** `200 OK` | `404 Not Found` (history disabled, or item_id doesn't exist)
+
+### POST `/api/history/<item_id>/clear` — Clear a Service's History Timeline
+
+🔒 Admin + CSRF. Deletes all `status_history` rows for one service and returns the count.
+
+**Note:** Not gated by the history feature setting — an admin can wipe the timeline even while the public view is disabled (the 🧹 button only renders when it's enabled).
+
+**Request:** No body.
+
+**Response Body:**
+```json
+{ "ok": true, "removed": 42 }
+```
+
 **Status Codes:** `200 OK` | `404 Not Found` (item_id doesn't exist)
 
 ### GET `/feed.xml` (alias: `/rss`) — Status RSS Feed

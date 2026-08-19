@@ -351,6 +351,152 @@ class TestItemMutations:
         assert r.status_code == 403
 
 
+class TestPageSettings:
+    """Admin-togglable history button (GET/POST /api/settings, off by default).
+
+    Every test that reads a setting first SETs the value it's verifying, so
+    the class is independent of test-file ordering (all tests share the
+    session-scoped temp config.yaml / DB via the `A` fixture). Each mutating
+    call fetches a fresh CSRF token first, because a successful CSRF-checked
+    POST rotates the session token.
+    """
+
+    @staticmethod
+    def _set_history(client, enabled: bool):
+        """POST /api/settings as the (already-logged-in) client; assert 200."""
+        tok = client.get("/api/csrf-token").get_json()["token"]
+        r = client.post(
+            "/api/settings",
+            data=json.dumps({"history_enabled": enabled}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": tok},
+        )
+        assert r.status_code == 200, r.get_json()
+        return r
+
+    def test_settings_get_public_no_auth(self, client):
+        """GET /api/settings is a public read — no session required."""
+        r = client.get("/api/settings")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert "history_enabled" in body
+        assert isinstance(body["history_enabled"], bool)
+
+    def test_settings_get_reflects_admin_write(self, admin, client):
+        """A value the admin writes is immediately visible to a public GET."""
+        self._set_history(admin, True)
+        assert client.get("/api/settings").get_json()["history_enabled"] is True
+        self._set_history(admin, False)
+        assert client.get("/api/settings").get_json()["history_enabled"] is False
+
+    def test_settings_post_non_admin_forbidden(self, client):
+        """A logged-out (non-admin) mutation is rejected."""
+        r = client.post(
+            "/api/settings",
+            data=json.dumps({"history_enabled": True}),
+            content_type="application/json",
+        )
+        assert r.status_code == 403
+
+    def test_settings_missing_key_400(self, admin):
+        """POST without `history_enabled` is a bad request."""
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        r = admin.post(
+            "/api/settings",
+            data=json.dumps({}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": tok},
+        )
+        assert r.status_code == 400
+        assert "error" in r.get_json()
+
+    def test_settings_non_bool_rejected(self, admin):
+        """`history_enabled` must be a strict boolean (string/int rejected)."""
+        for bad in ("yes", 1, "false", None):
+            tok = admin.get("/api/csrf-token").get_json()["token"]
+            r = admin.post(
+                "/api/settings",
+                data=json.dumps({"history_enabled": bad}),
+                content_type="application/json",
+                headers={"X-CSRF-Token": tok},
+            )
+            assert r.status_code == 400, (bad, r.get_json())
+
+    def test_history_404_when_disabled(self, admin, client, A):
+        """While disabled, GET /api/history/<id> 404s (unreachable, not just hidden).
+
+        Re-enabled after the check: the same id then returns 200, proving
+        the 404 came from the setting, not a missing item.
+        """
+        import sqlite3
+        db = sqlite3.connect(str(A.DB_PATH))
+        item_id = db.execute("SELECT id FROM status_items LIMIT 1").fetchone()[0]
+        db.close()
+        assert item_id is not None, "no seeded items present"
+
+        self._set_history(admin, False)
+        assert client.get(f"/api/history/{item_id}").status_code == 404
+
+        self._set_history(admin, True)
+        assert client.get(f"/api/history/{item_id}").status_code == 200
+
+    def test_history_accessible_when_enabled(self, admin, client, A):
+        """While enabled, GET /api/history/<id> returns the timeline (public read).
+
+        Looks up a real item id first — the shared seeded DB (SvcA) must
+        exist, but other test files may have deleted item id 1.
+        """
+        self._set_history(admin, True)
+        import sqlite3
+        db = sqlite3.connect(str(A.DB_PATH))
+        item_id = db.execute("SELECT id FROM status_items LIMIT 1").fetchone()[0]
+        db.close()
+        assert item_id is not None, "no seeded items present"
+        r = client.get(f"/api/history/{item_id}")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert "history" in body or "entries" in body
+
+    def test_html_shows_history_button_for_admin_when_enabled(self, admin):
+        """The 🕙 button is rendered per row when enabled (admin view)."""
+        self._set_history(admin, True)
+        html = admin.get("/").data.decode()
+        assert 'class="btn-history"' in html
+        assert 'title="View history"' in html
+
+    def test_html_hides_history_button_when_disabled(self, admin):
+        """No viewer history button is rendered while disabled (admin view).
+
+        Uses the admin client (which also shows the admin-only
+        btn-history-clear); assert the exact viewer-button class and aria,
+        so the substring can't collide with the clear button.
+        """
+        self._set_history(admin, False)
+        html = admin.get("/").data.decode()
+        assert 'class="btn-history"' not in html
+        assert 'title="View history"' not in html
+
+    def test_settings_persist_to_config_yaml(self, admin, A):
+        """Writes land in the settings section of the temp config.yaml."""
+        import yaml
+        self._set_history(admin, True)
+        raw = yaml.safe_load(A.CONFIG_PATH.read_text())
+        assert raw.get("settings", {}).get("history_enabled") is True
+
+    def test_settings_preserves_sibling_sections(self, admin, A):
+        """Saving settings must not clobber items / _base / other sections."""
+        import yaml
+        before = yaml.safe_load(A.CONFIG_PATH.read_text())
+        items_before = before.get("items")
+        base_before = before.get("_base")
+
+        self._set_history(admin, True)
+        raw = yaml.safe_load(A.CONFIG_PATH.read_text())
+        assert raw.get("items") == items_before
+        assert raw.get("_base") == base_before
+        assert raw.get("settings", {}).get("history_enabled") is True
+
+
 class TestSecurityHeadersAndBackups:
     def test_security_headers(self, client):
         """Response includes all required security headers."""

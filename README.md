@@ -387,7 +387,7 @@ python3 -c "from werkzeug.security import generate_password_hash; print(generate
 
 ### Database persistence & backups
 
-The SQLite database (`instance/status.db`) is the single source of truth for all services, statuses, notes, positions, and history. `config.yaml` serves as a read-only input for provisioning new items and initial configuration.
+The SQLite database (`instance/status.db`) is the single source of truth for all services, statuses, notes, positions, and history. `config.yaml` provides provisioning input for new items and initial configuration; the `healthchecks:`, `rss:`, and `settings:` sections are additionally maintained at runtime by the admin API (atomic writes with backup rotation) and are read from disk on every use.
 
 When healthchecks are updated via the admin API:
 1. Current `config.yaml` → `.bak1`
@@ -446,25 +446,25 @@ cp config.yaml.bak1 config.yaml
 | `test_rss_feed.py`             | —        | 26 tests: public `/feed.xml` output — well-formedness, escaping, guid/publish dates, enabled/disabled toggle                                       |
 | `test_mc_dc.py`                | —        | **MC/DC formal verification** of app.py decisions D1, D2, D3 (security gate ×4 endpoints), D6 (CSRF internals), D7 (delete cleanup)                |
 | `test_structural.py`           | —        | MC/DC for reorder override (D4) and set_notes YAML persist gate (D5)                                                                               |
-| `test_history.py`              | —        | 13 end-to-end scenarios: history recording, public access, cascade delete, pruning                                                                 |
-| `test_routes_and_features.py`  | —        | Auth, mutations, security headers, backups, admin credential validation                                                                            |
+| `test_history.py`              | —        | 19 end-to-end scenarios (T0–T18): history recording, public access, admin clear, cascade delete, pruning — suite enables the (default-off) history feature itself |
+| `test_routes_and_features.py`  | —        | Auth, mutations, security headers, backups, admin credential validation, **Page Settings** (admin history-button toggle: API gating, HTML rendering, config persistence, section preservation — 11 tests) |
 | `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
 | `test_healthcheck_mc_dc.py` | — | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests |
 
-**Overall coverage: 88%** (437 tests, measured 2026-08-18)
+**Overall coverage: 87%** (453 tests, measured 2026-08-18)
 
 | Module | Coverage |
 |--------|----------|
 | `input_filter.py` | 100% |
 | `statuspage/auth.py` | 97% |
-| `statuspage/services.py` | 96% |
-| `statuspage/rss.py` | 94% |
-| `statuspage/db.py` | 93% |
-| `statuspage/routes.py` | 91% |
+| `statuspage/services.py` | 98% |
+| `statuspage/rss.py` | 96% |
+| `statuspage/db.py` | 90% |
+| `statuspage/routes.py` | 89% |
 | `healthcheck.py` (root worker) | 84% |
-| `statuspage/config.py` | 86% |
-| `app.py` (composition root) | 73% |
-| **TOTAL (all modules)** | **88%** |
+| `statuspage/config.py` | 88% |
+| `app.py` (composition root) | 74% |
+| **TOTAL (all modules)** | **87%** |
 
 ### Running Tests
 
@@ -537,7 +537,7 @@ status-my-page/
 │   ├── conftest.py              # Shared fixtures (temp DB, admin auth, CSRF)
 │   ├── test_input_filter.py     # 80+ assertions: XSS, SQLi, fuzzing, sanitization
 │   ├── test_structural.py       # Reorder & notes DB mutations
-│   ├── test_history.py          # Automated API/DB history test suite (13 scenarios)
+│   ├── test_history.py          # Automated API/DB history test suite (19 scenarios)
 │   ├── test_mc_dc.py            # MC/DC structural coverage
 │   ├── test_healthcheck.py      # Healthcheck functional + 17 exception-path tests
 │   ├── test_healthcheck_admin.py # Healthcheck Admin CRUD & validation
@@ -570,6 +570,7 @@ status-my-page/
 |--------------------------------------|----------|---------------|--------------------------------------------------------------|
 | `/`                                  | `GET`    | Public        | Render full status page                                      |
 | `/api/history/<id>`                  | `GET`    | Public        | Return change timeline for a service (404 while history disabled) |
+| `/api/history/<id>/clear`            | `POST`   | 🔒 Admin+CSRF | Delete all history entries for a service, returns count           |
 | `/feed.xml` (alias `/rss`)           | `GET`    | Public        | RSS 2.0 status-change feed                                   |
 | `/api/rss`                           | `GET`    | Public        | Feed availability + metadata for the UI                      |
 | `/api/healthchecks`                  | `GET`    | Public        | List configured healthchecks (read-only view)                |
@@ -585,6 +586,8 @@ status-my-page/
 | `/api/healthchecks/<name>`           | `PUT`    | 🔒 Admin+CSRF | Update a healthcheck (partial body), hot-restarts the worker |
 | `/api/healthchecks/<name>`           | `DELETE` | 🔒 Admin+CSRF | Remove a healthcheck                                         |
 | `/api/rss`                           | `POST`   | 🔒 Admin+CSRF | Toggle the public status feed on/off                         |
+| `/api/settings`                      | `GET`    | Public        | Read page settings (history_enabled)                         |
+| `/api/settings`                      | `POST`   | 🔒 Admin+CSRF | Update page settings (`{"history_enabled": bool}`); persists to config.yaml `settings:` |
 | `/api/csrf-token`                    | `GET`    | 🔒 Admin      | Fetch fresh CSRF token                                       |
 | `/login` / `/logout` / `/auth-check` | —        | Public        | Session management                                           |
 

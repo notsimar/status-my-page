@@ -268,7 +268,7 @@ If the key is regenerated (e.g., after server restart and no persistent value), 
 
 ## 4. State Management & Persistence
 
-State is maintained exclusively within SQLite (`instance/status.db`). `config.yaml` is strictly a read-only input file for provisioning service items, server settings, and initial healthcheck definitions.
+State (items, statuses, notes, positions, history) is maintained exclusively within SQLite (`instance/status.db`). `config.yaml` is the provisioning input for service items, server settings, and initial healthcheck definitions. Its `healthchecks:`, `rss:`, and `settings:` sections are also maintained at runtime by the admin API — each write is atomic (temp file + `os.replace`) with automatic backup rotation (`.bak1`–`.bak5`), and reads always happen from disk so changes take effect without a restart.
 
 ### How State Works
 
