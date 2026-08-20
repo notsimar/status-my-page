@@ -233,6 +233,10 @@ def generate_static_html() -> str:
         .status-row:not(.show-notes) .static-notes {{
             display: none;
         }}
+        .top-bar-placeholder {{
+            width: 95px;
+            flex-shrink: 0;
+        }}
         .static-footer {{
             margin-top: 2rem;
             text-align: center;
@@ -245,6 +249,7 @@ def generate_static_html() -> str:
     <div class="container">
         <div class="top-bar">
             <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>{logo_html}
+            <div class="top-bar-placeholder" aria-hidden="true"></div>
         </div>
         <header>
             <h1>Application Status</h1>
