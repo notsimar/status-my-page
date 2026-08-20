@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# install.sh — Deploy status page on a fresh Linux server
-# Run as root or with sudo from the extracted app directory:
-#   cd status-page && sudo ./install.sh [INSTALL_DIR]
-# Default INSTALL_DIR = /opt/status-page
+# install.sh — Deploy status page as an unprivileged user
+# Run as the target user (no sudo required):
+#   cd status-page && ./install.sh [INSTALL_DIR]
+# Default INSTALL_DIR = $HOME/.local/share/status-page
 
 set -euo pipefail
 
-INSTALL_DIR="${1:-/opt/status-page}"
-SERVICE_USER="statuspage"
+INSTALL_DIR="${1:-$HOME/.local/share/status-page}"
+SERVICE_USER="$(whoami)"
 SYSTEMD_NAME="status-page.service"
 
 echo ""
@@ -29,11 +29,6 @@ echo "Service user: $SERVICE_USER"
 echo ""
 
 # ---- Pre-flight checks ----
-if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: This script must be run as root (use sudo)."
-    exit 1
-fi
-
 if ! command -v python3 &>/dev/null; then
     echo "ERROR: python3 not found. Install it first:"
     echo "  Debian/Ubuntu: apt install -y python3 python3-venv"
@@ -59,20 +54,29 @@ fi
 # ---- Install system deps ----
 echo ""
 echo "=== Installing system dependencies ==="
-if [ "$PKG_MGR" = "apt" ]; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt update -qq && apt install -y python3 python3-venv python3-pip gunicorn curl iputils-ping 2>&1 | grep -v "^+" | tail -5
-elif [ "$PKG_MGR" = "dnf" ] || [ "$PKG_MGR" = "yum" ]; then
-    $PKG_MGR install -y python3 python3-venv python3-pip python3-gunicorn curl iputils 2>&1 | tail -5
+# Package manager installs need root — skip gracefully if we are non-root
+if [ "$(id -u)" -eq 0 ]; then
+    if [ "$PKG_MGR" = "apt" ]; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt update -qq && apt install -y python3 python3-venv python3-pip gunicorn curl iputils-ping 2>&1 | grep -v "^+" | tail -5
+    elif [ "$PKG_MGR" = "dnf" ] || [ "$PKG_MGR" = "yum" ]; then
+        $PKG_MGR install -y python3 python3-venv python3-pip python3-gunicorn curl iputils 2>&1 | tail -5
+    fi
+else
+    echo "⚠️ Not running as root — skipping system package installs. Ensure python3, python3-venv, pip, curl are available."
 fi
 
 echo ""
 echo "=== Creating service user ==="
-if ! id "$SERVICE_USER" &>/dev/null; then
-    useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
-    echo "Created user: $SERVICE_USER"
+if [ "$(id -u)" -eq 0 ]; then
+    if ! id "$SERVICE_USER" &>/dev/null; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+        echo "Created user: $SERVICE_USER"
+    else
+        echo "User already exists: $SERVICE_USER"
+    fi
 else
-    echo "User already exists: $SERVICE_USER"
+    echo "Running as user $SERVICE_USER (non-root), skipping system user creation."
 fi
 
 # ---- Deploy files ----
@@ -90,22 +94,21 @@ cp -r app.py healthcheck.py input_filter.py constants.py config.yaml requirement
       "$INSTALL_DIR/"
 
 # Make scripts executable
-chmod +x "$INSTALL_DIR"/*.sh
+chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
 
-# Set ownership
-# App code stays root-owned (service user can't tamper with deployed code).
-# Writable locations must be owned by the service user, because at runtime
-# _save_runtime() writes config.yaml.bak* + a temp file into $INSTALL_DIR,
-# and archive_db_snapshot() writes timestamped JSON into $INSTALL_DIR/archives.
-# If the service user can't write there, every status/notes mutation that
-# persists to config.yaml raises PermissionError and the change is lost.
-chown -R root:"$SERVICE_USER" "$INSTALL_DIR"
-chown -R "$SERVICE_USER":"$SERVICE_USER" \
-    "$INSTALL_DIR" \
-    "$INSTALL_DIR/config.yaml" \
-    "$INSTALL_DIR/instance" \
-    "$INSTALL_DIR/logs" \
-    "$INSTALL_DIR/archives"
+# Set ownership (best-effort, skip if not root)
+if [ "$(id -u)" -eq 0 ]; then
+    chown -R root:"$SERVICE_USER" "$INSTALL_DIR"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" \
+        "$INSTALL_DIR" \
+        "$INSTALL_DIR/config.yaml" \
+        "$INSTALL_DIR/instance" \
+        "$INSTALL_DIR/logs" \
+        "$INSTALL_DIR/archives"
+else
+    echo "Non-root: keeping existing ownership, ensuring write access for $SERVICE_USER"
+    chmod -R u+rwX "$INSTALL_DIR"
+fi
 
 # ---- Create Python venv ----
 echo ""
@@ -120,10 +123,13 @@ echo "Installing Python dependencies…"
 "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt" --quiet 2>&1 | tail -3
 
 # Fix permissions after venv install
-chown -R root:root "$VENV_DIR" 2>/dev/null || true
-# User needs at least read/exec on venv
-chmod -R a+rX "$VENV_DIR" 2>/dev/null || true
-chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"/{instance,logs} 2>/dev/null || true
+if [ "$(id -u)" -eq 0 ]; then
+    chown -R root:root "$VENV_DIR" 2>/dev/null || true
+    chmod -R a+rX "$VENV_DIR" 2>/dev/null || true
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"/{instance,logs} 2>/dev/null || true
+else
+    chmod -R u+rwX "$VENV_DIR" 2>/dev/null || true
+fi
 
 # ---- Initialize DB ----
 echo ""
@@ -163,21 +169,21 @@ echo "Credentials set: user=$ADMIN_USER"
 SECRET_KEY=$("$VENV_DIR/bin/python3" -c "import secrets; print(secrets.token_hex(32))")
 
 # ---- Create credentials env file (restricted permissions) ----
-ENV_FILE="/etc/status-page/env"
+ENV_FILE="$HOME/.config/status-page/env"
 mkdir -p "$(dirname "$ENV_FILE")"
 cat > "$ENV_FILE" << ENVEOF
 STATUS_ADMIN_PASS_HASH=$PASS_HASH
 STATUS_SECRET_KEY=$SECRET_KEY
 PYTHONUNBUFFERED=1
 ENVEOF
-chmod 0640 "$ENV_FILE"
-chown root:"$SERVICE_USER" "$ENV_FILE"
+chmod 0600 "$ENV_FILE"
+echo "Env file created at $ENV_FILE (user-local)"
 
 # ---- Create systemd service ----
 echo ""
 echo "=== Installing systemd service ($SYSTEMD_NAME) ==="
-
-cat > "/etc/systemd/system/$SYSTEMD_NAME" << SVCEOF
+if [ "$(id -u)" -eq 0 ]; then
+    cat > "/etc/systemd/system/$SYSTEMD_NAME" << SVCEOF
 [Unit]
 Description=Status Page Web App
 After=network.target
@@ -197,16 +203,20 @@ Environment="PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin"
 WantedBy=multi-user.target
 SVCEOF
 
-systemctl daemon-reload
-systemctl enable "$SYSTEMD_NAME"
-echo "Service enabled. Starting…"
-systemctl start "$SYSTEMD_NAME"
+    systemctl daemon-reload
+    systemctl enable "$SYSTEMD_NAME"
+    echo "Service enabled. Starting…"
+    systemctl start "$SYSTEMD_NAME"
+else
+    echo "⚠️ Non-root: skipping systemd service install. You can run manually:"
+    echo "  $VENV_DIR/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app"
+fi
 
 # ---- Verify ----
 echo ""
 echo "=== Verification ==="
-sleep 2
-if systemctl is-active --quiet "$SYSTEMD_NAME"; then
+sleep 1
+if [ "$(id -u)" -eq 0 ] && systemctl is-active --quiet "$SYSTEMD_NAME"; then
     echo "✅ $SYSTEMD_NAME is running"
     
     # Quick HTTP check
@@ -229,7 +239,13 @@ if systemctl is-active --quiet "$SYSTEMD_NAME"; then
     echo "    journalctl -u $SYSTEMD_NAME -f   → live logs"
     echo "========================================"
 else
-    echo "❌ Service failed to start. Check logs:"
-    echo "   journalctl -u $SYSTEMD_NAME -n 50"
-    exit 1
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Non-root install complete. Start manually:"
+        echo "  source $ENV_FILE"
+        echo "  $VENV_DIR/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app"
+    else
+        echo "❌ Service failed to start. Check logs:"
+        echo "   journalctl -u $SYSTEMD_NAME -n 50"
+        exit 1
+    fi
 fi
