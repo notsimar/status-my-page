@@ -544,3 +544,29 @@ historyEnabled && historyEnabled.addEventListener('change', async () => {
         historyEnabled.disabled = false;
     }
 });
+
+// ── Settings: healthchecks on/off (admin only) ──────────────────
+const healthchecksEnabled = document.getElementById('healthchecksEnabled');
+const healthchecksState = document.getElementById('healthchecksState');
+
+healthchecksEnabled && healthchecksEnabled.addEventListener('change', async () => {
+    if (!document.body.classList.contains('admin')) return;
+    const target = healthchecksEnabled.checked;
+    if (healthchecksState) healthchecksState.textContent = 'Saving…';
+    healthchecksEnabled.disabled = true;
+    try {
+        const res = await csrfFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ healthchecks_enabled: target })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'unknown');
+        if (healthchecksState) healthchecksState.textContent = target ? 'Enabled' : 'Disabled';
+    } catch (err) {
+        if (healthchecksState) healthchecksState.textContent = 'Error: ' + err.message;
+        healthchecksEnabled.checked = !target;
+    } finally {
+        healthchecksEnabled.disabled = false;
+    }
+});

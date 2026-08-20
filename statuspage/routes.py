@@ -31,7 +31,7 @@ from statuspage.services import (
 )
 from statuspage.config import (
     _load_healthchecks, _save_healthchecks, _load_rss, _save_rss,
-    _load_settings, _save_settings, history_enabled,
+    _load_settings, _save_settings, history_enabled, healthchecks_enabled,
 )
 from statuspage import rss as rss_mod
 from input_filter import InputRejected, validate_json_data, validate_name, validate_notes, validate_int_param
@@ -46,7 +46,7 @@ def status_page():
     from statuspage.config import get_logo_url
     return render_template(
         "index.html", items=items, session_admin=is_admin, csrf_token=csrf,
-        history_enabled=history_enabled(), logo_url=get_logo_url()
+        history_enabled=history_enabled(), healthchecks_enabled=healthchecks_enabled(), logo_url=get_logo_url()
     )
 
 
@@ -781,9 +781,11 @@ def api_settings_status():
 
     ``history_enabled`` controls the per-service history timeline (public
     read visibility + API reachability).
+    ``healthchecks_enabled`` controls background healthcheck execution.
     """
     return jsonify({
         "history_enabled": history_enabled(),
+        "healthchecks_enabled": healthchecks_enabled(),
     })
 
 
@@ -791,18 +793,33 @@ def api_settings_status():
 def api_settings_update():
     """Update UI settings. Admin only.
 
-    ``POST /api/settings`` with JSON ``{"history_enabled": bool}``.
-    Persists to config.yaml ``settings: {history_enabled: ...}``.
+    ``POST /api/settings`` with JSON ``{"history_enabled": bool}`` and/or
+    ``{"healthchecks_enabled": bool}``.
+    Persists to config.yaml ``settings: ...``.
     """
     data = validate_json_data(request.get_json(silent=True))
-    if "history_enabled" not in data:
-        return jsonify(error="history_enabled is required"), 400
-    enabled = data.get("history_enabled")
-    if not isinstance(enabled, bool):
-        return jsonify(error="history_enabled must be a boolean"), 400
+    if not isinstance(data, dict):
+        return jsonify(error="Invalid JSON"), 400
+
+    if "history_enabled" not in data and "healthchecks_enabled" not in data:
+        return jsonify(error="history_enabled or healthchecks_enabled is required"), 400
 
     settings = _load_settings()
-    settings["history_enabled"] = enabled
-    _save_settings(settings)
+    res = {"ok": True}
 
-    return jsonify(ok=True, history_enabled=enabled)
+    if "history_enabled" in data:
+        enabled = data.get("history_enabled")
+        if not isinstance(enabled, bool):
+            return jsonify(error="history_enabled must be a boolean"), 400
+        settings["history_enabled"] = enabled
+        res["history_enabled"] = enabled
+
+    if "healthchecks_enabled" in data:
+        hc_enabled = data.get("healthchecks_enabled")
+        if not isinstance(hc_enabled, bool):
+            return jsonify(error="healthchecks_enabled must be a boolean"), 400
+        settings["healthchecks_enabled"] = hc_enabled
+        res["healthchecks_enabled"] = hc_enabled
+
+    _save_settings(settings)
+    return jsonify(res)

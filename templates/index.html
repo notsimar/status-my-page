@@ -124,6 +124,15 @@
             <span class="rss-admin-label">🕙 History button</span>
             <span id="historyState" class="rss-state">{{ 'Enabled' if history_enabled else 'Disabled' }}</span>
         </div>
+        <div class="rss-admin-row" style="margin-top: 12px;">
+            <div class="switch" title="Enable or disable automated background healthchecks">
+                <input type="checkbox" id="healthchecksEnabled"
+                       {% if healthchecks_enabled %}checked{% endif %}>
+                <label for="healthchecksEnabled"></label>
+            </div>
+            <span class="rss-admin-label">🩺 Background Healthchecks</span>
+            <span id="healthchecksState" class="rss-state">{{ 'Enabled' if healthchecks_enabled else 'Disabled' }}</span>
+        </div>
     </div>
     {% endif %}
     </div>

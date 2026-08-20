@@ -609,6 +609,13 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
     try:
         while not _shutdown.is_set():
             # ── Reload config every cycle so changes without restart work ──
+            cfg = _LOAD_CONFIG() if callable(_LOAD_CONFIG) else {}
+            sec = cfg.get("settings") if isinstance(cfg, dict) else {}
+            if isinstance(sec, dict) and not sec.get("healthchecks_enabled", True):
+                # Healthchecks toggled off via settings
+                _shutdown.wait(timeout=HEALTHCHECK_INTERVAL_DEFAULT)
+                continue
+
             healthchecks = _parse_healthchecks()
             now = time.time()
 

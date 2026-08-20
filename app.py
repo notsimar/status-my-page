@@ -20,13 +20,15 @@ except ImportError:
 
 if load_dotenv is not None:
     # Load .env.local first (if exists) so it can override .env
-    local_env = Path(__file__).parent / ".env.local"
-    if local_env.exists():
-        load_dotenv(dotenv_path=str(local_env), override=True)
-    # Then load .env as fallback
-    global_env = Path(__file__).parent / ".env"
-    if global_env.exists():
-        load_dotenv(dotenv_path=str(global_env), override=False)
+    # Only load if STATUS_ADMIN_PASS_HASH is not already set (preserve test env)
+    if "STATUS_ADMIN_PASS_HASH" not in os.environ:
+        local_env = Path(__file__).parent / ".env.local"
+        if local_env.exists():
+            load_dotenv(dotenv_path=str(local_env), override=True)
+        # Then load .env as fallback
+        global_env = Path(__file__).parent / ".env"
+        if global_env.exists():
+            load_dotenv(dotenv_path=str(global_env), override=False)
 
 # Clean up the temporary imports
 if 'load_dotenv' in locals():

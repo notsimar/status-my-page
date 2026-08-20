@@ -496,6 +496,35 @@ class TestPageSettings:
         assert raw.get("_base") == base_before
         assert raw.get("settings", {}).get("history_enabled") is True
 
+    def test_healthchecks_toggle_setting(self, admin, client, A):
+        """healthchecks_enabled toggle persists and updates settings."""
+        import yaml
+        tok = admin.get("/api/csrf-token").get_json()["token"]
+        r = admin.post(
+            "/api/settings",
+            data=json.dumps({"healthchecks_enabled": False}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": tok},
+        )
+        assert r.status_code == 200
+        assert r.get_json()["healthchecks_enabled"] is False
+
+        assert client.get("/api/settings").get_json()["healthchecks_enabled"] is False
+        raw = yaml.safe_load(A.CONFIG_PATH.read_text())
+        assert raw.get("settings", {}).get("healthchecks_enabled") is False
+
+        tok2 = admin.get("/api/csrf-token").get_json()["token"]
+        r2 = admin.post(
+            "/api/settings",
+            data=json.dumps({"healthchecks_enabled": True}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": tok2},
+        )
+        assert r2.status_code == 200
+        assert r2.get_json()["healthchecks_enabled"] is True
+        assert client.get("/api/settings").get_json()["healthchecks_enabled"] is True
+
+
 
 class TestSecurityHeadersAndBackups:
     def test_security_headers(self, client):

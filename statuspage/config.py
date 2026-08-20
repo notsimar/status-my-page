@@ -284,6 +284,15 @@ def history_enabled() -> bool:
     return bool(_load_settings().get("history_enabled", False))
 
 
+def healthchecks_enabled() -> bool:
+    """Whether automated background healthchecking is enabled (default: true).
+
+    Read dynamically by the worker loop or endpoints. Opt-out via
+    ``settings: {healthchecks_enabled: false}`` in config.yaml or the admin UI.
+    """
+    return bool(_load_settings().get("healthchecks_enabled", True))
+
+
 def _save_section(section: str, section_data: dict) -> None:
     """Atomically rewrite one top-level config.yaml section (backup rotation)."""
     with _CONFIG_LOCK:

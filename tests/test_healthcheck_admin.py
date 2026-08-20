@@ -560,6 +560,19 @@ class TestHealthcheckIntegration:
         assert r.status_code == 200
         assert "SvcA" not in _load_healthchecks()
 
+    def test_healthchecks_enabled_helper(self, A):
+        """statuspage.config.healthchecks_enabled() reads from config.yaml."""
+        from statuspage.config import healthchecks_enabled, _save_settings, _load_settings
+        orig = _load_settings()
+        try:
+            _save_settings({**orig, "healthchecks_enabled": False})
+            assert healthchecks_enabled() is False
+            _save_settings({**orig, "healthchecks_enabled": True})
+            assert healthchecks_enabled() is True
+        finally:
+            _save_settings(orig)
+
+
 
 # ── Backup rotation under repeated admin writes ────────────────────
 
