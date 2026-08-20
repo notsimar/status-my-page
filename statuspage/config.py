@@ -24,6 +24,7 @@ CONFIG_PATH: Path | None = None
 BASE_DIR: Path | None = None
 DB_PATH: Path | None = None
 ARCHIVES_DIR: Path | None = None
+STATIC_DIR: Path | None = None
 
 # Config cache
 _cfg_cache: dict | None = None
@@ -32,17 +33,19 @@ _CFG_ADMIN_USER = "admin"
 _SERVER_HOST = "0.0.0.0"
 _SERVER_PORT = 8920
 _SECRET_KEY_ENV = "STATUS_SECRET_KEY"
+_LOGO_PATH: str | None = None
 
 _CONFIG_LOCK = threading.Lock()
 
 
 def init_config_paths(base_dir: Path) -> None:
     """Initialize module-level paths. Call once at startup."""
-    global CONFIG_PATH, BASE_DIR, DB_PATH, ARCHIVES_DIR
+    global CONFIG_PATH, BASE_DIR, DB_PATH, ARCHIVES_DIR, STATIC_DIR
     BASE_DIR = base_dir
     CONFIG_PATH = BASE_DIR / CONFIG_FILENAME
     DB_PATH = BASE_DIR / INSTANCE_DIR_NAME / DB_FILENAME
     ARCHIVES_DIR = BASE_DIR / ARCHIVE_DIR_NAME
+    STATIC_DIR = BASE_DIR / "static"
     _load_config_uncached()
 
 
@@ -66,7 +69,7 @@ def _read_section(cfg: dict, key: str) -> dict:
 
 def _load_config_uncached() -> dict:
     """Load config.yaml without caching. Used at startup."""
-    global _cfg_cache, _ITEM_NAMES, _CFG_ADMIN_USER, _SERVER_HOST, _SERVER_PORT, _SECRET_KEY_ENV
+    global _cfg_cache, _ITEM_NAMES, _CFG_ADMIN_USER, _SERVER_HOST, _SERVER_PORT, _SECRET_KEY_ENV, _LOGO_PATH
     if CONFIG_PATH is None:
         raise RuntimeError("Config paths not initialized. Call init_config_paths() first.")
     try:
@@ -84,6 +87,7 @@ def _load_config_uncached() -> dict:
     _SERVER_HOST = server_sec.get("host", "0.0.0.0")
     _SERVER_PORT = server_sec.get("port", 8920)
     _SECRET_KEY_ENV = server_sec.get("secret_key_env", "STATUS_SECRET_KEY")
+    _LOGO_PATH = _cfg_cache.get("logo", {}).get("path")
     return _cfg_cache
 
 
@@ -141,6 +145,26 @@ def get_archives_dir() -> Path:
     if ARCHIVES_DIR is None:
         raise RuntimeError("Config paths not initialized. Call init_config_paths() first.")
     return ARCHIVES_DIR
+
+
+def get_static_dir() -> Path:
+    if STATIC_DIR is None:
+        raise RuntimeError("Config paths not initialized. Call init_config_paths() first.")
+    return STATIC_DIR
+
+
+def get_logo_url() -> str:
+    """Return public URL for logo if configured, else empty string."""
+    if not _LOGO_PATH:
+        return ""
+    # Ensure path is absolute and within static dir
+    try:
+        # strip leading /static/
+        rel = _LOGO_PATH.lstrip("/")
+        # map to Flask static file path
+        return f"/static/{rel}"
+    except Exception:
+        return ""
 
 
 # ── YAML runtime persistence ────────────────────────────────────────
@@ -285,6 +309,9 @@ def _save_section(section: str, section_data: dict) -> None:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+        # Refresh in-memory logo cache if config changed
+        global _LOGO_PATH
+        _LOGO_PATH = cfg_data.get("logo", {}).get("path")
 
 
 def _save_settings(settings: dict) -> None:

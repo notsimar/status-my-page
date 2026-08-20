@@ -43,9 +43,10 @@ def status_page():
     items = get_all_status_items()
     is_admin = session.get("admin", False)
     csrf = get_csrf() if is_admin else ""
+    from statuspage.config import get_logo_url
     return render_template(
         "index.html", items=items, session_admin=is_admin, csrf_token=csrf,
-        history_enabled=history_enabled()
+        history_enabled=history_enabled(), logo_url=get_logo_url()
     )
 
 
