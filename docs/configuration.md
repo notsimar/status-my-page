@@ -78,13 +78,15 @@ settings:
 #### `settings.*` (optional)
 - **Type:** Boolean flags
 - **Purpose:** Page-level feature toggles. Edited at runtime via the admin UI
-  (Page Settings → 🕙 History button), which persists back to this section
+  (Page Settings), which persists back to this section
   atomically (backup rotation).
 - Currently exposed flags:
 
 | Key | Purpose | Default |
 |---|---|---|
 | `history_enabled` | Show the per-service history button + make `GET /api/history/<id>` available | `false` |
+| `healthchecks_enabled` | Enable background execution of automated healthchecks | `true` |
+
 
 #### `rss` (optional)
 - **Type:** Dictionary

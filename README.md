@@ -586,8 +586,8 @@ status-my-page/
 | `/api/healthchecks/<name>`           | `PUT`    | 🔒 Admin+CSRF | Update a healthcheck (partial body), hot-restarts the worker |
 | `/api/healthchecks/<name>`           | `DELETE` | 🔒 Admin+CSRF | Remove a healthcheck                                         |
 | `/api/rss`                           | `POST`   | 🔒 Admin+CSRF | Toggle the public status feed on/off                         |
-| `/api/settings`                      | `GET`    | Public        | Read page settings (history_enabled)                         |
-| `/api/settings`                      | `POST`   | 🔒 Admin+CSRF | Update page settings (`{"history_enabled": bool}`); persists to config.yaml `settings:` |
+| `/api/settings`                      | `GET`    | Public        | Read page settings (`history_enabled`, `healthchecks_enabled`) |
+| `/api/settings`                      | `POST`   | 🔒 Admin+CSRF | Update page settings (`history_enabled`, `healthchecks_enabled`); persists to config.yaml `settings:` |
 | `/api/csrf-token`                    | `GET`    | 🔒 Admin      | Fetch fresh CSRF token                                       |
 | `/login` / `/logout` / `/auth-check` | —        | Public        | Session management                                           |
 

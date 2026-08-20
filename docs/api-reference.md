@@ -494,7 +494,8 @@ Public read of the current page-level settings.
 **Response Body:**
 ```json
 {
-  "history_enabled": false
+  "history_enabled": false,
+  "healthchecks_enabled": true
 }
 ```
 
@@ -505,16 +506,23 @@ Public read of the current page-level settings.
 **Request Body:**
 ```json
 {
-  "history_enabled": true
+  "history_enabled": true,
+  "healthchecks_enabled": false
 }
 ```
+*(Accepts either or both fields in a single payload)*
 
 **Response Body:**
 ```json
-{ "ok": true, "history_enabled": true }
+{
+  "ok": true,
+  "history_enabled": true,
+  "healthchecks_enabled": false
+}
 ```
 
-**Status Codes:** `200 OK` | `400 Bad Request` (`history_enabled` missing or not a boolean)
+**Status Codes:** `200 OK` | `400 Bad Request` (neither field present or value not a boolean)
+
 
 ---
 

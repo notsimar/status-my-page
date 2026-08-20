@@ -19,3 +19,5 @@ rss:
   enabled: false
   max_items: 50
   title: Application Status
+settings:
+  healthchecks_enabled: false

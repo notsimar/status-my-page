@@ -22,6 +22,8 @@
 | `rebuild.sh` | Full dependency install + DB migration + server restart | sudo for system deps | Installs venv, runs migrations in app.py |
 | `install.sh` | One-command production deploy wizard | Root/sudo | System user, systemd unit, /etc/status-page/env |
 | `cleanup.sh` | Archive management (list/show/prune/report) | None (user) | Reads/writes `archives/` JSON snapshots |
+| `change_password.sh` | Securely reset/update admin password hash in env | None (user) | Updates `.env.local` / `.env` (`STATUS_ADMIN_PASS_HASH`) |
+
 
 ---
 
