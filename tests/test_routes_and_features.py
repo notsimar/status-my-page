@@ -344,6 +344,9 @@ class TestItemMutations:
         assert "<style>" in r.text
         assert "Operational" in r.text or "Degraded" in r.text or "Outage" in r.text
         assert "attachment; filename=\"status.html\"" in r.headers.get("Content-Disposition", "")
+        assert "logo-wrap" in r.text
+        assert "logo-dark" in r.text and "logo-light" in r.text
+
 
     def test_export_static_unauthorized(self, client):
         """Non-admin cannot export static page."""

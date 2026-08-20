@@ -128,6 +128,7 @@ def generate_static_html() -> str:
     suitable for hosting on mass-delivery static web servers, S3/CloudFront, GitHub Pages, etc.
     """
     import datetime as dt
+    import base64
     from pathlib import Path
     from flask import current_app
 
@@ -147,10 +148,32 @@ def generate_static_html() -> str:
         badge_class = "green"
         badge_text = "All Systems Operational"
 
-    css_path = Path(current_app.root_path) / "static" / "css" / "style.css"
+    static_dir = Path(current_app.root_path) / "static"
+    css_path = static_dir / "css" / "style.css"
     css_content = ""
     if css_path.exists():
         css_content = css_path.read_text(encoding="utf-8")
+
+    # Encode dark and light logos as base64 data URIs so static HTML is 100% standalone
+    dark_logo_path = static_dir / "logos" / "dark-logo.png"
+    light_logo_path = static_dir / "logos" / "light-logo.png"
+
+    dark_logo_src = "/static/logos/dark-logo.png"
+    light_logo_src = "/static/logos/light-logo.png"
+
+    if dark_logo_path.exists():
+        b64 = base64.b64encode(dark_logo_path.read_bytes()).decode("ascii")
+        dark_logo_src = f"data:image/png;base64,{b64}"
+
+    if light_logo_path.exists():
+        b64 = base64.b64encode(light_logo_path.read_bytes()).decode("ascii")
+        light_logo_src = f"data:image/png;base64,{b64}"
+
+    logo_html = f"""
+            <div class="logo-wrap">
+                <img src="{dark_logo_src}" alt="Logo" class="logo-img logo-dark">
+                <img src="{light_logo_src}" alt="Logo" class="logo-img logo-light">
+            </div>"""
 
     generated_time = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -221,7 +244,7 @@ def generate_static_html() -> str:
 <body>
     <div class="container">
         <div class="top-bar">
-            <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
+            <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>{logo_html}
         </div>
         <header>
             <h1>Application Status</h1>
