@@ -878,6 +878,60 @@ class TestHealthcheckWorkerLock:
             fcntl.flock(held_lock.fileno(), fcntl.LOCK_UN)
             held_lock.close()
 
+
+# ─── D_hc12: Healthchecks master enabled switch ──────────────────
+# Expression (healthcheck.py worker loop):
+#   if isinstance(sec, dict) and not sec.get("healthchecks_enabled", True):
+#     -> sleep & continue without running checks
+#
+# MC/DC conditions:
+#   C1 = isinstance(sec, dict)
+#   C2 = not sec.get("healthchecks_enabled", True)
+#
+# ┌──────┬────┬────┬──────────────────────────────────────────────────┐
+# │ Test │ C1 │ C2 │ Observable effect                                │
+# ├──────┼────┼────┼──────────────────────────────────────────────────┤
+# │ T1   │ T  │ T  │ Paused (disabled by setting -> sleep & continue) │
+# │ T2   │ T  │ F  │ Active (enabled by setting -> checks parse/run)  │
+# │ T3   │ F  │ ×  │ Active (non-dict settings defaults to enabled)   │
+# └──────┴────┴────┴──────────────────────────────────────────────────┘
+
+class Test_Dhc12_HealthchecksEnabledSwitch:
+    """MC/DC for the healthchecks_enabled setting gate."""
+
+    def test_C1T_C2T__disabled_skips_execution(self, A):
+        """C1=T, C2=T: settings dict present and healthchecks_enabled is False -> pauses."""
+        from statuspage.config import healthchecks_enabled, _save_settings, _load_settings
+        orig = _load_settings()
+        try:
+            _save_settings({**orig, "healthchecks_enabled": False})
+            assert healthchecks_enabled() is False
+            sec = _load_settings()
+            should_pause = isinstance(sec, dict) and not sec.get("healthchecks_enabled", True)
+            assert should_pause is True, "Must pause worker loop when healthchecks_enabled=False"
+        finally:
+            _save_settings(orig)
+
+    def test_C1T_C2F__enabled_runs_execution(self, A):
+        """C1=T, C2=F: settings dict present and healthchecks_enabled is True -> active."""
+        from statuspage.config import healthchecks_enabled, _save_settings, _load_settings
+        orig = _load_settings()
+        try:
+            _save_settings({**orig, "healthchecks_enabled": True})
+            assert healthchecks_enabled() is True
+            sec = _load_settings()
+            should_pause = isinstance(sec, dict) and not sec.get("healthchecks_enabled", True)
+            assert should_pause is False, "Must NOT pause worker loop when healthchecks_enabled=True"
+        finally:
+            _save_settings(orig)
+
+    def test_C1F__non_dict_defaults_to_active(self, A):
+        """C1=F: non-dict settings defaults to active."""
+        sec = None
+        should_pause = isinstance(sec, dict) and not sec.get("healthchecks_enabled", True)
+        assert should_pause is False, "Non-dict settings must not trigger pause"
+
+
 # ─── CLI entry point ──────────────────────────────────────
 
 if __name__ == "__main__":
