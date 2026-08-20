@@ -31,14 +31,48 @@ print('DB initialized')
 
 if [ ! -f "$ENV_FILE" ]; then
     echo "Generating development env..."
-    SECRET_KEY=$("$VENV_DIR/bin/python3" -c "import secrets; print(secrets.token_hex(32))")
-    PASS_HASH=$("$VENV_DIR/bin/python3" -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('devpassword'))")
-    cat > "$ENV_FILE" << EOF
-STATUS_DISABLE_HEALTHCHECKS=1
-STATUS_ADMIN_PASS_HASH=$PASS_HASH
-STATUS_SECRET_KEY=$SECRET_KEY
-EOF
+    # Generate env values using temporary Python scripts to avoid shell quoting issues
+    PASS_HASH=$("$VENV_DIR/bin/python3" /dev/stdin << 'PYEOF'
+import sys
+sys.path.insert(0, '$ROOT_DIR')
+from werkzeug.security import generate_password_hash
+print(generate_password_hash("devpassword"))
+PYEOF
+)
+    SECRET_KEY=$("$VENV_DIR/bin/python3" /dev/stdin << 'PYEOF'
+import sys
+sys.path.insert(0, '$ROOT_DIR')
+import secrets
+print(secrets.token_hex(32))
+PYEOF
+)
+    # Write env file
+    printf 'STATUS_DISABLE_HEALTHCHECKS=1\nSTATUS_ADMIN_PASS_HASH=%s\nSTATUS_SECRET_KEY=%s\n' \
+        "$PASS_HASH" "$SECRET_KEY" > "$ENV_FILE"
     chmod 600 "$ENV_FILE"
+fi
+
+# Export env vars from .env.local so the Flask dev server can use them
+export STATUS_DISABLE_HEALTHCHECKS=1
+
+# Shell-source the .env.local file to ensure vars are in the environment
+if [ -f "$ENV_FILE" ]; then
+    # Read and export STATUS_ variables from the env file
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$line" ]] && continue
+        # Extract key and value
+        key="${line%%=*}"
+        value="${line#*=}"
+        # Trim whitespace
+        key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        # Only export STATUS_ variables
+        if [[ "$key" == STATUS_* ]]; then
+            export "$key=$value"
+        fi
+    done < "$ENV_FILE"
 fi
 
 echo ""
@@ -46,9 +80,6 @@ echo "Setup complete!"
 echo ""
 echo "To start dev server:"
 echo "  source $VENV_DIR/bin/activate"
-echo "  export STATUS_ADMIN_PASS_HASH=$(grep STATUS_ADMIN_PASS_HASH $ENV_FILE | cut -d= -f2-)"
-echo "  export STATUS_SECRET_KEY=$(grep STATUS_SECRET_KEY $ENV_FILE | cut -d= -f2-)"
-echo "  export STATUS_DISABLE_HEALTHCHECKS=1"
 echo "  flask --app app run --host 127.0.0.1 --port 8920"
 echo ""
 echo "Admin user: admin"

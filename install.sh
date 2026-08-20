@@ -6,6 +6,12 @@
 
 set -euo pipefail
 
+# Determine the project root directory (where this script lives)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Allow override via environment variable for testing/flexibility
+ROOT_DIR="${STATUS_MY_PAGE_ROOT:-$ROOT_DIR}"
+
 INSTALL_DIR="${1:-$HOME/.local/share/status-page}"
 SERVICE_USER="$(whoami)"
 SYSTEMD_NAME="status-page.service"
@@ -42,27 +48,27 @@ else
     echo "Running as non-root user $SERVICE_USER. Skipping system packages, user creation, systemd."
     ROOT=0
 fi
-
 echo ""
+
 echo "=== Creating directories ==="
 mkdir -p "$INSTALL_DIR"/{instance,logs,archives}
 chmod 0750 "$INSTALL_DIR/archives" 2>/dev/null || true
-
 echo ""
+
 echo "=== Deploying files ==="
 cp -r app.py healthcheck.py input_filter.py constants.py config.yaml requirements.txt \
       statuspage/ templates/ static/ tests/ docs/ start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md \
       "$INSTALL_DIR/"
-
 chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
+echo ""
 
 if [ "$ROOT" -eq 1 ]; then
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"/{instance,logs,archives,config.yaml} 2>/dev/null || true
 else
     chmod -R u+rwX "$INSTALL_DIR"
 fi
-
 echo ""
+
 echo "=== Python virtual environment ==="
 VENV_DIR="$INSTALL_DIR/.venv"
 if [ ! -d "$VENV_DIR" ]; then
@@ -70,17 +76,16 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
 "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt" --quiet
-
 if [ "$ROOT" -eq 0 ]; then
     chmod -R u+rwX "$VENV_DIR" 2>/dev/null || true
 fi
-
 echo ""
+
 echo "=== Initialize database ==="
 "$VENV_DIR/bin/python3" -c "import sys; sys.path.insert(0, '$INSTALL_DIR'); from app import init_db; init_db()"
 echo "Database seeded."
-
 echo ""
+
 echo "=== Admin credentials ==="
 read -rp "Admin username [admin]: " ADMIN_USER_INPUT
 ADMIN_USER="${ADMIN_USER_INPUT:-admin}"
@@ -96,20 +101,26 @@ cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
 open(os.environ['INSTALL_DIR'] + '/config.yaml','w').write(yaml.dump(cfg, default_flow_style=False))
 "
 echo "Credentials set: user=$ADMIN_USER"
+echo ""
 
 SECRET_KEY=$("$VENV_DIR/bin/python3" -c "import secrets; print(secrets.token_hex(32))")
-ENV_FILE="$HOME/.config/status-page/env"
+ENV_FILE="$INSTALL_DIR/.env.local"
 mkdir -p "$(dirname "$ENV_FILE")"
-cat > "$ENV_FILE" << ENVEOF
+# Copy project .env.local if it exists, otherwise create new one
+if [ -f "$ROOT_DIR/.env.local" ]; then
+    cp "$ROOT_DIR/.env.local" "$ENV_FILE"
+else
+    cat > "$ENV_FILE" << ENVEOF
 STATUS_ADMIN_PASS_HASH=$PASS_HASH
 STATUS_SECRET_KEY=$SECRET_KEY
 PYTHONUNBUFFERED=1
 ENVEOF
+fi
 chmod 0600 "$ENV_FILE"
 echo "Env file created at $ENV_FILE"
+echo ""
 
 if [ "$ROOT" -eq 1 ]; then
-    echo ""
     echo "=== Installing systemd service ==="
     cat > "/etc/systemd/system/$SYSTEMD_NAME" << SVCEOF
 [Unit]
@@ -140,8 +151,8 @@ else
     echo "  source $ENV_FILE"
     echo "  $VENV_DIR/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app"
 fi
-
 echo ""
+
 echo "========================================"
 echo "  Deployment complete!"
 echo "  Install dir: $INSTALL_DIR"

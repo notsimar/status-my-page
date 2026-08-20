@@ -5,8 +5,32 @@ Modular entry point that wires together all components.
 """
 
 import os
-import secrets
+import sys
+import secrets  # needed for secret key generation
 from pathlib import Path
+
+# Load environment variables from .env files before any other imports.
+# This ensures STATUS_ADMIN_PASS_HASH, STATUS_SECRET_KEY, and other
+# config vars are available when the app module Initializes.
+# Priority: .env.local > .env (local overrides global).
+try:
+    from dotenv import load_dotenv  # available in the project venv
+except ImportError:
+    load_dotenv = None  # will be handled below
+
+if load_dotenv is not None:
+    # Load .env.local first (if exists) so it can override .env
+    local_env = Path(__file__).parent / ".env.local"
+    if local_env.exists():
+        load_dotenv(dotenv_path=str(local_env), override=True)
+    # Then load .env as fallback
+    global_env = Path(__file__).parent / ".env"
+    if global_env.exists():
+        load_dotenv(dotenv_path=str(global_env), override=False)
+
+# Clean up the temporary imports
+if 'load_dotenv' in locals():
+    del locals()['load_dotenv']
 
 from flask import Flask
 
