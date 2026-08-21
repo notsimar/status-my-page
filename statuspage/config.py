@@ -213,6 +213,12 @@ def _save_runtime(data: dict) -> None:
 
 # ── Healthchecks config persistence ────────────────────────────────
 
+# Guards load-modify-save sequences on the healthchecks section. The save
+# itself is locked by _CONFIG_LOCK, but callers that read-then-write need
+# this outer lock so concurrent admin requests can't lose updates.
+HEALTHCHECKS_CFG_LOCK = threading.Lock()
+
+
 def _load_healthchecks() -> dict:
     """Return raw healthchecks dict from config.yaml (no parsing/sanitisation)."""
     data = load_config()
