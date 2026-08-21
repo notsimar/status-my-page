@@ -118,11 +118,25 @@ def _resolve_secret_key() -> str:
             key = key_file.read_text(encoding="utf-8").strip()
             if key:
                 return key
+        # O_EXCL create so concurrent gunicorn workers can't each generate a
+        # different key (last-writer-wins would leave one worker signing
+        # cookies with an orphaned key). Loser of the race re-reads.
         key = secrets.token_hex(32)
         key_file.parent.mkdir(parents=True, exist_ok=True)
-        key_file.write_text(key, encoding="utf-8")
-        key_file.chmod(0o600)
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, key.encode("utf-8"))
+        finally:
+            os.close(fd)
         return key
+    except FileExistsError:
+        try:
+            key = key_file.read_text(encoding="utf-8").strip()
+            if key:
+                return key
+        except OSError:
+            pass
+        return secrets.token_hex(32)  # unreadable file: dev-only fallback
     except OSError:
         # Last resort (single-process dev only): ephemeral random key.
         return secrets.token_hex(32)

@@ -49,13 +49,18 @@ def feed_treats_as_unfetchable(body: str) -> bool:
 
 
 def severity_from_failures(attempts: int, retries: int) -> str:
-    """The failures → severity rule, in one place (was inline in the
-    worker loop and undocumented):
-        attempts < retries            -> still green (no status change yet)
+    """The failures → severity rule for an *unhealthy* result, in one place.
+
         retries <= attempts < retries*3 -> "degraded"
-        attempts >= retries*3          -> "red"
-    Returns the desired state for an *unhealthy* result.
+        attempts >= retries*3           -> "red"
+
+    Callers only invoke this once attempts >= retries (the worker loop
+    checks that first); anything below is unreachable by contract.
     """
+    if attempts < retries:
+        raise ValueError(
+            f"severity_from_failures called below retry threshold "
+            f"(attempts={attempts} < retries={retries})")
     if attempts >= retries * 3:
         return "red"
     return "degraded"

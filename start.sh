@@ -18,15 +18,16 @@ echo "Starting…"
 mkdir -p logs
 
 # Load env vars from project-local .env.local (created by install.sh), falling
-# back to .env. Values are exported so gunicorn's worker processes inherit
-# STATUS_ADMIN_PASS_HASH / STATUS_SECRET_KEY.
+# back to .env. Sourced with set -a so values containing spaces/quotes survive
+# (export $(xargs) breaks on them). Workers inherit STATUS_ADMIN_PASS_HASH /
+# STATUS_SECRET_KEY.
 if [ -f .env.local ]; then
-    export $(grep -v '^#' .env.local | grep -v '^\s*$' | xargs 2>/dev/null)
+    set -a; . ./.env.local; set +a
 elif [ -f .env ]; then
-    export $(grep -v '^#' .env | grep -v '^\s*$' | xargs 2>/dev/null)
+    set -a; . ./.env; set +a
 fi
 
-nohup .venv/bin/gunicorn --bind 0.0.0.0:8920 --workers 2 --timeout 30 app:app \
+nohup .venv/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app \
     >> logs/server.log 2>&1 &
 echo $! > "$PID_FILE"
-echo "Running on http://0.0.0.0:8920 (PID $!, gunicorn)"
+echo "Running on http://127.0.0.1:8920 (PID $!, gunicorn)"

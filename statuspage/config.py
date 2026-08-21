@@ -153,6 +153,23 @@ def get_static_dir() -> Path:
     return STATIC_DIR
 
 
+def _resolve_logo_rel() -> str | None:
+    """Normalize ``logo.path`` to a static-dir-relative path, or None.
+
+    Shared guard for both the URL and local-path resolvers: rejects empty
+    values and any ``..`` traversal; accepts ``/static/x`` or ``static/x``
+    input. Single source of truth so the two resolvers can't drift.
+    """
+    if not _LOGO_PATH:
+        return None
+    rel = str(_LOGO_PATH).strip().lstrip("/")
+    if not rel or ".." in Path(rel).parts:
+        return None
+    if rel.startswith("static/"):
+        rel = rel[len("static/"):]
+    return rel
+
+
 def get_logo_url() -> str:
     """Return the public URL for the configured logo, or "" if not configured.
 
@@ -162,17 +179,8 @@ def get_logo_url() -> str:
     refuse to resolve — an attacker-controlled ``logo.path`` must not be able
     to point the page at another path on the static server.
     """
-    if not _LOGO_PATH:
-        return ""
-    rel = str(_LOGO_PATH).strip().lstrip("/")
-    if not rel:
-        return ""
-    if ".." in Path(rel).parts:
-        return ""
-    # Accept "/static/x" or "static/x" input; return canonical /static/x
-    if rel.startswith("static/"):
-        rel = rel[len("static/"):]
-    return f"/static/{rel}"
+    rel = _resolve_logo_rel()
+    return f"/static/{rel}" if rel else ""
 
 
 def get_logo_local_path() -> Path | None:
@@ -183,13 +191,11 @@ def get_logo_local_path() -> Path | None:
     within the static dir with no ``..`` traversal. The static-HTML exporter
     uses this to inline the logo as a data URI.
     """
-    if not _LOGO_PATH or STATIC_DIR is None:
+    if STATIC_DIR is None:
         return None
-    rel = str(_LOGO_PATH).strip().lstrip("/")
-    if not rel or ".." in Path(rel).parts:
+    rel = _resolve_logo_rel()
+    if rel is None:
         return None
-    if rel.startswith("static/"):
-        rel = rel[len("static/"):]
     candidate = (STATIC_DIR / rel).resolve()
     # Containment + existence checks
     try:

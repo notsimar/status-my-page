@@ -110,7 +110,24 @@ if [ -f "$ENV_FILE" ]; then
     echo "    The prompted password was ignored. Remove $ENV_FILE to re-create it,"
     echo "    or re-run with SP_INSTALL_OVERRIDE_ENV=1 to force the new credentials."
     if [ "${SP_INSTALL_OVERRIDE_ENV:-0}" = "1" ]; then
-        echo "    Override active — replacing $ENV_FILE."
+        echo "    Override active — replacing $ENV_FILE with prompted credentials."
+        {
+            printf '%s=%s\n' "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+            printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY"
+            printf 'PYTHONUNBUFFERED=1\n'
+        } > "$ENV_FILE"
+        export _SP_INSTALL_USER="$ADMIN_USER"
+        "$VENV_DIR/bin/python3" -c "
+import yaml, os
+p = os.environ['INSTALL_DIR'] + '/config.yaml'
+cfg = yaml.safe_load(open(p))
+cfg['admin'] = cfg.get('admin', {})
+cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
+open(p, 'w').write(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+"
+        echo "    Credentials set: user=$ADMIN_USER (new password)"
+    else
+        echo "    Keeping existing $ENV_FILE untouched."
     fi
 elif [ -f "$ROOT_DIR/.env.local" ]; then
     # Project env (e.g. a dev-only password / healthchecks-disabled flag) would

@@ -319,8 +319,18 @@ class Test_D6_CsrfInternalGuard:
 
         ip = admin.environ_base.get("REMOTE_ADDR", "127.0.0.1")
 
+        # Use a live item id — earlier tests in the session may have deleted
+        # item 1, and toggle on a missing id now correctly 404s.
+        import sqlite3 as _sq
+        with _sq.connect(str(m.DB_PATH)) as c:
+            c.row_factory = _sq.Row
+            row = c.execute(
+                "SELECT id FROM status_items ORDER BY id LIMIT 1").fetchone()
+        assert row, "No status items seeded"
+        item_id = row["id"]
+
         r = admin.post(
-            "/api/toggle/1",
+            f"/api/toggle/{item_id}",
             headers={"X-CSRF-Token": token},
             content_type="application/json", data=b'{}',
         )

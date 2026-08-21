@@ -5,6 +5,8 @@ Handles login, session management, CSRF protection, and rate limiting.
 
 import hashlib
 import hmac
+import json
+import sqlite3
 import time
 from collections import defaultdict
 from functools import wraps
@@ -91,7 +93,23 @@ def record_attempt(ip: str) -> None:
 
 
 def is_locked(ip: str) -> bool:
-    return len(_failed_logins.get(ip, [])) >= MAX_LOGIN_ATTEMPTS
+    """True when this IP has too many recent failed logins.
+
+    Prunes timestamps older than LOCKOUT_SECONDS before counting, so a
+    lockout always expires — including lockouts rehydrated from the
+    persisted rate_limits snapshot after a worker restart (stale entries
+    in that snapshot must never re-lock an IP permanently).
+    """
+    now = time.time()
+    ts = _failed_logins.get(ip, [])
+    if not ts:
+        return False
+    ts = [t for t in ts if now - t < LOCKOUT_SECONDS]
+    if ts:
+        _failed_logins[ip] = ts
+    else:
+        _failed_logins.pop(ip, None)
+    return len(ts) >= MAX_LOGIN_ATTEMPTS
 
 
 def _persist_rate_state(scope: str, data) -> None:
@@ -103,10 +121,8 @@ def _persist_rate_state(scope: str, data) -> None:
     break authentication or mutations.
     """
     try:
-        import json as _json
-        import sqlite3 as _sqlite3
         from statuspage.db import get_db_path
-        conn = _sqlite3.connect(str(get_db_path()), timeout=2.0)
+        conn = sqlite3.connect(str(get_db_path()), timeout=2.0)
     except Exception:
         return
     try:
@@ -116,7 +132,7 @@ def _persist_rate_state(scope: str, data) -> None:
         )
         conn.execute(
             "INSERT OR REPLACE INTO rate_limits (scope, value, updated) VALUES (?,?,?)",
-            (scope, _json.dumps(dict(data)), time.time()),
+            (scope, json.dumps(dict(data)), time.time()),
         )
         conn.commit()
     except Exception:
@@ -128,11 +144,9 @@ def _persist_rate_state(scope: str, data) -> None:
 def _load_rate_state(scope: str):
     """Read a previously persisted rate-limiter dict, or None if absent/corrupt."""
     try:
-        import json as _json
-        import sqlite3 as _sqlite3
         from statuspage.db import get_db_path
-        conn = _sqlite3.connect(str(get_db_path()))
-        conn.row_factory = _sqlite3.Row
+        conn = sqlite3.connect(str(get_db_path()))
+        conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT value FROM rate_limits WHERE scope=?", (scope,)
         ).fetchone()
@@ -142,7 +156,7 @@ def _load_rate_state(scope: str):
     if row is None:
         return None
     try:
-        return _json.loads(row["value"])
+        return json.loads(row["value"])
     except Exception:
         return None
 
@@ -160,8 +174,16 @@ def init_rate_limit_db() -> None:
         if target:
             continue  # only hydrate an empty (fresh) process
         loaded = _load_rate_state(scope)
-        if loaded:
-            target.update(loaded)
+        if not loaded:
+            continue
+        # login_failures timestamps must not survive past LOCKOUT_SECONDS —
+        # rehydrating stale lockouts would re-lock IPs permanently.
+        if scope == "login_failures":
+            now = time.time()
+            loaded = {ip: [t for t in ts if now - t < LOCKOUT_SECONDS]
+                      for ip, ts in loaded.items()}
+            loaded = {ip: ts for ip, ts in loaded.items() if ts}
+        target.update(loaded)
 
 
 # ── CSRF ────────────────────────────────────────────────────────────
