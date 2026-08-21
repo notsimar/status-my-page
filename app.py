@@ -98,7 +98,37 @@ init_config_paths(BASE_DIR)
 # Load config to get secret key env var name
 cfg = load_config()
 SECRET_ENV = cfg.get("server", {}).get("secret_key_env", "STATUS_SECRET_KEY")
-app.secret_key = os.environ.get(SECRET_ENV) or secrets.token_hex(32)
+
+
+def _resolve_secret_key() -> str:
+    """Resolve the Flask secret key.
+
+    With multiple Gunicorn workers, a per-process random key breaks sessions
+    (each worker would sign cookies differently). Fall back to a key file in
+    the instance directory, created once with owner-only permissions, so all
+    workers share the same key across restarts.
+    """
+    env_key = os.environ.get(SECRET_ENV)
+    if env_key:
+        return env_key
+
+    key_file = get_base_dir() / "instance" / ".secret_key"
+    try:
+        if key_file.exists():
+            key = key_file.read_text(encoding="utf-8").strip()
+            if key:
+                return key
+        key = secrets.token_hex(32)
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_text(key, encoding="utf-8")
+        key_file.chmod(0o600)
+        return key
+    except OSError:
+        # Last resort (single-process dev only): ephemeral random key.
+        return secrets.token_hex(32)
+
+
+app.secret_key = _resolve_secret_key()
 
 # Initialize admin auth (requires STATUS_ADMIN_PASS_HASH env var)
 init_admin_auth()

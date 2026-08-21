@@ -29,7 +29,8 @@ from statuspage.services import (
     clear_item_history,
 )
 from statuspage.config import (
-    _load_healthchecks, _save_healthchecks, _save_rss,
+    HEALTHCHECKS_CFG_LOCK,
+    _load_healthchecks, _save_healthchecks, _load_rss, _save_rss,
     _load_settings, _save_settings, history_enabled, healthchecks_enabled,
 )
 from statuspage import rss as rss_mod
@@ -154,6 +155,7 @@ def generate_static_html() -> str:
     """
     import datetime as dt
     import base64
+    import html as _html
     from pathlib import Path
     from flask import current_app
 
@@ -202,7 +204,8 @@ def generate_static_html() -> str:
     for item in items:
         status = item["status"]
         status_label = "Operational" if status == "green" else ("Degraded" if status == "degraded" else "Outage")
-        notes = (item["notes"] or "").strip() if "notes" in item.keys() else ""
+        # Escape admin-controlled text — this HTML bypasses Jinja autoescaping
+        notes = _html.escape((item["notes"] or "").strip()) if "notes" in item.keys() else ""
         show_notes_class = " show-notes" if status != "green" and notes else ""
 
         notes_html = f'<div class="static-notes">{notes}</div>' if notes else ''
@@ -211,7 +214,7 @@ def generate_static_html() -> str:
         <div class="status-row{show_notes_class}" data-id="{item['id']}">
             <div class="status-main">
                 <span class="status-dot {status}"></span>
-                <span class="status-name">{item['name']}</span>
+                <span class="status-name">{_html.escape(item['name'])}</span>
                 <span class="status-label {status}">{status_label}</span>
             </div>
             {notes_html}
@@ -626,14 +629,16 @@ def api_healthchecks_create():
         return jsonify(error=err), 400
     hc_config.update(numeric)
 
-    # Check for duplicate name
-    existing = _load_healthchecks()
-    if name in existing:
-        return jsonify(error="healthcheck with this name already exists"), 409
+    # Check for duplicate name (load-modify-save under lock so concurrent
+    # admin requests can't lose updates)
+    with HEALTHCHECKS_CFG_LOCK:
+        existing = _load_healthchecks()
+        if name in existing:
+            return jsonify(error="healthcheck with this name already exists"), 409
 
-    # Save
-    existing[name] = hc_config
-    _save_healthchecks(existing)
+        # Save
+        existing[name] = hc_config
+        _save_healthchecks(existing)
 
     return jsonify(ok=True, name=name, config=hc_config)
 
@@ -647,6 +652,16 @@ def api_healthchecks_update(name: str):
     """
     data = validate_json_data(request.get_json(silent=True))
 
+    # Hold the lock across the entire load-validate-modify-save sequence
+    with HEALTHCHECKS_CFG_LOCK:
+        return _apply_healthchecks_update(name, data)
+
+
+def _apply_healthchecks_update(name: str, data: dict):
+    """Apply an update payload to an existing healthcheck config.
+
+    Caller MUST hold HEALTHCHECKS_CFG_LOCK.
+    """
     existing = _load_healthchecks()
     if name not in existing:
         return jsonify(error="healthcheck not found"), 404
@@ -792,12 +807,14 @@ def api_healthchecks_update(name: str):
 @require_admin()
 def api_healthchecks_delete(name: str):
     """Delete a healthcheck configuration."""
-    existing = _load_healthchecks()
-    if name not in existing:
-        return jsonify(error="healthcheck not found"), 404
+    # Load-modify-save under lock so concurrent admin requests can't lose updates
+    with HEALTHCHECKS_CFG_LOCK:
+        existing = _load_healthchecks()
+        if name not in existing:
+            return jsonify(error="healthcheck not found"), 404
 
-    del existing[name]
-    _save_healthchecks(existing)
+        del existing[name]
+        _save_healthchecks(existing)
 
     return jsonify(ok=True)
 
