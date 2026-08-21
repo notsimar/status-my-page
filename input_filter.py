@@ -54,19 +54,36 @@ XSS_PATTERNS = [
     re.compile(r'&(?:lt|gt|amp|#\d+|#x[0-9a-f]+);', re.IGNORECASE),
 ]
 
-# SQL injection patterns: common attack keywords in user-supplied text
-SQLI_PATTERNS = [
+# SQL injection patterns, split in two tiers:
+#
+# ── COMPOUND: definitive multi-keyword attack constructs (UNION SELECT,
+#    DROP ... TABLE, OR 1=1 tautologies). Applied to EVERY text field —
+#    names, notes, usernames. Deliberately cannot match ordinary operational
+#    prose.
+SQLI_COMPOUND_PATTERNS = [
     # Classic SQLi: UNION SELECT, OR 1=1, DROP TABLE, etc.
     re.compile(r'\b(?:UNION|SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|EXEC|EXECUTE|TRUNCATE)\b.*\b(?:FROM|WHERE|INTO|TABLE|DATABASE|SET|VALUES)\b', re.IGNORECASE),
     # tautology-based: OR 1=1, OR 'a'='a', AND 1=1
     re.compile(r'''\b(?:OR|AND)\s+['"]?\w+['"]?\s*=\s*['"]?\w+['"]?''', re.IGNORECASE),
-    # Comment-based injection: --, /*, ;
+]
+
+# ── AGGRESSIVE: single-token indicators (bare `--`, `; word`, 0x hex).
+#    Only checked by sanitize_text(), the free-text sanitizer for shell-
+#    injection-proximate fields. NOT applied to notes or names: bare
+#    semicolons, double-hyphens, and hex strings are legitimate in status
+#    notes ("rollback; retry at noon", "v1.2 -- stable release"), and all
+#    SQL in this app is parameterized, so this tier adds only friction.
+SQLI_AGGRESSIVE_PATTERNS = [
+    # Comment-based injection: --, /*, ;DROP
     re.compile(r'(?:--|/\*|\*/|;\s*(?:DROP|DELETE|INSERT|UPDATE|ALTER))', re.IGNORECASE),
     # Stacked queries via semicolons
     re.compile(r';\s*\w+', re.IGNORECASE),
     # Hex encoding often used in SQLi: 0x27, 0x2D2D
     re.compile(r'0x[0-9a-fA-F]{2,}', re.IGNORECASE),
 ]
+
+# Legacy umbrella: compound + aggressive (sanitize_text uses this).
+SQLI_PATTERNS = SQLI_COMPOUND_PATTERNS + SQLI_AGGRESSIVE_PATTERNS
 
 # Path traversal / filesystem escape
 PATH_TRAVERSAL = re.compile(r'(?:\.\./|\.\.\\|%2e%2e[%2f\\/]|%5c)', re.IGNORECASE)
@@ -105,8 +122,23 @@ def check_xss_patterns(text: str) -> bool:
 
 
 def check_sqli_patterns(text: str) -> bool:
-    """Return True if text contains suspicious SQL injection patterns."""
+    """Return True if text contains suspicious SQL injection patterns
+    (compound + aggressive tiers — the strictest check)."""
     for pat in SQLI_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
+
+
+def check_sqli_compound(text: str) -> bool:
+    """Return True if text contains compound SQL attack constructs only.
+
+    Used by validate_name()/validate_notes() for human-authored text where
+    single-token indicators (bare `--`, `; word`, 0x hex) are legitimate —
+    all SQL in this app is parameterized, so the aggressive tier would only
+    reject real notes for no security gain.
+    """
+    for pat in SQLI_COMPOUND_PATTERNS:
         if pat.search(text):
             return True
     return False
@@ -204,7 +236,7 @@ def validate_name(raw: str, field: str = "name",
     # Injection checks
     for label, check_fn in [
         ("XSS", check_xss_patterns),
-        ("SQLi", check_sqli_patterns),
+        ("SQLi", check_sqli_compound),
         ("path traversal", check_path_traversal),
         ("shell injection", check_shell_injection),
     ]:
@@ -243,7 +275,7 @@ def validate_notes(raw: str, field: str = "notes") -> str:
 
     for label, check_fn in [
         ("XSS", check_xss_patterns),
-        ("SQLi", check_sqli_patterns),
+        ("SQLi", check_sqli_compound),
         ("path traversal", check_path_traversal),
     ]:
         if check_fn(raw):

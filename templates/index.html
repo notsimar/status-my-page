@@ -23,8 +23,7 @@
         <div class="top-bar">
             <button id="themeToggle" class="theme-btn" type="button" aria-label="Switch to light mode">☀️ Light mode</button>
             <div class="logo-wrap">
-                <img src="/static/logos/dark-logo.png" alt="Logo" class="logo-img logo-dark">
-                <img src="/static/logos/light-logo.png" alt="Logo" class="logo-img logo-light">
+                {% if logo_url %}<img src="{{ logo_url }}" alt="Logo" class="logo-img">{% endif %}
             </div>
             {% if not session_admin %}<button id="loginBtn" class="login-btn" type="button">Admin Login</button>{% endif %}
         </div>
@@ -297,6 +296,7 @@
     {% if csrf_token %}
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% endif %}
+    <script src="/static/js/csrf.js"></script>
     <script src="/static/js/app.js"></script>
     <script src="/static/js/healthchecks.js"></script>
     <script src="/static/js/rss.js"></script>

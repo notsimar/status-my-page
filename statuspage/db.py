@@ -7,17 +7,11 @@ import datetime as dt
 import json
 import sqlite3
 import tempfile
-from pathlib import Path
 
 from statuspage.config import get_db_path, get_archives_dir, load_config
 from constants import (
     MAX_HISTORY_PER_ITEM,
-    HISTORY_RUNTIME_CAP,
     DEFAULT_SEED_ITEMS,
-    ARCHIVE_DIR_NAME,
-    INSTANCE_DIR_NAME,
-    DB_FILENAME,
-    STATUS_SORT_ORDER,
 )
 
 

@@ -7,7 +7,6 @@ from statuspage.db import (
     get_connection,
     get_all_items,
     get_item_by_id,
-    get_item_name,
     toggle_status as db_toggle_status,
     update_name as db_update_name,
     reorder as db_reorder,
@@ -22,18 +21,22 @@ from statuspage.db import (
 
 # ── Status Service ──────────────────────────────────────────────────
 
-def toggle_item(item_id: int) -> str:
-    """Cycle: green → degraded → red → green."""
+def toggle_item(item_id: int) -> dict | None:
+    """Cycle: green → degraded → red → green.
+
+    Returns {"status": <new-status>} on success, or None when the item id
+    does not exist (caller maps that to 404 — before the fix, a bad id
+    just returned 'green', indistinguishable from a real toggle)."""
     with get_connection() as db:
         row = get_item_by_id(db, item_id)
         if not row:
-            return "green"
+            return None
         old_status = row["status"]  # must be captured BEFORE the toggle
         status = db_toggle_status(db, item_id)
         # Record history
         record_history(db, item_id, "status", old_status, status)
         db.commit()
-    return status
+    return {"status": status}
 
 
 def rename_item(item_id: int, name: str) -> tuple[bool, str]:
@@ -54,12 +57,14 @@ def reorder_items(order_map: dict[int, int]) -> None:
         db.commit()
 
 
-def update_notes(item_id: int, notes: str) -> None:
+def update_notes(item_id: int, notes: str) -> bool:
+    """Set the notes for an item. Returns False when the item id does not
+    exist (caller maps that to 404)."""
     with get_connection() as db:
         # Get current notes for history tracking
         row = get_item_by_id(db, item_id)
         if not row:
-            return
+            return False
         old_notes = row["notes"] or ""
 
         # Record history if notes actually changed
@@ -68,6 +73,7 @@ def update_notes(item_id: int, notes: str) -> None:
 
         db_set_notes(db, item_id, notes)
         db.commit()
+    return True
 
 
 def add_item(name: str) -> dict:

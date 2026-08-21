@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """HTTP routes for status-my-page."""
 import sqlite3
-from urllib.parse import urlparse
-from flask import jsonify, render_template, session, request
+from flask import jsonify, render_template, session, request, abort
 
 import healthcheck as hc_module  # shared validation helpers
 from statuspage.auth import (
@@ -13,7 +12,7 @@ from statuspage.auth import (
     require_admin,
     get_csrf,
 )
-from statuspage.db import get_connection, get_all_items
+from statuspage.db import get_connection
 from statuspage.healthcheck import (
     get_configured_healthchecks,
     run_healthchecks_once,
@@ -30,7 +29,7 @@ from statuspage.services import (
     clear_item_history,
 )
 from statuspage.config import (
-    _load_healthchecks, _save_healthchecks, _load_rss, _save_rss,
+    _load_healthchecks, _save_healthchecks, _save_rss,
     _load_settings, _save_settings, history_enabled, healthchecks_enabled,
 )
 from statuspage import rss as rss_mod
@@ -91,11 +90,9 @@ def api_history(item_id: int):
     the endpoint 404s so the timeline is unreachable, not just hidden.
     """
     if not history_enabled():
-        from flask import abort
         abort(404)
     result = get_item_history(item_id)
     if result is None:
-        from flask import abort
         abort(404)
     return jsonify(result)
 
@@ -110,15 +107,43 @@ def api_history_clear(item_id: int):
     """
     removed = clear_item_history(item_id)
     if removed is None:
-        from flask import abort
         abort(404)
     return jsonify(ok=True, removed=removed)
 
 
+def _redact_healthcheck(d: dict) -> dict:
+    """Strip internal targets from a healthcheck for public display.
+
+    A public visitor sees the check name, type, and tuning numbers —
+    never the url/host/port/soap_action (internal network topology), nor
+    the keyword lists that would expose how this page interprets vendor
+    feeds. Admins get the full object via the gated view.
+    """
+    safe = {
+        "type": d.get("type", ""),
+        "interval": d.get("interval"),
+        "timeout": d.get("timeout"),
+        "retries": d.get("retries"),
+    }
+    if d.get("service"):
+        safe["service"] = d["service"]
+    # healthy_codes are public: they are HTTP status codes, not topology
+    if d.get("healthy_codes"):
+        safe["healthy_codes"] = sorted(d["healthy_codes"])
+    return safe
+
+
 def api_healthchecks():
-    """Return all configured healthchecks. Public read — no auth required."""
+    """List configured healthchecks.
+
+    Admins get the full config (the admin panel needs url/host/port to render
+    and edit). Everyone else gets a redacted summary — the endpoint is
+    reachable without auth, and probe targets are internal-network detail.
+    """
     hc = get_configured_healthchecks()
-    return jsonify(hc)
+    if session.get("admin"):
+        return jsonify(hc)
+    return jsonify({name: _redact_healthcheck(d) for name, d in hc.items()})
 
 
 def generate_static_html() -> str:
@@ -154,25 +179,21 @@ def generate_static_html() -> str:
     if css_path.exists():
         css_content = css_path.read_text(encoding="utf-8")
 
-    # Encode dark and light logos as base64 data URIs so static HTML is 100% standalone
-    dark_logo_path = static_dir / "logos" / "dark-logo.png"
-    light_logo_path = static_dir / "logos" / "light-logo.png"
-
-    dark_logo_src = "/static/logos/dark-logo.png"
-    light_logo_src = "/static/logos/light-logo.png"
-
-    if dark_logo_path.exists():
-        b64 = base64.b64encode(dark_logo_path.read_bytes()).decode("ascii")
-        dark_logo_src = f"data:image/png;base64,{b64}"
-
-    if light_logo_path.exists():
-        b64 = base64.b64encode(light_logo_path.read_bytes()).decode("ascii")
-        light_logo_src = f"data:image/png;base64,{b64}"
-
-    logo_html = f"""
+    # Inline the logo as a base64 data URI so the static HTML is standalone,
+    # honoring the same resolution + traversal guard as the live page
+    # (``logo.path`` from config.yaml, via get_logo_local_path()). No configured
+    # logo, or file missing/empty/traversal -> an empty <div class="logo-wrap">.
+    from statuspage.config import get_logo_local_path
+    logo_path = get_logo_local_path()
+    if logo_path is not None:
+        b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+        logo_html = f"""
             <div class="logo-wrap">
-                <img src="{dark_logo_src}" alt="Logo" class="logo-img logo-dark">
-                <img src="{light_logo_src}" alt="Logo" class="logo-img logo-light">
+                <img src="data:image/png;base64,{b64}" alt="Logo" class="logo-img">
+            </div>"""
+    else:
+        logo_html = """
+            <div class="logo-wrap">
             </div>"""
 
     generated_time = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -318,8 +339,10 @@ api_csrf = csrf_token_route
 
 @require_admin()
 def api_toggle(item_id: int):
-    status = toggle_item(item_id)
-    return jsonify(status=status)
+    result = toggle_item(item_id)
+    if result is None:
+        abort(404, description="Service not found")
+    return jsonify(result)
 
 
 @require_admin()
@@ -328,7 +351,6 @@ def api_rename(item_id: int):
     name = validate_name(data.get("name", ""), "name")
     ok, msg = rename_item(item_id, name)
     if not ok:
-        from flask import abort
         status_code = 404 if msg == "Not found" else 409
         return jsonify(error=msg), status_code
     return jsonify(ok=True)
@@ -338,7 +360,8 @@ def api_rename(item_id: int):
 def api_notes(item_id: int):
     data = validate_json_data(request.get_json(silent=True))
     notes = validate_notes(data.get("notes", ""), "notes")
-    update_notes(item_id, notes)
+    if not update_notes(item_id, notes):
+        abort(404, description="Service not found")
     return jsonify(ok=True)
 
 
@@ -357,7 +380,6 @@ def api_add():
 def api_delete(item_id: int):
     name = delete_item(item_id)
     if name is None:
-        from flask import abort
         return jsonify(error="Not found"), 404
     return jsonify(ok=True, name=name)
 

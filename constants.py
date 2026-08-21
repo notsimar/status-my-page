@@ -39,6 +39,13 @@ CURL_MAX_REDIRS = 5                  # Max redirects for curl
 HEALTHCHECK_LOCK_STALE_SECONDS = 300
 HEALTHCHECK_LOCK_REFRESH_SECONDS = 30
 
+# One-shot healthcheck run bounds (POST /api/healthcheck/run).
+# The background worker honors each check's full configured timeout and runs
+# concurrently; a one-shot "test now" run must NEVER stall the request, so it
+# gets a smaller per-check cap and a hard overall wall-clock budget.
+HEALTHCHECK_RUN_HARD_TIMEOUT = 20     # overall budget for a full one-shot run (seconds)
+HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP = 15 # max per-check timeout for one-shot (worker ignores this)
+
 
 # ── Server defaults ─────────────────────────────────────────────────
 DEFAULT_HOST = "0.0.0.0"

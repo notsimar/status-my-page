@@ -30,11 +30,13 @@ from input_filter import (
 class TestMissingRowPaths:
     """Test functions that handle missing DB rows gracefully."""
 
-    def test_toggle_item_missing_row_returns_green(self, A):
-        """toggle_item() returns 'green' for non-existent item_id without error."""
+    def test_toggle_item_missing_row_returns_none(self, A):
+        """toggle_item() returns None for non-existent item_id (routes map
+        that to HTTP 404 — before the fix it returned 'green', which the
+        UI treated as a successful toggle-to-green)."""
         with A.app.test_request_context():
             result = A.toggle_item(999999)
-        assert result == "green"
+        assert result is None
 
     def test_update_item_name_missing_row_returns_not_found(self, A):
         """update_item_name() returns (False, 'Not found') for non-existent item_id."""

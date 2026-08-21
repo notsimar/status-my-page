@@ -106,10 +106,18 @@ class Test_D3_SecurityGuard:
         m._mutation_rates[ip] = [dt.datetime.now(dt.timezone.utc).timestamp()] * (m.MUTATION_MAX + 1)
 
     # ── Baseline: one request succeeds (checked on toggle only — all share the gate) ───
-    def test_baseline_all_ok__success(self, admin, token):
-        """Admin + Valid CSRF + Under Rate Limit -> 200 (Baseline)."""
+    def test_baseline_all_ok__success(self, admin, token, A):
+        """Admin + Valid CSRF + Under Rate Limit + existing item -> 200 (Baseline)."""
+        # Resolve a real item id (id 1 is not guaranteed across test order —
+        # other tests delete items). A missing item is now 404, so the
+        # happy-path guard check must exercise an id that exists.
+        with A.app.test_request_context():
+            item_id = A.get_db().execute(
+                "SELECT id FROM status_items LIMIT 1"
+            ).fetchone()
+        assert item_id is not None, "need at least one seeded item"
         r = admin.post(
-            "/api/toggle/1",
+            f"/api/toggle/{item_id['id']}",
             headers={"X-CSRF-Token": token},
             content_type="application/json", data=b'{}',
         )

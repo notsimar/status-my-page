@@ -52,6 +52,13 @@ do_show() {
         echo "Usage: $0 show <filename_in_archives>"
         exit 1
     fi
+    # Reject traversal: filename must be a single archives/*.json basename
+    case "$file" in
+        */*|.|..|*..)
+            echo "Invalid archive name: $file"
+            exit 1
+            ;;
+    esac
     local path="$ARCHIVES_DIR/$file"
     if [ ! -f "$path" ]; then
         echo "Archive not found: $file"

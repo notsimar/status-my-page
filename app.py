@@ -47,7 +47,7 @@ from statuspage.config import (
     get_config_path,
     get_archives_dir,
 )
-from statuspage.auth import init_admin_auth
+from statuspage.auth import init_admin_auth, init_rate_limit_db
 from statuspage.db import init_db
 from statuspage.healthcheck import configure_healthcheck_module, start_healthchecks
 from statuspage.routes import (
@@ -138,7 +138,6 @@ def _close_db(exc):
 from statuspage import config as _config
 from statuspage import auth as _auth
 from statuspage import db as _db
-from statuspage import healthcheck as _healthcheck
 
 # Expose config functions for tests
 init_config_paths = _config.init_config_paths
@@ -442,12 +441,25 @@ app.add_url_rule("/api/export/static", "api_export_static", api_export_static, m
 
 
 # ── Initialize DB and start healthchecks ───────────────────────────
-# Ensure DB tables exist and healthcheck thread is started when running under WSGI (e.g. Gunicorn)
+# Ensure DB tables exist and healthcheck thread is started when running under WSGI (e.g. Gunicorn).
+# Only a brand-new deploy (DB file absent) builds here. If that build fails we
+# FAIL FAST (loud log + exit) rather than serve a page on a broken/empty DB —
+# a half-working status page is worse than a clearly-down one.
 if not get_db_path().exists():
     try:
         init_db()
-    except Exception:
-        pass
+    except Exception as _init_err:
+        import traceback as _tb
+        sys.stderr.write(
+            "\n[status-my-page] FATAL: could not initialize the status database "
+            f"at {get_db_path()} — refusing to start.\n"
+            f"  {type(_init_err).__name__}: {_init_err}\n{_tb.format_exc()}\n"
+        )
+        sys.exit(1)
+
+# Rehydrate rate-limiter state (lockouts, mutation counters, CSRF failures)
+# from the shared DB so limits survive reloads / worker restarts.
+init_rate_limit_db()
 
 # Only start healthchecks if not disabled via env var (for tests)
 if not os.environ.get("STATUS_DISABLE_HEALTHCHECKS"):

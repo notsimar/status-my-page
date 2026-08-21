@@ -12,6 +12,7 @@ logs/
 archives/
 .server.pid
 .env
+.env.local
 
 # Test stubs (leave untracked to avoid cluttering working directory)
 test_fixes.*

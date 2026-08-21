@@ -357,13 +357,28 @@ keywords. A matching `red` keyword flips the item red *immediately* (next
 check, no retry ladder); a matching `degraded` keyword flips it degraded;
 a clean feed flips it back to green. If the feed itself can't be fetched,
 the normal retry ladder applies (degraded → red). `keywords` is optional:
-with no keywords, only fetch failures change the status.
+with no keywords, only fetch failures change the status. Feeds whose XML
+preamble declares a DOCTYPE with **internal DTD entities** (the "billion
+laughs" entity-expansion vector) are rejected as unreachable before
+parsing — a vendor feed can never drive the dashboard red via a crafted
+DTD (`healthcheck.feed_treats_as_unfetchable`).
 
 **Key Options:**
 - `service` — target dashboard service name to update (defaults to healthcheck name if omitted)
 - `interval` — seconds between checks (default: 60)
 - `timeout` — seconds per attempt (default: 10)
-- `retries` — consecutive failures before marking degraded/red (default: 2)
+- `retries` — severity ladder threshold (default: 2). Single retrieval
+  failure = no state change. If the number of *consecutive* failures
+  reaches `retries` the service flips **degraded**, and at
+  `retries × 3` it flips **red**:
+  | Consecutive failures | healthcheck state     |
+  |--------------------:|----------------------|
+  | `< retries`          | no change            |
+  | `retries … 3×retries−1` | **degraded**     |
+  | `≥ 3×retries`        | **red**              |
+  RSS "cannot retrieve feed" failures go through the same ladder as
+  other check types; keyword-driven red/degraded flips do not.
+  (implemented in `healthcheck.severity_from_failures`)
 - `healthy_codes` — HTTP codes considered healthy (default: `[200]`)
 - `expected_string` — response must contain this substring (SOAP)
 - `failure_keyword` — response body match that flags RED/outage (HTTP/SOAP)

@@ -515,7 +515,8 @@ class TestHealthcheckDelete:
 class TestHealthcheckIntegration:
     """API writes ↔ public read, worker parsing, item deletion."""
 
-    def test_public_read_reflects_write(self, admin, A, clean_hc):
+    def test_public_read_reflects_write_redacted(self, admin, A, clean_hc):
+        """Public readers see the check exist but NOT its probe target."""
         name = _name("Pub")
         assert _mutate(admin, "POST", "/api/healthchecks",
                        {"name": name, "type": "tcp", "host": "127.0.0.1",
@@ -527,7 +528,15 @@ class TestHealthcheckIntegration:
         body = r.get_json()
         assert name in body
         assert body[name]["type"] == "tcp"
-        assert body[name]["port"] == 5432
+        # Probe target and port are internal detail — redacted publicly
+        assert "host" not in body[name]
+        assert "port" not in body[name]
+        # Admin still sees the full config
+        ar = admin.get("/api/healthchecks")
+        assert ar.status_code == 200
+        abody = ar.get_json()
+        assert abody[name]["port"] == 5432
+        assert abody[name]["host"] == "127.0.0.1"
 
     def test_worker_parser_sees_new_entry(self, admin, A, clean_hc):
         """The background worker hot-reloads config; an entry created via API
@@ -783,7 +792,7 @@ class TestRssFeedApi:
         assert r.status_code == 400
         assert "degraded" in r.get_json()["error"]
 
-    def test_public_read_serializes_rss(self, admin, A, clean_hc):
+    def test_public_read_redacts_rss_target(self, admin, A, clean_hc):
         name = _name("RssPub")
         assert _mutate(admin, "POST", "/api/healthchecks",
                        {"name": name, "type": "rss",
@@ -792,8 +801,15 @@ class TestRssFeedApi:
         assert r.status_code == 200
         body = r.get_json()
         assert body[name]["type"] == "rss"
-        assert isinstance(body[name]["keywords"]["red"], list)
-        assert "outage" in body[name]["keywords"]["red"]
+        # Public view: the feed url and the keyword lists are redacted
+        assert "url" not in body[name]
+        assert "keywords" not in body[name]
+        # Admin view: full config intact (url + default keywords)
+        ar = admin.get("/api/healthchecks")
+        abody = ar.get_json()
+        assert abody[name]["url"] == "https://status.vendor.com/rss"
+        assert isinstance(abody[name]["keywords"]["red"], list)
+        assert "outage" in abody[name]["keywords"]["red"]
 
     def test_update_rss_keywords_full_replace(self, admin, clean_hc):
         name = _name("RssUpdate")

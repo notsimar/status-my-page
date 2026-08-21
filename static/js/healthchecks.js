@@ -1,44 +1,6 @@
 // ── Healthcheck Admin UI ───────────────────────────────────────────
 // Handles the healthcheck admin panel: list, create, edit, delete, run
-
-// CSRF token helpers (shared with app.js)
-function _csrfToken() {
-    const el = document.querySelector('meta[name="csrf-token"]');
-    return el ? el.getAttribute('content') || '' : '';
-}
-
-function _setCsrfToken(token) {
-    let el = document.querySelector('meta[name="csrf-token"]');
-    if (!el) {
-        el = document.createElement('meta');
-        el.name = 'csrf-token';
-        document.head.appendChild(el);
-    }
-    el.setAttribute('content', token);
-}
-
-async function csrfFetch(url, options = {}) {
-    const token = _csrfToken();
-    if (!options.headers) options.headers = {};
-    if (token) options.headers['X-CSRF-Token'] = token;
-    const res = await fetch(url, options);
-
-    if (res.status === 403) {
-        location.reload();
-    }
-
-    if (res.ok && res.status < 300) {
-        try {
-            const tokRes = await fetch('/api/csrf-token');
-            if (tokRes.ok) {
-                const data = await tokRes.json();
-                if (data.token) _setCsrfToken(data.token);
-            }
-        } catch (_) { }
-    }
-
-    return res;
-}
+// (csrfFetch / _csrfToken / _setCsrfToken come from static/js/csrf.js)
 
 // ── DOM Elements ──────────────────────────────────────────────────
 const healthcheckAdmin = document.getElementById('healthcheckAdmin');

@@ -1101,7 +1101,147 @@ class TestApiHealthcheckRun:
         assert before == after
 
 
+# ─── run_healthchecks_once bounding ─────────────────────────────
+
+class TestRunHealthchecksOnceBounded:
+    """The one-shot run must have a hard wall-clock budget so that a
+    slow/stalling probe can never hang the HTTP request."""
+
+    def test_budget_exhaustion_marks_remaining_timed_out(self, A, monkeypatch):
+        import healthcheck as hc
+
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["SvcA", "SvcB"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 1, "timeout": 1},
+                        "SvcB": {"type": "tcp", "host": "127.0.0.1", "port": 1, "timeout": 1},
+                    },
+                },
+                f,
+            )
+        hc.configure_healthcheck(
+            A.get_base_dir(), A.get_db_path(),
+            A.get_config_path(), A.load_config,
+            A.MAX_HISTORY_PER_ITEM,
+        )
+
+        # Fake a monotonic clock; the first check burns past the 20s budget.
+        from constants import HEALTHCHECK_RUN_HARD_TIMEOUT
+        state = {"t": float(HEALTHCHECK_RUN_HARD_TIMEOUT)}
+
+        def fake_monotonic():
+            return state["t"]
+
+        monkeypatch.setattr(hc.time, "monotonic", fake_monotonic)
+
+        orig_tcp = hc._run_tcp_check
+
+        def slow_tcp(host, port, timeout):
+            state["t"] += HEALTHCHECK_RUN_HARD_TIMEOUT + 5
+            return orig_tcp(host, port, timeout)
+
+        monkeypatch.setattr(hc, "_run_tcp_check", slow_tcp)
+
+        results = hc.run_healthchecks_once()
+        # First check actually ran (loopback port 1 is closed -> not healthy)
+        assert results["SvcA"]["healthy"] is False
+        assert "timed_out" not in results["SvcA"]
+        # Second check was skipped due to the exhausted budget
+        assert results["SvcB"]["timed_out"] is True
+        assert results["SvcB"]["healthy"] is False
+
+    def test_per_check_timeout_capped(self, A, monkeypatch):
+        """Configured 300s timeouts must not be used verbatim by the
+        one-shot path (they'd pair with 500+ other checks to stall)."""
+        import healthcheck as hc
+        from constants import HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP
+
+        with open(str(A.CONFIG_PATH), "w") as f:
+            yaml.dump(
+                {
+                    "items": ["Slow"],
+                    "_runtime": {},
+                    "healthchecks": {
+                        "Slow": {"type": "tcp", "host": "127.0.0.1", "port": 2, "timeout": 300},
+                    },
+                },
+                f,
+            )
+        hc.configure_healthcheck(
+            A.get_base_dir(), A.get_db_path(),
+            A.get_config_path(), A.load_config,
+            A.MAX_HISTORY_PER_ITEM,
+        )
+
+        seen = {}
+        orig_tcp = hc._run_tcp_check
+
+        def spy_tcp(host, port, timeout):
+            seen["timeout"] = timeout
+            return orig_tcp(host, port, timeout)
+
+        monkeypatch.setattr(hc, "_run_tcp_check", spy_tcp)
+        results = hc.run_healthchecks_once()
+
+        assert seen["timeout"] <= HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP
+        assert results["Slow"]["healthy"] is False
+
+
 # ─── _set_health_status ──────────────────────────────────────
+
+class TestSeverityFromFailures:
+    """The worker's failures -> severity ladder, now a named rule.
+
+    Below retries: no change. retries .. 3*retries-1: degraded.
+    >= 3*retries: red.
+    """
+
+    def test_below_threshold_is_degraded_when_crossed(self):
+        import healthcheck as hc
+        # Boundary behaviors at a few thresholds
+        assert hc.severity_from_failures(2, 2) == "degraded"     # exactly retries
+        assert hc.severity_from_failures(5, 2) == "degraded"     # just under 3*retries
+        assert hc.severity_from_failures(6, 2) == "red"          # exactly 3*retries
+        assert hc.severity_from_failures(6, 3) == "degraded"     # 3*retries=9 here
+        assert hc.severity_from_failures(9, 3) == "red"
+
+    def test_large_threshold(self):
+        import healthcheck as hc
+        assert hc.severity_from_failures(10, 10) == "degraded"
+        assert hc.severity_from_failures(29, 10) == "degraded"
+        assert hc.severity_from_failures(30, 10) == "red"
+
+
+class TestFeedTreatsAsUnfetchable:
+    """Optional DTD entity-expansion (billion laughs) guard."""
+
+    def test_rejects_internal_entity_doctype(self):
+        import healthcheck as hc
+        payload = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<!DOCTYPE rss [<!ENTITY lol "lol">'
+            '<!ENTITY haha "&lol;&lol;">]>'
+            '<rss><channel><item><title>x</title></item></channel></rss>'
+        )
+        assert hc.feed_treats_as_unfetchable(payload) is True
+
+    def test_allows_plain_feed_without_doctype(self):
+        import healthcheck as hc
+        ok = '<rss><channel><item><title>operational</title></item></channel></rss>'
+        assert hc.feed_treats_as_unfetchable(ok) is False
+
+    def test_allows_doctype_with_external_subset_only(self):
+        import healthcheck as hc
+        ok = (
+            '<?xml version="1.0"?>'
+            '<!DOCTYPE feed SYSTEM "feed.dtd">'
+            '<feed><entry><title>ok</title></entry></feed>'
+        )
+        assert hc.feed_treats_as_unfetchable(ok) is False
+
 
 class TestSetHealthStatus:
     """Direct DB mutation path used by the worker thread."""

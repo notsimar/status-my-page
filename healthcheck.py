@@ -11,7 +11,6 @@ Supports automated background and on-demand health checking via:
 
 import datetime as dt
 import ipaddress
-import os
 import re
 import sqlite3
 import subprocess
@@ -31,6 +30,35 @@ CURL_MAX_REDIRS = 5
 # at most this many bytes of the feed before parsing.
 RSS_MAX_ITEMS = 20
 RSS_MAX_BYTES = 512 * 1024
+
+# DOCTYPE with an internal DTD entity block — the classic "billion laughs"
+# entity-expansion vector. Paid/vendor RSS never needs internal entities, so
+# any feed presenting one is rejected as a fetch failure (never as green).
+# (Python 3.14's ElementTree already caps internal-entity recursion depth;
+# this belt-and-braces check makes the policy explicit and exportable.)
+_RSS_DOCTYPE_INTERNAL_ENTITY = re.compile(
+    r'<!DOCTYPE\s+\S+\s*\[\s*<!ENTITY[^>]+>', re.IGNORECASE
+)
+
+
+def feed_treats_as_unfetchable(body: str) -> bool:
+    """True when a fetched feed body is a DTD entity-expansion (billion
+    laughs) vector and must be treated as a fetch failure. See
+    _RSS_DOCTYPE_INTERNAL_ENTITY for the rule. Exported for tests + docs."""
+    return bool(_RSS_DOCTYPE_INTERNAL_ENTITY.search(body))
+
+
+def severity_from_failures(attempts: int, retries: int) -> str:
+    """The failures → severity rule, in one place (was inline in the
+    worker loop and undocumented):
+        attempts < retries            -> still green (no status change yet)
+        retries <= attempts < retries*3 -> "degraded"
+        attempts >= retries*3          -> "red"
+    Returns the desired state for an *unhealthy* result.
+    """
+    if attempts >= retries * 3:
+        return "red"
+    return "degraded"
 
 # Mutex for DB writes from the healthcheck thread
 _HEALTH_LOCK = threading.Lock()
@@ -490,6 +518,10 @@ def _run_rss_feed_check(url: str, timeout: int, keywords: dict[str, list[str]] |
     if code != 200:
         return None, code
 
+    # Reject DTD entity-expansion payloads BEFORE parsing (billion laughs).
+    if feed_treats_as_unfetchable(resp_body):
+        return None, code
+
     try:
         root = ET.fromstring(resp_body)
     except ET.ParseError:
@@ -563,7 +595,11 @@ def _set_health_status(name: str, desired_status: str):
                     (row["id"], row["id"], _get_max_history_per_item()),
                 )
             except Exception:
-                pass
+                # Non-fatal: a history write/prune hiccup must not drop the
+                # status flip (main UPDATE already applied). Log so a
+                # persistent failure (e.g. schema drift) is visible.
+                print(f"Healthcheck warning: could not record history for "
+                      f"{name!r} -> {desired_status!r} (status update still applied)")
 
             conn.commit()
         finally:
@@ -599,7 +635,11 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
             # Another worker process is already running the healthcheck worker
             lock_file.close()
             return
-    except Exception:
+    except Exception as e:
+        # Couldn't even open the lock file — proceeding unlocked means two
+        # worker processes could briefly race; log it so it's diagnosable.
+        print(f"Healthcheck warning: could not open lock file at "
+              f"{lock_file_path} ({e!r}); proceeding unlocked")
         lock_file = None  # couldn't even open the lock file; proceed unlocked
 
     # Track consecutive failures per service (for retry/backoff)
@@ -698,16 +738,19 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
                     _set_health_status(svc_name, "green")
 
                 else:
-                    # Unhealthy — increment counter
+                    # Unhealthy — increment counter. Severity per
+                    # severity_from_failures(): >=retries failures -> degraded,
+                    # >=3*retries -> red (below the threshold it stays as-is).
                     fail_count[name] = fail_count.get(name, 0) + 1
                     attempts = fail_count[name]
                     threshold = hc["retries"]
 
                     if attempts >= threshold:
-                        status = "red" if attempts >= threshold * 3 else "degraded"
+                        status = severity_from_failures(attempts, threshold)
                         _set_health_status(svc_name, status)
-                        print(f"Healthcheck FAIL [{name} -> {svc_name}] attempt={attempts}/{threshold} "
-                              f"{check_info} -> {status}")
+                        print(f"Healthcheck FAIL [{name} -> {svc_name}] "
+                              f"consecutive_failures={attempts} threshold={threshold} "
+                              f"(red at {threshold * 3}) {check_info} -> {status}")
 
                 # Schedule next check for this service on its own interval
                 next_fire[name] = time.time() + hc["interval"]
@@ -724,25 +767,57 @@ def _healthcheck_worker(stop_event: threading.Event | None = None):
         # Release the lock; the stop event (if any) stays caller-owned.
         try:
             lock_file.close()
-        except Exception:
-            pass
+        except Exception as e:
+            # Cleanup-only failure (worker loop has already exited); log so
+            # persistent close errors (disk health, permissions) are visible.
+            print(f"Healthcheck warning: could not close lock file: {e!r}")
 
 
 def run_healthchecks_once() -> dict[str, dict]:
-    """Public entry-point: runs all healthchecks once (no DB mutation)."""
+    """Public entry-point: runs all healthchecks once (no DB mutation).
+
+    Bounded by design (this is the one-shot ``POST /api/healthcheck/run``
+    path, which blocks an HTTP request):
+      * per-check timeout is capped at HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP
+        (the background worker deliberately keeps its own, larger, config
+        values — they are passed by reference and never mutated here)
+      * a hard overall wall-clock budget of HEALTHCHECK_RUN_HARD_TIMEOUT
+        seconds: checks that would not finish in time are reported as
+        ``"timed_out": true`` rather than stalling the request.
+    """
+    from constants import (
+        HEALTHCHECK_RUN_HARD_TIMEOUT,
+        HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP,
+    )
+
     healthchecks = _parse_healthchecks()
     results: dict[str, dict] = {}
 
+    deadline = time.monotonic() + HEALTHCHECK_RUN_HARD_TIMEOUT
     for name, hc in healthchecks.items():
+        if time.monotonic() >= deadline:
+            # Budget exhausted — skip the remainder rather than stall.
+            results[name] = {
+                "type": hc.get("type", ""),
+                "healthy": False,
+                "timed_out": True,
+                "detail": "one-shot run time budget exhausted",
+            }
+            continue
+
+        remaining = max(1, int(deadline - time.monotonic()))
+        timeout = min(int(hc.get("timeout", HEALTHCHECK_TIMEOUT_DEFAULT)),
+                      HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP, remaining)
+
         if hc.get("type") == "ping":
-            healthy = _run_ping_check(hc["host"], hc["timeout"])
+            healthy = _run_ping_check(hc["host"], timeout)
             results[name] = {"type": "ping", "host": hc["host"], "healthy": healthy}
         elif hc.get("type") == "tcp":
-            healthy = _run_tcp_check(hc["host"], hc["port"], hc["timeout"])
+            healthy = _run_tcp_check(hc["host"], hc["port"], timeout)
             results[name] = {"type": "tcp", "host": hc["host"], "port": hc["port"], "healthy": healthy}
         elif hc.get("type") == "soap":
             is_healthy, code = _run_soap_check(
-                url=hc["url"], timeout=hc["timeout"],
+                url=hc["url"], timeout=timeout,
                 soap_action=hc.get("soap_action", ""),
                 body=hc.get("body", ""),
                 healthy_codes=hc.get("healthy_codes"),
@@ -751,7 +826,7 @@ def run_healthchecks_once() -> dict[str, dict]:
             results[name] = {"type": "soap", "status_code": code, "healthy": is_healthy}
         elif hc.get("type") == "rss":
             rss_result, code = _run_rss_feed_check(
-                url=hc["url"], timeout=hc["timeout"],
+                url=hc["url"], timeout=timeout,
                 keywords=hc.get("keywords"),
             )
             results[name] = {"type": "rss", "url": hc["url"],
@@ -759,7 +834,7 @@ def run_healthchecks_once() -> dict[str, dict]:
                              "healthy": rss_result == "green"}
         else:
             body_ok, code, res_status = _run_curl_check(
-                hc["url"], hc["timeout"],
+                hc["url"], timeout,
                 failure_keyword=hc.get("failure_keyword", ""),
                 degraded_keyword=hc.get("degraded_keyword", "")
             )

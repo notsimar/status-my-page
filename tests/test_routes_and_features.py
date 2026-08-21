@@ -285,8 +285,9 @@ class TestItemMutations:
         assert r.status_code == 404
         assert r.get_json() == {"error": "Not found"}
 
-    def test_notes_nonexistent_item_returns_ok(self, admin, token):
-        """POST /api/notes/<id> returns 200 even for non-existent item (set_notes handles missing rows gracefully)."""
+    def test_notes_nonexistent_item_404(self, admin, token):
+        """POST /api/notes/<id> returns 404 for a non-existent item (before
+        the fix this silently returned 200 ok for a dead row id)."""
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r = admin.post(
             "/api/notes/999999",
@@ -294,8 +295,7 @@ class TestItemMutations:
             content_type="application/json",
             headers={"X-CSRF-Token": tok},
         )
-        assert r.status_code == 200
-        assert r.get_json() == {"ok": True}
+        assert r.status_code == 404
 
 
     def test_toggle_cycles_status_in_db(self, admin, token, A):
@@ -345,7 +345,11 @@ class TestItemMutations:
         assert "Operational" in r.text or "Degraded" in r.text or "Outage" in r.text
         assert "attachment; filename=\"status.html\"" in r.headers.get("Content-Disposition", "")
         assert "logo-wrap" in r.text
-        assert "logo-dark" in r.text and "logo-light" in r.text
+        # The temp deploy has no logo.path configured: the wrapper renders
+        # empty. The old hardcoded 0-byte logo-dark/logo-light images (and
+        # their theme-toggle CSS) are gone — the logo is driven solely by
+        # logo.path in config.yaml (implemented + traversal-guarded).
+        assert "logo-dark" not in r.text and "logo-light" not in r.text
 
 
     def test_export_static_unauthorized(self, client):

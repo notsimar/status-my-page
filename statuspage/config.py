@@ -154,17 +154,54 @@ def get_static_dir() -> Path:
 
 
 def get_logo_url() -> str:
-    """Return public URL for logo if configured, else empty string."""
+    """Return the public URL for the configured logo, or "" if not configured.
+
+    ``logo.path`` in config.yaml may be given as a path relative to the
+    static dir (``logos/my-logo.png``) or as a full URL (``/static/my-logo.png``);
+    both normalize to ``/static/...``. Traversal (``..``) or empty values
+    refuse to resolve — an attacker-controlled ``logo.path`` must not be able
+    to point the page at another path on the static server.
+    """
     if not _LOGO_PATH:
         return ""
-    # Ensure path is absolute and within static dir
-    try:
-        # strip leading /static/
-        rel = _LOGO_PATH.lstrip("/")
-        # map to Flask static file path
-        return f"/static/{rel}"
-    except Exception:
+    rel = str(_LOGO_PATH).strip().lstrip("/")
+    if not rel:
         return ""
+    if ".." in Path(rel).parts:
+        return ""
+    # Accept "/static/x" or "static/x" input; return canonical /static/x
+    if rel.startswith("static/"):
+        rel = rel[len("static/"):]
+    return f"/static/{rel}"
+
+
+def get_logo_local_path() -> Path | None:
+    """Absolute filesystem path of the configured logo, or None.
+
+    Single source of truth for resolving ``logo.path`` to a real file: it must
+    exist, be non-empty, and (after any ``static/`` prefix is stripped) stay
+    within the static dir with no ``..`` traversal. The static-HTML exporter
+    uses this to inline the logo as a data URI.
+    """
+    if not _LOGO_PATH or STATIC_DIR is None:
+        return None
+    rel = str(_LOGO_PATH).strip().lstrip("/")
+    if not rel or ".." in Path(rel).parts:
+        return None
+    if rel.startswith("static/"):
+        rel = rel[len("static/"):]
+    candidate = (STATIC_DIR / rel).resolve()
+    # Containment + existence checks
+    try:
+        static_root = STATIC_DIR.resolve()
+        within_static = static_root in candidate.parents or candidate.parent == static_root
+    except (OSError, RuntimeError):
+        within_static = False
+    if not within_static:
+        return None
+    if not candidate.is_file() or candidate.stat().st_size == 0:
+        return None
+    return candidate
 
 
 # ── YAML runtime persistence ────────────────────────────────────────
@@ -199,6 +236,17 @@ def _rotate_backups() -> None:
     # 3. Save current config.yaml as bak1 (before the new write overwrites it)
     bak1 = backup_dir / f"{cfg_base.name}.bak1"
     shutil.copy2(str(cfg_base), str(bak1))
+
+    # 4. Backups mirror the live config, which can hold secrets (admin hash
+    #    via inline YAML on some deployments); never leave them world-read-
+    #    able. Reassert 0600 on every rotated copy (rename preserves mode,
+    #    but installs predating this fix may have 0644 files).
+    import stat as _stat
+    for bak in sorted(backup_dir.glob(f"{cfg_base.name}.bak*")):
+        try:
+            bak.chmod(_stat.S_IRUSR | _stat.S_IWUSR)  # 0600
+        except OSError:
+            pass
 
 
 def _load_runtime() -> dict:

@@ -3,7 +3,6 @@
 # Run as the target user (no sudo required):
 #   cd status-page && ./install.sh [INSTALL_DIR]
 # Default INSTALL_DIR = $HOME/.local/share/status-page
-
 set -euo pipefail
 
 # Determine the project root directory (where this script lives)
@@ -81,43 +80,102 @@ if [ "$ROOT" -eq 0 ]; then
 fi
 echo ""
 
-echo "=== Initialize database ==="
-"$VENV_DIR/bin/python3" -c "import sys; sys.path.insert(0, '$INSTALL_DIR'); from app import init_db; init_db()"
-echo "Database seeded."
-echo ""
-
+# ── Admin credentials ────────────────────────────────────────────
+# Prompted FIRST: init_db() seeds the DB via the app, which requires
+# STATUS_ADMIN_PASS_HASH to be set — seeding before the env file exists
+# would abort the install (set -e) before the user is ever asked.
 echo "=== Admin credentials ==="
 read -rp "Admin username [admin]: " ADMIN_USER_INPUT
 ADMIN_USER="${ADMIN_USER_INPUT:-admin}"
 read -rsp "Admin password: " ADMIN_PASS_INPUT
 echo ""
-PASS_HASH=$("$VENV_DIR/bin/python3" -c "from werkzeug.security import generate_password_hash; import sys; pwd=sys.stdin.read(); print(generate_password_hash(pwd.rstrip('\n')))" <<< "$ADMIN_PASS_INPUT")
+if [ -z "$ADMIN_PASS_INPUT" ]; then
+    echo "ERROR: Admin password must not be empty."
+    exit 1
+fi
+if [ -t 1 ] && printf '%s' "$ADMIN_PASS_INPUT" | grep -q $'\t'; then
+    echo "ERROR: Password contains a tab character (terminal echo artefact). Re-run install."
+    exit 1
+fi
+PASS_HASH="$("$VENV_DIR/bin/python3" -c "from werkzeug.security import generate_password_hash; import sys; pwd=sys.stdin.read(); print(generate_password_hash(pwd.rstrip('\n')))" <<< "$ADMIN_PASS_INPUT")"
 
-export _SP_INSTALL_USER="$ADMIN_USER"
-"$VENV_DIR/bin/python3" -c "
-import yaml, os
-cfg = yaml.safe_load(open(os.environ['INSTALL_DIR'] + '/config.yaml'))
-cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
-open(os.environ['INSTALL_DIR'] + '/config.yaml','w').write(yaml.dump(cfg, default_flow_style=False))
-"
-echo "Credentials set: user=$ADMIN_USER"
-echo ""
-
-SECRET_KEY=$("$VENV_DIR/bin/python3" -c "import secrets; print(secrets.token_hex(32))")
+SECRET_KEY="$("$VENV_DIR/bin/python3" -c "import secrets; print(secrets.token_hex(32))")"
 ENV_FILE="$INSTALL_DIR/.env.local"
 mkdir -p "$(dirname "$ENV_FILE")"
-# Copy project .env.local if it exists, otherwise create new one
-if [ -f "$ROOT_DIR/.env.local" ]; then
-    cp "$ROOT_DIR/.env.local" "$ENV_FILE"
+
+if [ -f "$ENV_FILE" ]; then
+    # Existing credentials in the install dir: keep them, but tell the user —
+    # the prompted values above are NOT applied unless override is explicit.
+    echo "⚠️  $ENV_FILE already exists — keeping existing credentials."
+    echo "    The prompted password was ignored. Remove $ENV_FILE to re-create it,"
+    echo "    or re-run with SP_INSTALL_OVERRIDE_ENV=1 to force the new credentials."
+    if [ "${SP_INSTALL_OVERRIDE_ENV:-0}" = "1" ]; then
+        echo "    Override active — replacing $ENV_FILE."
+    fi
+elif [ -f "$ROOT_DIR/.env.local" ]; then
+    # Project env (e.g. a dev-only password / healthchecks-disabled flag) would
+    # silently override the credentials just prompted — only reuse when the
+    # source env actually exports a real admin hash.
+    if grep -q '^STATUS_ADMIN_PASS_HASH=..*' "$ROOT_DIR/.env.local" 2>/dev/null; then
+        echo "⚠️  Reusing STATUS_ADMIN_PASS_HASH from $ROOT_DIR/.env.local —"
+        echo "    the prompted password is NOT used. The new secret key is applied."
+        { grep -v '^STATUS_SECRET_KEY=' "$ROOT_DIR/.env.local" || true; } > "$ENV_FILE.tmp"
+        printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY" >> "$ENV_FILE.tmp"
+        if ! grep -q '^PYTHONUNBUFFERED=' "$ENV_FILE.tmp"; then
+            printf 'PYTHONUNBUFFERED=1\n' >> "$ENV_FILE.tmp"
+        fi
+        mv "$ENV_FILE.tmp" "$ENV_FILE"
+        # Keep the admin username in sync with the prompt
+        export _SP_INSTALL_USER="$ADMIN_USER"
+        "$VENV_DIR/bin/python3" -c "
+import yaml, os
+p = os.environ['INSTALL_DIR'] + '/config.yaml'
+cfg = yaml.safe_load(open(p))
+cfg['admin'] = cfg.get('admin', {})
+cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
+open(p, 'w').write(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+"
+        echo "Credentials set: user=$ADMIN_USER (password from $ROOT_DIR/.env.local)"
+    else
+        # Source env has no usable hash — fall through to fresh creation.
+        echo "Source $ROOT_DIR/.env.local has no STATUS_ADMIN_PASS_HASH — creating a fresh env file."
+        {
+            printf '%s=%s\n' "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+            printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY"
+            printf 'PYTHONUNBUFFERED=1\n'
+        } > "$ENV_FILE"
+        if ! grep -q '^STATUS_DISABLE_HEALTHCHECKS=' "$ROOT_DIR/.env.local" 2>/dev/null; then
+            : # no dev-only flags inherited; nothing to merge
+        fi
+        echo "Credentials set: user=$ADMIN_USER (new password)"
+    fi
 else
-    cat > "$ENV_FILE" << ENVEOF
-STATUS_ADMIN_PASS_HASH=$PASS_HASH
-STATUS_SECRET_KEY=$SECRET_KEY
-PYTHONUNBUFFERED=1
-ENVEOF
+    # Fresh install: write prompted credentials
+    export _SP_INSTALL_USER="$ADMIN_USER"
+    "$VENV_DIR/bin/python3" -c "
+import yaml, os
+p = os.environ['INSTALL_DIR'] + '/config.yaml'
+cfg = yaml.safe_load(open(p))
+cfg['admin'] = cfg.get('admin', {})
+cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
+open(p, 'w').write(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+"
+    {
+        printf '%s=%s\n' "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+        printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY"
+        printf 'PYTHONUNBUFFERED=1\n'
+    } > "$ENV_FILE"
+    echo "Credentials set: user=$ADMIN_USER (new password)"
 fi
 chmod 0600 "$ENV_FILE"
 echo "Env file created at $ENV_FILE"
+echo ""
+
+# ── Seed the database ────────────────────────────────────────────
+# Runs AFTER the env file exists so init_admin_auth() can resolve the hash.
+echo "=== Initialize database ==="
+"$VENV_DIR/bin/python3" -c "import sys; sys.path.insert(0, '$INSTALL_DIR'); from app import init_db; init_db()"
+echo "Database seeded."
 echo ""
 
 if [ "$ROOT" -eq 1 ]; then
@@ -132,11 +190,11 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=$ENV_FILE
+Environment="PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin"
 ExecStart=$VENV_DIR/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app
 Restart=on-failure
 RestartSec=5
-EnvironmentFile=$ENV_FILE
-Environment="PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin"
 
 [Install]
 WantedBy=multi-user.target
@@ -148,8 +206,7 @@ SVCEOF
 else
     echo ""
     echo "Non-root install complete. Start manually:"
-    echo "  source $ENV_FILE"
-    echo "  $VENV_DIR/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app"
+    echo "  cd $INSTALL_DIR && ./start.sh"
 fi
 echo ""
 
