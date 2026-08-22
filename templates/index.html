@@ -25,7 +25,11 @@
             <div class="logo-wrap">
                 {% if logo_url %}<img src="{{ logo_url }}" alt="Logo" class="logo-img">{% endif %}
             </div>
-            {% if not session_admin %}<button id="loginBtn" class="login-btn" type="button">Admin Login</button>{% endif %}
+            {% if session_admin %}
+            <div class="top-bar-spacer" aria-hidden="true"></div>
+            {% else %}
+            <button id="loginBtn" class="login-btn" type="button">Admin Login</button>
+            {% endif %}
         </div>
         <header>
             <h1>Application Status</h1>

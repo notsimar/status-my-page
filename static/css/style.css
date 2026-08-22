@@ -59,6 +59,19 @@ header { text-align: center; margin-bottom: 2.5rem; }
     flex: 1;
 }
 
+/* Symmetric counterweight for the theme button so the logo stays truly
+   centered in admin mode, where the login button is absent. */
+.top-bar-spacer {
+    display: inline-flex;
+    min-width: var(--topbar-side-min, 7.5rem);
+    /* match theme-btn's box: padding + content estimate */
+    visibility: hidden;
+}
+
+@media (max-width: 640px) {
+    .top-bar-spacer { display: none; }
+}
+
 .logo-img {
     max-height: 36px;
     max-width: 160px;
@@ -470,6 +483,7 @@ body.admin .btn-delete { display: flex; }
         width: 100%;
         margin-top: 0.5rem;
     }
+    .top-bar-spacer { display: none; }
     .logo-img {
         max-height: 28px;
         max-width: 120px;
