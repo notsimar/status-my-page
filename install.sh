@@ -112,8 +112,8 @@ if [ -f "$ENV_FILE" ]; then
     if [ "${SP_INSTALL_OVERRIDE_ENV:-0}" = "1" ]; then
         echo "    Override active — replacing $ENV_FILE with prompted credentials."
         {
-            printf '%s=%s\n' "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
-            printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY"
+            printf "%s='%s'\n" "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+            printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY"
             printf 'PYTHONUNBUFFERED=1\n'
         } > "$ENV_FILE"
         export _SP_INSTALL_USER="$ADMIN_USER"
@@ -137,7 +137,7 @@ elif [ -f "$ROOT_DIR/.env.local" ]; then
         echo "⚠️  Reusing STATUS_ADMIN_PASS_HASH from $ROOT_DIR/.env.local —"
         echo "    the prompted password is NOT used. The new secret key is applied."
         { grep -v '^STATUS_SECRET_KEY=' "$ROOT_DIR/.env.local" || true; } > "$ENV_FILE.tmp"
-        printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY" >> "$ENV_FILE.tmp"
+        printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY" >> "$ENV_FILE.tmp"
         if ! grep -q '^PYTHONUNBUFFERED=' "$ENV_FILE.tmp"; then
             printf 'PYTHONUNBUFFERED=1\n' >> "$ENV_FILE.tmp"
         fi
@@ -157,8 +157,8 @@ open(p, 'w').write(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
         # Source env has no usable hash — fall through to fresh creation.
         echo "Source $ROOT_DIR/.env.local has no STATUS_ADMIN_PASS_HASH — creating a fresh env file."
         {
-            printf '%s=%s\n' "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
-            printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY"
+            printf "%s='%s'\n" "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+            printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY"
             printf 'PYTHONUNBUFFERED=1\n'
         } > "$ENV_FILE"
         if ! grep -q '^STATUS_DISABLE_HEALTHCHECKS=' "$ROOT_DIR/.env.local" 2>/dev/null; then
@@ -178,8 +178,8 @@ cfg['admin']['user'] = os.environ['_SP_INSTALL_USER']
 open(p, 'w').write(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
 "
     {
-        printf '%s=%s\n' "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
-        printf '%s=%s\n' "STATUS_SECRET_KEY" "$SECRET_KEY"
+        printf "%s='%s'\n" "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+        printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY"
         printf 'PYTHONUNBUFFERED=1\n'
     } > "$ENV_FILE"
     echo "Credentials set: user=$ADMIN_USER (new password)"

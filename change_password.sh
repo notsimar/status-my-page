@@ -91,7 +91,7 @@ except FileNotFoundError:
 new_lines = []
 for line in lines:
     if line.strip().startswith("STATUS_ADMIN_PASS_HASH="):
-        new_lines.append(f"STATUS_ADMIN_PASS_HASH={new_hash}\n")
+        new_lines.append(f"STATUS_ADMIN_PASS_HASH='{new_hash}'\n")
         found = True
     else:
         new_lines.append(line)
@@ -99,7 +99,7 @@ for line in lines:
 if not found:
     if new_lines and not new_lines[-1].endswith("\n"):
         new_lines.append("\n")
-    new_lines.append(f"STATUS_ADMIN_PASS_HASH={new_hash}\n")
+    new_lines.append(f"STATUS_ADMIN_PASS_HASH='{new_hash}'\n")
 
 with open(env_path, "w", encoding="utf-8") as f:
     f.writelines(new_lines)
