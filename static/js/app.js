@@ -7,6 +7,7 @@ const loginForm = document.getElementById('loginForm');
 
 if (loginBtn) {
     loginBtn.addEventListener('click', () => {
+    setTimeout(() => document.getElementById('userInput')?.focus(), 50);
         loginModal.classList.remove('hidden');
         setTimeout(() => document.getElementById('userInput').focus(), 50);
     });
@@ -42,6 +43,34 @@ document.getElementById('logoutBtn') && document.getElementById('logoutBtn').add
 const list = document.getElementById('statusList');
 const STATUS_CYCLE = ['green', 'degraded', 'red'];
 const STATUS_LABELS = { green: 'Operational', degraded: 'Degraded', red: 'Outage' };
+
+
+// ── Keyboard reorder (Alt+ArrowUp/Down on a focused row) ─────────
+function moveRow(row, dir) {
+    if (!row || !document.body.classList.contains('admin')) return;
+    const sibling = dir === 'up' ? row.previousElementSibling
+                                 : row.nextElementSibling;
+    if (!sibling) return;
+    row.parentNode.insertBefore(dir === 'up' ? row : sibling,
+                                dir === 'up' ? sibling : row.nextElementSibling);
+    row.focus();
+    scheduleKeyboardPersist();
+}
+
+let kbTimer = null;
+function scheduleKeyboardPersist() {
+    clearTimeout(kbTimer);
+    kbTimer = setTimeout(() => {
+        const rows = [...document.querySelectorAll('.status-row')];
+        const order = {};
+        rows.forEach((r, i) => { order[r.dataset.id] = i; });
+        csrfFetch('/api/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order })
+        }).catch(() => window.showToast && showToast('Reorder failed', 'error'));
+    }, 500);
+}
 
 list && list.addEventListener('click', async e => {
     const main = e.target.closest('.status-main');
@@ -105,6 +134,16 @@ function showToggleNotice(row, text) {
     setTimeout(() => n.remove(), 5000);
 }
 
+list.addEventListener('keydown', e => {
+    if (!e.altKey) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const main = e.target.closest('.status-main');
+    if (!main) return;
+    const row = main.closest('.status-row');
+    e.preventDefault();
+    moveRow(row, e.key === 'ArrowUp' ? 'up' : 'down');
+});
+
 // ── Notes auto-save on blur (admin only), debounce 800ms ─────────
 var timers = {};
 if (list) {
@@ -151,6 +190,10 @@ if (list) {
 }
 
 // Initial height adjustment for existing textareas on load
+document.querySelectorAll('.status-row').forEach(r => {
+    r.setAttribute('tabindex', '0');
+});
+
 document.querySelectorAll('textarea.notes-input').forEach(ta => {
     ta.style.height = 'auto';
     ta.style.height = ta.scrollHeight + 'px';
@@ -165,14 +208,28 @@ list && list.addEventListener('click', async e => {
     const id = btn.dataset.id;
     const name = row.querySelector('.status-name').textContent;
 
+    const confirmed = await uxConfirm(
+        'Delete service \u201C' + name + '\u201D?\n' +
+        'Its status history will be removed too. This cannot be undone.',
+        { okLabel: 'Delete', danger: true });
+    if (!confirmed) return;
+
     try {
         const res = await csrfFetch('/api/delete/' + id, { method: 'POST' });
         if (!res.ok) throw new Error(await res.text());
         row.style.transition = 'opacity 0.3s, transform 0.3s';
         row.style.opacity = '0';
         row.style.transform = 'translateX(-20px)';
-        setTimeout(() => { row.remove(); updateBadge(); }, 300);
-    } catch (err) { alert('Failed to delete: ' + err.message); }
+        setTimeout(() => {
+            row.remove();
+            updateBadge();
+            window.refreshNotesIndicators &&
+                window.refreshNotesIndicators();
+            window.showToast('Deleted \u201C' + name + '\u201D', 'success');
+        }, 300);
+    } catch (err) {
+        window.showToast('Failed to delete: ' + err.message, 'error');
+    }
 });
 
 // ── Add item (admin only) ────────────────────────────────────────
@@ -191,6 +248,8 @@ if (addItemForm) {
                 body: JSON.stringify({ name })
             });
             if (!res.ok) throw new Error((await res.json()).error || 'Failed');
+            window.showToast && window.showToast('Added "' + name + '"', 'success');
+            window.refreshNotesIndicators && window.refreshNotesIndicators();
 
             // Appending DOM row client-side is instant.
             const item = (await res.json()).item;
@@ -218,7 +277,7 @@ if (addItemForm) {
 
             input.value = '';
             updateBadge();
-        } catch (err) { alert(err.message); }
+        } catch (err) { window.showToast(err.message, 'error'); }
     });
 }
 
@@ -386,10 +445,13 @@ async function openHistory(itemId) {
                 const timeEl = document.createElement('time');
                 timeEl.className = 'history-time';
                 const d = new Date(entry.occurred + (entry.occurred.endsWith('Z') ? '' : 'Z'));
-                timeEl.textContent = d.toLocaleString(undefined, {
+                timeEl.textContent = window.timeAgo
+                    ? timeAgo(d.toISOString())
+                    : d.toLocaleString();
+                timeEl.title = d.toLocaleString(undefined, {
                     year: 'numeric', month: 'short', day: 'numeric',
                     hour: '2-digit', minute: '2-digit'
-                });
+                });   // absolute on hover for incident timelines
                 el.appendChild(timeEl);
 
                 historyTimeline.appendChild(el);
@@ -446,7 +508,10 @@ let historyModalItemId = null;  // service whose timeline the modal currently sh
 // Shared action: wipe a service's timeline, refresh the modal if it's open
 async function clearHistoryData(id, btn) {
     const name = (btn.closest('.status-row')?.querySelector('.status-name')?.textContent) || ('#' + id);
-    if (!confirm('Clear all history for \u201C' + name + '\u201D?\nThis cannot be undone.')) return false;
+    const confirmed = await uxConfirm(
+        'Clear all history for \u201C' + name + '\u201D? This cannot be undone.',
+        { okLabel: 'Clear history', danger: true });
+    if (!confirmed) return false;
     if (btn) btn.disabled = true;
     try {
         const res = await csrfFetch('/api/history/' + id + '/clear', { method: 'POST' });
@@ -456,7 +521,7 @@ async function clearHistoryData(id, btn) {
         if (btn) btn.title = 'Cleared ' + (data.removed || 0) + ' entr' + ((data.removed || 0) === 1 ? 'y' : 'ies') + ' \u00B7 click again to clear more';
         return true;
     } catch (err) {
-        alert('Failed to clear history: ' + err.message);
+        window.showToast('Failed to clear history: ' + err.message, 'error');
         return false;
     } finally {
         if (btn) btn.disabled = false;

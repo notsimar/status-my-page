@@ -41,8 +41,9 @@ async function csrfFetch(url, options = {}) {
     if (res.status === 403) {
         const reason = res.headers.get('X-Auth-Error') || 'not-logged-in';
         if (reason === 'rate-limited') {
-            alert('Change not applied — too many recent actions. ' +
-                  'Wait a few seconds and try again.');
+            window.showToast && showToast(
+                'Change not applied — too many recent actions. Wait a few seconds and try again.',
+                'warn');
         } else {
             location.reload();
         }

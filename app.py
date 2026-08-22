@@ -58,6 +58,7 @@ from statuspage.routes import (
     api_slack_status,
     api_slack_update,
     api_settings_status,
+    api_status_public,
     api_settings_update,
     api_history,
     api_history_clear,
@@ -470,6 +471,7 @@ app.add_url_rule("/api/rss", "api_rss_toggle", api_rss_toggle, methods=["POST"])
 app.add_url_rule("/api/slack", "api_slack_status", api_slack_status, methods=["GET"])
 app.add_url_rule("/api/slack", "api_slack_update", api_slack_update, methods=["POST"])
 app.add_url_rule("/api/settings", "api_settings_status", api_settings_status, methods=["GET"])
+app.add_url_rule("/api/status", "api_status_public", api_status_public, methods=["GET"])
 app.add_url_rule("/api/settings", "api_settings_update", api_settings_update, methods=["POST"])
 app.add_url_rule("/api/history/<int:item_id>", "api_history", api_history)
 app.add_url_rule("/api/history/<int:item_id>/clear", "api_history_clear", api_history_clear, methods=["POST"])

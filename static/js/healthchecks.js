@@ -367,7 +367,7 @@ if (healthcheckTbody) {
                 const data = await res.json();
                 if (data[name]) openModal('edit', data[name]);
             } catch (err) {
-                alert('Failed to load healthcheck: ' + err.message);
+                window.showToast('Failed to load healthcheck: ' + err.message, 'error');
             }
             return;
         }
@@ -380,12 +380,12 @@ if (healthcheckTbody) {
                 const res = await csrfFetch('/api/healthcheck/run', { method: 'POST' });
                 const result = await res.json();
                 if (res.ok) {
-                    alert(`Healthcheck run complete for ${name}`);
+                    window.showToast('Healthcheck run complete for ' + name, 'success');
                 } else {
-                    alert('Run failed: ' + (result.error || 'Unknown error'));
+                    window.showToast('Run failed: ' + (result.error || 'Unknown error'), 'error');
                 }
             } catch (err) {
-                alert('Connection error: ' + err.message);
+                window.showToast('Connection error: ' + err.message, 'error');
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = '▶';
@@ -395,17 +395,17 @@ if (healthcheckTbody) {
 
         if (deleteBtn) {
             const name = deleteBtn.dataset.name;
-            if (!confirm(`Delete healthcheck "${name}"?`)) return;
+            if (!(await uxConfirm(`Delete healthcheck "${name}"?`, { okLabel: 'Delete', danger: true }))) return;
             try {
                 const res = await csrfFetch(`/api/healthchecks/${encodeURIComponent(name)}`, { method: 'DELETE' });
                 const result = await res.json();
                 if (!res.ok) {
-                    alert('Delete failed: ' + (result.error || 'Unknown error'));
+                    window.showToast('Delete failed: ' + (result.error || 'Unknown error'), 'error');
                     return;
                 }
                 await loadHealthchecks();
             } catch (err) {
-                alert('Connection error: ' + err.message);
+                window.showToast('Connection error: ' + err.message, 'error');
             }
             return;
         }

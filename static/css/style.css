@@ -1071,3 +1071,37 @@ body.admin .btn-history-clear { display: flex; }
     --code-bg: rgba(0, 0, 0, 0.06);
     color-scheme: light;
 }
+
+/* ── UX layer (ux.js): toasts, notices, indicators ─────────────── */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+.notes-indicator {
+    font-size: 0.85rem;
+    opacity: 0.75;
+}
+.notes-indicator:hover { opacity: 1; }
+
+.toggle-notice {
+    font-size: 0.78rem;
+    color: #c0392b;
+    margin-top: 2px;
+}
+
+.status-row:focus-visible {
+    outline: 2px solid var(--accent, #4a90d9);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+
+.btn-delete:focus-visible,
+.btn-history-clear:focus-visible {
+    outline: 2px solid #c0392b;
+}
+
+#last-updated { user-select: none; }

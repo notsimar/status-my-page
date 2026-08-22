@@ -920,6 +920,21 @@ def api_slack_update():
 INPUT_CHANNEL_RE = re.compile(r"^[#@]?[a-z0-9][a-z0-9._-]{0,78}$", re.IGNORECASE)
 
 
+def api_status_public():
+    """Lightweight public status list for auto-refresh polling.
+
+    Returns id/name/status/notes only — no history, no admin detail.
+    Notes are included so open note panes stay in sync for visitors.
+    """
+    items = get_all_status_items()
+    return jsonify([
+        {"id": it["id"], "name": it["name"],
+         "status": it["status"],
+         "notes": it["notes"] if "notes" in it.keys() else ""}
+        for it in items
+    ])
+
+
 def api_settings_status():
     """Public: current UI settings so the template/JS render the right state.
 
