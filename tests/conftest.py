@@ -73,6 +73,46 @@ def A():
     yield m  # app module (cfg path available via m.CONFIG_PATH etc.)
 
 
+# ── Fake Slack webhook (shared by slack + MC/DC suites) ─────────────
+
+@pytest.fixture(scope="session")
+def fake_slack_url():
+    """Local fake Slack webhook: records payloads to _FakeSlack.payloads."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class _FakeSlack(BaseHTTPRequestHandler):
+        payloads = []
+        fail_with = None  # (status_code, body) tuple or None
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            _FakeSlack.payloads.append(json.loads(body))
+            if _FakeSlack.fail_with:
+                status, text = _FakeSlack.fail_with
+                self.send_response(status)
+                self.end_headers()
+                self.wfile.write(text.encode())
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+        def log_message(self, format, *args):
+            pass
+
+    globals()["_FakeSlack"] = _FakeSlack
+    import sys as _sys
+    _sys.modules[__name__]._FakeSlack = _FakeSlack
+
+    server = HTTPServer(("127.0.0.1", 0), _FakeSlack)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/services/fake"
+    server.shutdown()
+
+
 # ── Convenience helpers ────────────────────────────────────────
 
 def db_conn(A):

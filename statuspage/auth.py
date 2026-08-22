@@ -250,7 +250,11 @@ def require_admin(require_csrf: bool = True, require_rate_limit: bool = True):
             ip = request.remote_addr or ""
             if not session.get("admin"):
                 return _deny("not-logged-in", "Not authenticated")
-            if require_csrf and not check_csrf():
+            # CSRF only applies to state-changing methods (GET/HEAD/OPTIONS
+            # are read-only; requiring a token on reads would also burn the
+            # single-use token on every admin page asset request).
+            needs_csrf = require_csrf and request.method not in ("GET", "HEAD", "OPTIONS")
+            if needs_csrf and not check_csrf():
                 return _deny("csrf", "Request rejected (CSRF)")
             if require_rate_limit and not check_mutation_rate(ip):
                 return _deny("rate-limited", "Too many requests, slow down")
@@ -312,8 +316,18 @@ def login_route():
 
 
 def logout_route():
+    # Flush the queued status-change digest to Slack (best-effort) BEFORE
+    # the session dies — a Slack failure must not prevent logout.
+    try:
+        from statuspage.slack import flush
+        from flask import request as _req
+        sent, remaining, detail = flush(base_url=_req.host_url)
+        if sent or remaining:
+            print(f"Slack: flushed {sent} on logout ({remaining} still queued: {detail})")
+    except Exception as exc:
+        print(f"Slack warning: logout flush failed ({exc})")
     session.clear()
-    return jsonify(ok=True)
+    return jsonify(ok=True, slack_flushed=True)
 
 
 def auth_check_route():

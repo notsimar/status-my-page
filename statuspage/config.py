@@ -334,6 +334,11 @@ def _load_settings() -> dict:
     return sec if isinstance(sec, dict) else {}
 
 
+def _save_slack(slack: dict) -> None:
+    """Atomically write slack section into config.yaml with backup rotation."""
+    _save_section("slack", slack)
+
+
 def history_enabled() -> bool:
     """Whether the per-service history timeline is exposed (default: off).
 

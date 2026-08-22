@@ -21,3 +21,8 @@ rss:
   title: Application Status
 settings:
   healthchecks_enabled: false
+slack:
+  enabled: false
+  webhook_url: ''
+  channel: ''
+  max_queue: 100

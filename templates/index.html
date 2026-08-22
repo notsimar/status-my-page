@@ -110,6 +110,34 @@
         </div>
     </div>
 
+    <!-- Slack Notifications Admin Panel -->
+    <div class="admin-section" id="slackAdmin">
+        <h2 class="admin-section-title">Slack Notifications</h2>
+        <div class="rss-admin-row">
+            <div class="switch" title="Queue status changes and post a digest to Slack when you log out">
+                <input type="checkbox" id="slackEnabled">
+                <label for="slackEnabled"></label>
+            </div>
+            <span id="slackState" class="rss-state">—</span>
+            <code id="slackWebhook" class="rss-url">no webhook</code>
+        </div>
+        <div class="rss-admin-row" style="margin-top: 12px;">
+            <span class="rss-admin-label">Webhook URL</span>
+            <input type="text" id="slackWebhookInput" class="slack-webhook-input"
+                   placeholder="https://hooks.slack.com/services/…" autocomplete="off">
+            <button type="button" id="slackWebhookSave" class="btn btn-small">Save</button>
+        </div>
+        <div class="rss-admin-row" style="margin-top: 8px;">
+            <span class="rss-admin-label">Channel (optional)</span>
+            <input type="text" id="slackChannelInput" class="slack-webhook-input"
+                   placeholder="#ops" autocomplete="off">
+            <span id="slackQueued" class="rss-state"></span>
+        </div>
+        <p class="rss-admin-label" style="margin-top: 8px; opacity: 0.7;">
+            Status changes are queued while you're logged in; one digest message is posted to Slack when you log out.
+        </p>
+    </div>
+
     <!-- UI Settings Admin Panel -->
     <div class="admin-section" id="settingsAdmin">
         <h2 class="admin-section-title">Page Settings</h2>
@@ -300,5 +328,6 @@
     <script src="/static/js/app.js"></script>
     <script src="/static/js/healthchecks.js"></script>
     <script src="/static/js/rss.js"></script>
+    <script src="/static/js/slack.js"></script>
 </body>
 </html>

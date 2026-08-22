@@ -34,6 +34,9 @@ from statuspage.config import (
     _load_settings, _save_settings, history_enabled, healthchecks_enabled,
 )
 from statuspage import rss as rss_mod
+from statuspage import slack as slack_mod
+from statuspage.config import _save_slack
+import re
 from input_filter import InputRejected, validate_json_data, validate_name, validate_notes, validate_int_param
 
 
@@ -841,6 +844,67 @@ def api_rss_toggle():
 
     return jsonify(ok=True, enabled=enabled,
                    url=request.host_url.rstrip("/") + "/feed.xml")
+
+
+@require_admin()
+def api_slack_status():
+    """Admin: current Slack integration state (webhook masked)."""
+    return jsonify(slack_mod.public_config())
+
+
+@require_admin()
+def api_slack_update():
+    """Toggle Slack notifications and/or set the webhook URL.
+
+    ``POST /api/slack`` with JSON ``{"enabled": bool}`` and optionally
+    ``{"webhook_url": "https://hooks.slack.com/services/..."}``,
+    ``{"channel": "#ops"}``. Persists to config.yaml ``slack: ...``.
+    The full webhook token is never returned to the client.
+    """
+    data = validate_json_data(request.get_json(silent=True))
+    if not isinstance(data, dict):
+        return jsonify(error="Invalid JSON"), 400
+
+    conf = slack_mod.get_slack_config()
+    changed = False
+
+    if "webhook_url" in data:
+        wh = str(data.get("webhook_url") or "").strip()
+        if wh and not (wh.startswith("https://hooks.slack.com/")
+                       or wh.startswith("https://")):
+            return jsonify(error="webhook_url must be an https URL"), 400
+        conf["webhook_url"] = wh[:512]
+        changed = True
+    if "channel" in data:
+        ch = str(data.get("channel") or "").strip()
+        if ch and not INPUT_CHANNEL_RE.match(ch):
+            return jsonify(error="channel must match #name or @user"), 400
+        conf["channel"] = ch[:80]
+        changed = True
+    if "clear_queue" in data and data.get("clear_queue") is True:
+        removed = slack_mod.clear_queue()
+    else:
+        removed = 0
+    if "enabled" in data:
+        if not isinstance(data.get("enabled"), bool):
+            return jsonify(error="enabled must be a boolean"), 400
+        conf["enabled"] = data["enabled"]
+        changed = True
+
+    if changed:
+        _save_slack({"enabled": conf["enabled"],
+                     "webhook_url": conf["webhook_url"],
+                     "channel": conf["channel"],
+                     "max_queue": conf["max_queue"]})
+
+    out = slack_mod.public_config()
+    if removed:
+        out["cleared"] = removed
+    return jsonify(ok=True, **out)
+
+
+# Matches optional # or @ prefix then a valid Slack channel/user name.
+INPUT_CHANNEL_RE = re.compile(r"^[#@]?[a-z0-9][a-z0-9._-]{0,78}$", re.IGNORECASE)
 
 
 def api_settings_status():

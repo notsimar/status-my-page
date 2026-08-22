@@ -399,3 +399,154 @@ class Test_D7_DeleteCleanupGate:
         with sqlite3.connect(str(A.DB_PATH)) as c:
             row = c.execute("SELECT id FROM status_items WHERE id=?", (sid,)).fetchone()
             assert row is None
+
+
+# D8: enqueue_status_change() gate —
+#   if not conf["enabled"] or not conf["webhook_url"]: return
+#   MC/DC conditions:
+#     C1 = not conf["enabled"]   (T => disabled, queue skipped)
+#     C2 = not conf["webhook_url"]  (T => enabled but no webhook, queue skipped)
+#   Both short-circuit to a silent no-op; only C1=F AND C2=F queues a row.
+class Test_D8_SlackEnqueueGate:
+    """Prove enabled/webhook conditions independently gate the Slack outbox."""
+
+    @staticmethod
+    def _patch_conf(monkeypatch, enabled, webhook):
+        from statuspage import slack as slack_mod
+        monkeypatch.setattr(slack_mod, "get_slack_config", lambda: {
+            "enabled": enabled, "webhook_url": webhook,
+            "channel": "", "max_queue": 100})
+        return slack_mod
+
+    def test_baseline_enabled_with_webhook__queues(self, monkeypatch):
+        """C1=F, C2=F -> row is queued (Baseline)."""
+        m = self._patch_conf(monkeypatch, True, "https://hooks.slack.com/services/x")
+        m.clear_queue()
+        m.enqueue_status_change("mc_svc", "green", "red")
+        assert m.count_queued() == 1
+        m.clear_queue()
+
+    def test_C1_disabled__no_queue(self, monkeypatch):
+        """C1=True (disabled) -> no queue, C2 never evaluated."""
+        m = self._patch_conf(monkeypatch, False, "https://hooks.slack.com/services/x")
+        m.clear_queue()
+        m.enqueue_status_change("mc_svc", "green", "red")
+        assert m.count_queued() == 0
+
+    def test_C2_no_webhook__no_queue(self, monkeypatch):
+        """C2=True (enabled but webhook empty) -> no queue."""
+        m = self._patch_conf(monkeypatch, True, "")
+        m.clear_queue()
+        m.enqueue_status_change("mc_svc", "green", "red")
+        assert m.count_queued() == 0
+
+
+# D9: require_admin CSRF applicability —
+#   needs_csrf = require_csrf and request.method not in ("GET", "HEAD", "OPTIONS")
+#   MC/DC conditions:
+#     C1 = require_csrf flag     (F => CSRF check bypassed entirely)
+#     C2 = method is state-changing  (F for GET/HEAD/OPTIONS => check skipped)
+#   Outcome: 403 'csrf' only when C1=T AND C2=T AND token invalid.
+class Test_D9_CsrfMethodGate:
+    """Prove CSRF is enforced on writes but never burns the token on reads."""
+
+    def test_C2_False_get_with_bad_token__passes_auth(self, admin):
+        """GET with a garbage token is NOT rejected for CSRF (read-only)."""
+        r = admin.get("/api/slack", headers={"X-CSRF-Token": "garbage"})
+        assert r.status_code == 200
+
+    def test_C2_True_post_with_bad_token__csrf_rejected(self, admin):
+        """POST with a garbage token -> 403 csrf (write requires token)."""
+        r = admin.post(
+            "/api/toggle/1",
+            headers={"X-CSRF-Token": "garbage"},
+            content_type="application/json", data=b'{}',
+        )
+        assert r.status_code == 403
+        assert r.headers.get("X-Auth-Error") == "csrf"
+
+    def test_C1_False_logout_bypasses_csrf(self, admin):
+        """require_csrf=False route (logout) accepts POST without any token."""
+        r = admin.post("/logout")
+        assert r.status_code == 200
+
+    def test_C1_True_C2_True_valid_token__succeeds(self, admin, token, A):
+        """Baseline: POST + require_csrf + valid token -> mutation succeeds."""
+        import sqlite3 as _sq
+        with _sq.connect(str(A.DB_PATH)) as c:
+            row = c.execute(
+                "SELECT id FROM status_items ORDER BY id LIMIT 1").fetchone()
+        assert row, "need a seeded item"
+        r = admin.post(
+            f"/api/toggle/{row[0]}",
+            headers={"X-CSRF-Token": token},
+            content_type="application/json", data=b'{}',
+        )
+        assert r.status_code == 200
+
+
+# D10: flush() delivery gate —
+#   if not conf["enabled"] -> report disabled
+#   if not conf["webhook_url"] -> report unconfigured
+#   ok, detail = send_to_slack(...); if not ok -> keep queue
+#   MC/DC conditions (independent outcomes on the same queued state):
+#     C1 = enabled   (F => flush is a no-op report)
+#     C2 = webhook configured  (F => flush is a no-op report)
+#     C3 = delivery ok  (F => queue retained, sent=0)
+class Test_D10_SlackFlushGate:
+    """Prove each flush condition independently determines the outcome."""
+
+    @staticmethod
+    def _patch_conf(monkeypatch, enabled, webhook):
+        from statuspage import slack as slack_mod
+        monkeypatch.setattr(slack_mod, "get_slack_config", lambda: {
+            "enabled": enabled, "webhook_url": webhook,
+            "channel": "", "max_queue": 100})
+        return slack_mod
+
+    def _seed_queue(self, m):
+        """Seed with an enabling config so enqueue actually queues."""
+        saved = m.get_slack_config
+        m.get_slack_config = lambda: {
+            "enabled": True, "webhook_url": "https://hooks.slack.com/services/x",
+            "channel": "", "max_queue": 100}
+        try:
+            m.clear_queue()
+            m.enqueue_status_change("mc_flush_svc", "green", "red")
+        finally:
+            m.get_slack_config = saved
+        assert m.count_queued() == 1
+
+    def test_baseline_all_ok__sends_and_clears(self, fake_slack_url, monkeypatch):
+        """C1=T, C2=T, C3=T -> digest sent, queue emptied (Baseline)."""
+        m = self._patch_conf(monkeypatch, True, fake_slack_url)
+        import conftest as _ct
+        _ct._FakeSlack.payloads.clear()
+        _ct._FakeSlack.fail_with = None
+        self._seed_queue(m)
+        sent, remaining, _ = m.flush()
+        assert sent == 1 and remaining == 0
+
+    def test_C1_False_disabled__noop(self, monkeypatch):
+        """C1=F (disabled) -> flush reports and queue is untouched."""
+        m = self._patch_conf(monkeypatch, False, "")
+        self._seed_queue(m)
+        sent, remaining, detail = m.flush()
+        assert sent == 0 and remaining == 1 and detail == "slack disabled"
+
+    def test_C2_False_no_webhook__noop(self, monkeypatch):
+        """C2=F (no webhook) -> flush reports and queue is untouched."""
+        m = self._patch_conf(monkeypatch, True, "")
+        self._seed_queue(m)
+        sent, remaining, detail = m.flush()
+        assert sent == 0 and remaining == 1 and "webhook" in detail
+
+    def test_C3_False_delivery_fails__queue_retained(self, fake_slack_url, monkeypatch):
+        """C3=F (delivery fails) -> sent=0, queue intact for retry."""
+        m = self._patch_conf(monkeypatch, True, fake_slack_url)
+        import conftest as _ct
+        _ct._FakeSlack.payloads.clear()
+        _ct._FakeSlack.fail_with = (500, "err")
+        self._seed_queue(m)
+        sent, remaining, detail = m.flush()
+        assert sent == 0 and remaining == 1 and "500" in detail

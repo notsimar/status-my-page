@@ -107,7 +107,7 @@ class TestRoutesAndAuth:
         """POST /logout clears session and resets admin auth."""
         r_out = admin.post("/logout")
         assert r_out.status_code == 200
-        assert r_out.get_json() == {"ok": True}
+        assert r_out.get_json()["ok"] is True
 
         r_check = admin.get("/auth-check")
         assert r_check.get_json() == {"admin": False}

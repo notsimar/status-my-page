@@ -17,6 +17,7 @@ from statuspage.db import (
     get_history,
     clear_history as db_clear_history,
 )
+from statuspage import slack as slack_mod
 
 
 # ── Status Service ──────────────────────────────────────────────────
@@ -33,9 +34,10 @@ def toggle_item(item_id: int) -> dict | None:
             return None
         old_status = row["status"]  # must be captured BEFORE the toggle
         status = db_toggle_status(db, item_id)
-        # Record history
+        # Record history + queue Slack notification (best-effort)
         record_history(db, item_id, "status", old_status, status)
         db.commit()
+    slack_mod.enqueue_status_change(row["name"], old_status, status)
     return {"status": status}
 
 

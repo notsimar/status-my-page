@@ -565,6 +565,7 @@ def _set_health_status(name: str, desired_status: str):
     Writes are serialized via _HEALTH_LOCK to avoid conflicting with Flask threads.
     """
     with _HEALTH_LOCK:
+        queue_slack = False
         conn = _health_db()
         try:
             row = conn.execute(
@@ -589,6 +590,10 @@ def _set_health_status(name: str, desired_status: str):
                     "VALUES (?, 'status', ?, ?, ?)",
                     (row["id"], current, desired_status, ts),
                 )
+                # Queue Slack notification (best-effort; never blocks the flip).
+                # Deferred until AFTER conn.commit() below — enqueuing inside
+                # this open transaction would self-deadlock on the DB write lock.
+                queue_slack = True
                 # Prune to the last N rows FOR THIS ITEM only. (Without the
                 # outer item_id filter the subquery only contains this item's
                 # ids, so NOT IN would wipe every other item's history the
@@ -609,6 +614,15 @@ def _set_health_status(name: str, desired_status: str):
             conn.commit()
         finally:
             conn.close()
+
+    # Slack enqueue AFTER the transaction is committed and the connection
+    # released, so the outbox write never contends with the flip's own lock.
+    if queue_slack:
+        try:
+            from statuspage.slack import enqueue_status_change
+            enqueue_status_change(name, current, desired_status, ts)
+        except Exception as exc:
+            print(f"Slack warning: queue failed for {name!r} ({exc})")
 
 
 def _healthcheck_worker(stop_event: threading.Event | None = None):
