@@ -33,3 +33,4 @@ Thumbs.db
 .coverage
 backups/
 exports/
+dogfood-output/
