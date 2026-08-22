@@ -27,7 +27,7 @@ elif [ -f .env ]; then
     set -a; . ./.env; set +a
 fi
 
-nohup .venv/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app \
+nohup .venv/bin/gunicorn --bind 0.0.0.0:8920 --workers 2 --timeout 30 app:app \
     >> logs/server.log 2>&1 &
 echo $! > "$PID_FILE"
-echo "Running on http://127.0.0.1:8920 (PID $!, gunicorn)"
+echo "Running on http://0.0.0.0:8920 (PID $!, gunicorn)"
