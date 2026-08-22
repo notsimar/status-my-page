@@ -23,8 +23,10 @@ Usage:
 """
 import datetime as dt
 import sqlite3
+import subprocess
 import yaml
 import json
+import pytest
 from pathlib import Path
 
 # D1 (L620): if item_name not in seed_set or new_state in ('green', ''): continue
@@ -550,3 +552,145 @@ class Test_D10_SlackFlushGate:
         self._seed_queue(m)
         sent, remaining, detail = m.flush()
         assert sent == 0 and remaining == 1 and "500" in detail
+
+
+# D11: _resolve_logo_rel() empty/traversal gate —
+#   if not _LOGO_PATH: return None
+#   rel = str(_LOGO_PATH).strip().lstrip("/")
+#   if not rel or ".." in Path(rel).parts: return None
+#   MC/DC conditions:
+#     C1 = not _LOGO_PATH          (F => path configured, proceed)
+#     C2 = not rel                 (T => whitespace-only after strip, reject)
+#     C3 = ".." in Path(rel).parts (T => traversal attempt, reject)
+#   Each condition independently forces the None outcome.
+class Test_D11_LogoPathEmptyTraversalGate:
+    """Prove empty/traversal logo paths independently resolve to None."""
+
+    @staticmethod
+    def _resolve(monkeypatch, logo_path):
+        from statuspage import config as cfg_mod
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", logo_path)
+        return cfg_mod._resolve_logo_rel()
+
+    def test_baseline_valid_path_resolves(self, monkeypatch):
+        """C1=F, C2=F, C3=F -> relative path returned (Baseline)."""
+        got = self._resolve(monkeypatch, "logos/light-logo.png")
+        assert got == "logos/light-logo.png"
+
+    def test_C1_False_unset_path__none(self, monkeypatch):
+        """C1=True (no logo.path) -> None."""
+        assert self._resolve(monkeypatch, None) is None
+
+    def test_C2_True_whitespace_only__none(self, monkeypatch):
+        """C2=True (strips to empty) -> None, C3 never evaluated."""
+        assert self._resolve(monkeypatch, "   ") is None
+
+    def test_C3_True_traversal__none(self, monkeypatch):
+        """C3=True (contains ..) -> None."""
+        assert self._resolve(monkeypatch, "../secrets.yaml") is None
+        assert self._resolve(monkeypatch, "logos/../../etc/passwd") is None
+
+    def test_leading_slash_and_static_prefix_normalized(self, monkeypatch):
+        """Non-guard normalizations: /static/x and static/x both -> x."""
+        assert self._resolve(monkeypatch, "/logos/l.png") == "logos/l.png"
+        assert self._resolve(monkeypatch, "static/logos/l.png") == "logos/l.png"
+
+
+# D12: get_logo_local_path() containment gate —
+#   within_static = static_root in candidate.parents or candidate.parent == static_root
+#   if not within_static: return None
+#   if not candidate.is_file() or candidate.stat().st_size == 0: return None
+#   MC/DC conditions:
+#     C1 = candidate inside static dir  (F => escape, reject)
+#     C2 = candidate is a file          (F => missing/dir, reject)
+#     C3 = file size > 0                (F => empty file, reject)
+class Test_D12_LogoLocalPathGate:
+    """Prove containment, existence, and size independently gate the logo path."""
+
+    @pytest.fixture()
+    def logo_env(self, tmp_path, monkeypatch):
+        from statuspage import config as cfg_mod
+        static_dir = tmp_path / "static"
+        (static_dir / "logos").mkdir(parents=True)
+        monkeypatch.setattr(cfg_mod, "STATIC_DIR", static_dir)
+        return cfg_mod, static_dir
+
+    def _set_path(self, cfg_mod, rel):
+        monkeypatch = getattr(self, "_mp")
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", rel)
+
+    def test_baseline_real_file_resolves(self, logo_env, monkeypatch):
+        """C1=T, C2=T, C3=T -> absolute path returned (Baseline)."""
+        cfg_mod, static_dir = logo_env
+        self._mp = monkeypatch
+        f = static_dir / "logos" / "l.png"
+        f.write_bytes(b"data")
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", "logos/l.png")
+        got = cfg_mod.get_logo_local_path()
+        assert got is not None and got.is_file()
+
+    def test_C1_False_escape_outside_static__none(self, logo_env, monkeypatch):
+        """C1=F (symlink escape) -> None even though target exists."""
+        cfg_mod, static_dir = logo_env
+        outside = tmp_outside = static_dir.parent / "outside.png"
+        outside.write_bytes(b"data")
+        link = static_dir / "logos" / "escape.png"
+        link.symlink_to(outside)
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", "logos/escape.png")
+        assert cfg_mod.get_logo_local_path() is None
+
+    def test_C2_False_missing_file__none(self, logo_env, monkeypatch):
+        """C2=F (file doesn't exist) -> None."""
+        cfg_mod, static_dir = logo_env
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", "logos/missing.png")
+        assert cfg_mod.get_logo_local_path() is None
+
+    def test_C3_False_empty_file__none(self, logo_env, monkeypatch):
+        """C3=F (zero-byte file) -> None."""
+        cfg_mod, static_dir = logo_env
+        f = static_dir / "logos" / "empty.png"
+        f.write_bytes(b"")
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", "logos/empty.png")
+        assert cfg_mod.get_logo_local_path() is None
+
+    def test_directory_instead_of_file__none(self, logo_env, monkeypatch):
+        """C2 variant: path is a directory, not a file -> None."""
+        cfg_mod, static_dir = logo_env
+        (static_dir / "logos" / "adir").mkdir()
+        monkeypatch.setattr(cfg_mod, "_LOGO_PATH", "logos/adir")
+        assert cfg_mod.get_logo_local_path() is None
+
+
+# D13: install_logo.sh dual-mode gate —
+#   if [ -n "${LOGO_DARK:-}" ] || [ -n "${LOGO_LIGHT:-}" ]; then DUAL=1
+#   MC/DC conditions (shell, tested via subprocess):
+#     C1 = LOGO_DARK set   (T alone => dual mode)
+#     C2 = LOGO_LIGHT set  (T alone => dual mode)
+#   Both must be F for single-logo mode to be selected.
+class Test_D13_LogoDualModeGate:
+    """Prove either env var alone flips install_logo.sh into dual mode."""
+
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "install_logo.sh"
+
+    def _probe_mode(self, **env) -> str:
+        """Run the script with no positional args; usage error = single mode,
+        different error (missing config.yaml) = dual mode was selected."""
+        base = {"PATH": "/usr/bin:/bin", "HOME": "/tmp"}
+        base.update(env)
+        r = subprocess.run(["bash", str(self.SCRIPT)],
+                           capture_output=True, text=True, env=base)
+        combined = r.stdout + r.stderr
+        if "Usage" in combined:
+            return "single"
+        if "config.yaml" in combined:
+            return "dual"
+        return f"unexpected: {combined}"
+
+    def test_C1_True_alone__dual_mode(self):
+        assert self._probe_mode(LOGO_DARK="d.png") == "dual"
+
+    def test_C2_True_alone__dual_mode(self):
+        assert self._probe_mode(LOGO_LIGHT="l.png") == "dual"
+
+    def test_both_False__single_mode(self):
+        assert self._probe_mode() == "single"
