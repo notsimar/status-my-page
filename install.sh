@@ -209,7 +209,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$ENV_FILE
 Environment="PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin"
-ExecStart=$VENV_DIR/bin/gunicorn --bind 127.0.0.1:8920 --workers 2 --timeout 30 app:app
+ExecStart=$VENV_DIR/bin/gunicorn --bind 0.0.0.0:8920 --workers 2 --timeout 30 app:app
 Restart=on-failure
 RestartSec=5
 

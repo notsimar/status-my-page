@@ -52,7 +52,7 @@ start.sh
     │   └── Source: .env file (if present, dotenv-style parsing)
     │
     ├── Launch Gunicorn or Flask dev server
-    │   ├── Production mode: gunicorn app:app --bind 127.0.0.1:8920
+    │   ├── Production mode: gunicorn app:app --bind 0.0.0.0:8920
     │   └── Dev mode: python -m flask run --port 8920
     │
     ├── Write PID to .server-pid file for stop.sh

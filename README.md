@@ -113,7 +113,7 @@ cd ~/status-my-page
 #   • Seed the SQLite database from config.yaml
 #   • Prompt for admin credentials (stored in /etc/status-page/env, mode 0640)
 #   • Install & enable a systemd service (status-page.service)
-#   • Start Gunicorn on 127.0.0.1:8920 behind systemd
+#   • Start Gunicorn on 0.0.0.0:8920 behind systemd
 sudo ./install.sh
 ```
 
@@ -191,7 +191,7 @@ User=statuspage
 Group=statuspage
 WorkingDirectory=/opt/status-page
 ExecStart=/opt/status-page/.venv/bin/gunicorn \
-    --bind 127.0.0.1:8920 \
+    --bind 0.0.0.0:8920 \
     --workers 2 \
     --timeout 30 \
     app:app
@@ -211,7 +211,7 @@ sudo systemctl status status-page
 
 ### 🔁 Behind a reverse proxy (recommended for production)
 
-The app binds to `127.0.0.1:8920` — put Nginx or Caddy in front to serve over HTTPS:
+The app binds to `0.0.0.0:8920` (all interfaces). For production, put Nginx or Caddy in front to serve over HTTPS and restrict direct access with a firewall if needed:
 
 **Nginx example:**
 

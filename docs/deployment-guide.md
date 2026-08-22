@@ -65,7 +65,7 @@ sudo ./install.sh /srv/status-dashboard
 6. Prompts for admin credentials interactively (username + password, hashed as scrypt)
 7. Writes credentials to `/etc/status-page/env` with mode `0640` (owner read/write only)
 8. Creates and installs systemd unit file at `/etc/systemd/system/status-page.service`
-9. Starts Gunicorn on `127.0.0.1:8920` behind systemd service manager
+9. Starts Gunicorn on `0.0.0.0:8920` behind systemd service manager
 10. Verifies health endpoint returns HTTP 200 before declaring success
 
 ### Interactive Prompts During Installation
@@ -158,7 +158,7 @@ User=statuspage
 Group=statuspage
 WorkingDirectory=/opt/status-my-page/.app
 ExecStart=/opt/status-my-page/.app/.venv/bin/gunicorn \
-    --bind 127.0.0.1:8920 \
+    --bind 0.0.0.0:8920 \
     --workers 2 \
     --timeout 30 \
     --access-logfile /opt/status-my-page/.app/logs/access.log \
@@ -190,7 +190,7 @@ sudo systemctl status status-page
 
 ## 4. Reverse Proxy Configuration
 
-**Important:** The app binds to `127.0.0.1:8920` — always place Nginx or Caddy in front for HTTPS termination and TLS management.
+**Important:** The app binds to `0.0.0.0:8920` (all interfaces). Place Nginx or Caddy in front for HTTPS termination and TLS management, and use a firewall to restrict direct access if needed.
 
 ### Nginx Configuration
 
@@ -427,7 +427,7 @@ python3 -c "from werkzeug.security import generate_password_hash; print(generate
 
 This means Nginx can't connect to Gunicorn. Common causes:
 - Gunicorn crashed or didn't start — check `journalctl -u status-page`
-- Wrong bind address in systemd unit — must be `127.0.0.1:8920` (not `0.0.0.0`)
+- Wrong bind address in systemd unit — must be `0.0.0.0:8920` (or `127.0.0.1:8920` if running behind a local reverse proxy)
 - SELinux/AppArmor blocking — temporarily disable to test: `sudo setenforce 0`
 
 ### High memory usage on server restart
