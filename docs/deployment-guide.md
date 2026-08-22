@@ -313,6 +313,13 @@ echo | openssl s_client -connect status.yourdomain.com:443 -servername status.yo
 All logs go to the `logs/` directory:
 - `logs/server.log` — Flask/Werkzeug server stdout (development)
 - `logs/access.log` — Gunicorn access log (production, via systemd redirect)
+- `logs/app.log` — Application events: login ok/failed/rate-limited (with client IP + User-Agent), Slack flush results
+- `logs/access.log` (application) — Structured per-request lines with client IP (X-Forwarded-For aware), browser/OS summary, method, path, status, duration; rotates at 5 MB × 3 backups
+
+**Slack integration** (optional): set `slack.enabled: true` and
+`slack.webhook_url` in config.yaml (or `STATUS_SLACK_WEBHOOK_URL` env var).
+Status changes queue to a persistent outbox; one digest message posts on
+admin logout. See [configuration.md](./configuration.md#slack-notifications-optional).
 - `logs/error.log` — Gunicorn error log (production)
 
 ### Monitoring with Prometheus/Grafana

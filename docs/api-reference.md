@@ -527,3 +527,41 @@ Public read of the current page-level settings.
 ---
 
 *Document version: 1.3 | Last updated: 2026-08-18 | Author: Simar Sahni*
+
+
+## Slack Notifications
+
+### `GET /api/slack` (admin only)
+
+Returns the current Slack integration state.
+
+```json
+{
+  "enabled": true,
+  "configured": true,
+  "webhook_masked": "https://hooks.slack.com/services/…",
+  "queued": 3,
+  "channel": "#ops"
+}
+```
+
+The webhook token is never returned — only a masked form ending in `…`.
+
+### `POST /api/slack` (admin + CSRF)
+
+Body fields (all optional):
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `enabled` | bool | Toggle the integration |
+| `webhook_url` | string | Set the incoming-webhook URL (`https://` required) |
+| `channel` | string | Optional `#channel`/`@user` override |
+| `clear_queue` | true | Drop all queued changes without sending |
+
+Response: same shape as GET plus `"ok": true`. Validation errors return
+400 with a message; the full webhook token is never echoed back.
+
+**Delivery model:** status changes queue to a persistent outbox as they
+happen. When the admin logs out, ONE digest message posts via the
+incoming webhook. Failed deliveries keep the queue for the next logout.
+

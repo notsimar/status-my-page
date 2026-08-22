@@ -352,3 +352,33 @@ Before modifying config.yaml structure:
 ---
 
 *Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*
+
+
+### Slack notifications (optional)
+
+```yaml
+slack:
+  enabled: true
+  webhook_url: "https://hooks.slack.com/services/T000/B000/XXXX"
+  channel: "#ops"            # optional override; empty = webhook default channel
+  max_queue: 200             # oldest queued changes dropped beyond this (1–5000)
+```
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `enabled` | `false` | Master switch. When true, every status change is queued to the outbox |
+| `webhook_url` | *(empty)* | Slack incoming-webhook URL. Falls back to `STATUS_SLACK_WEBHOOK_URL` env var when unset in config |
+| `channel` | *(empty)* | Optional `#channel` or `@user` override sent with each message |
+| `max_queue` | `200` | Outbox size cap (clamped 1–5000) |
+
+**How it works:** status changes are appended to a persistent SQLite outbox
+(`slack_outbox` table) as they happen — manual toggles via the admin panel and
+automatic flips from the healthcheck worker both queue. When the admin logs
+out, one digest message is posted summarizing everything queued since the
+last logout. Failed deliveries are retried on the next logout; the outbox is
+only cleared after Slack confirms receipt.
+
+The admin panel (Slack Notifications section) can toggle the integration,
+set the webhook URL and channel, and show the queued count. The full webhook
+token is never returned to the browser — only a masked form.
+

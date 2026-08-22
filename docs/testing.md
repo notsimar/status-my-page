@@ -38,6 +38,12 @@ Prove that every guard condition in compound boolean expressions **independently
 | D_hc9: RssKeywordPrecedence | healthcheck.py L479 | `(red set & match) → red; (deg set & match) → deg; else green` | Test_Dhc9_RssKeywordPrecedence (6 tests) | Full MC/DC |
 | D_hc10: RssUrlGuard | healthcheck.py L213 | `not url or not str or not url.strip() or not _safe_url` | Test_Dhc10_RssUrlGuard (5 tests) | Full MC/DC |
 | D_hc11: RssEntryFilter | healthcheck.py L468 | item/entry tag + child tag local-name filter | Test_Dhc11_RssEntryFilter (3 tests) | Full MC/DC |
+| D8: SlackEnqueueGate | statuspage/slack.py | `not enabled or not webhook_url` | Test_D8_SlackEnqueueGate (4 tests) | Full MC/DC |
+| D9: CsrfMethodGate | statuspage/auth.py | `require_csrf and method not in (GET,HEAD,OPTIONS)` | Test_D9_CsrfMethodGate (4 tests) | Full MC/DC |
+| D10: SlackFlushGate | statuspage/slack.py | `enabled` / `webhook_url` / delivery-ok | Test_D10_SlackFlushGate (4 tests) | Full MC/DC |
+| D11: LogoPathEmptyTraversalGate | statuspage/config.py | `not _LOGO_PATH` / whitespace / `..` parts | Test_D11_LogoPathEmptyTraversalGate (5 tests) | Full MC/DC |
+| D12: LogoLocalPathGate | statuspage/config.py | containment / is_file / size>0 | Test_D12_LogoLocalPathGate (5 tests) | Full MC/DC |
+| D13: LogoDualModeGate | scripts/install_logo.sh | `LOGO_DARK or LOGO_LIGHT` | Test_D13_LogoDualModeGate (3 tests) | Full MC/DC |
 
 **Total: structural + healthcheck gates — 18 compound decisions, 100% decision coverage, all conditions MC/DC-proven (50 tests in test_healthcheck_mc_dc.py alone; D1–D7 in test_mc_dc.py / test_structural.py).**
 

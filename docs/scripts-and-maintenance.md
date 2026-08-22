@@ -23,6 +23,9 @@
 | `install.sh` | One-command production deploy wizard | Root/sudo | System user, systemd unit, /etc/status-page/env |
 | `cleanup.sh` | Archive management (list/show/prune/report) | None (user) | Reads/writes `archives/` JSON snapshots |
 | `change_password.sh` | Securely reset/update admin password hash in env | None (user) | Updates `.env.local` / `.env` (`STATUS_ADMIN_PASS_HASH`) |
+| `scripts/build_release.sh` | Build clean deployable `dist/*.tar.gz` from git-tracked files | None (user) | Creates `dist/` tarball |
+| `scripts/install_logo.sh` | Install customer logos into `static/logos/` + write config.yaml logo section | None (user) | `static/logos/`, `config.yaml` |
+| `lib.sh` (sourced, not run) | Shared error-reporting helpers: die/warn/step/ok/run_step/require_cmd | — | — |
 
 
 ---
@@ -162,3 +165,31 @@ Automated, interactive deployment wizard for turning a bare Linux server into a 
 ### Interactive Prompts & Defaults
 
 
+
+## build_release.sh
+
+Packages exactly the git-tracked files into
+`dist/status-my-page-<version>.tar.gz` (version from git tag, falling back
+to short SHA). Extracts under a versioned top-level directory so
+`tar -xzf` + `./install.sh` works directly. No venv/logs/env files leak in.
+
+```bash
+./scripts/build_release.sh
+# -> dist/status-my-page-<version>.tar.gz
+```
+
+## install_logo.sh
+
+Installs customer logos into `<install_dir>/static/logos/` and writes the
+`logo:` section of config.yaml.
+
+```bash
+# Single logo
+./scripts/install_logo.sh /path/to/logo.png ~/status
+
+# Dark/light variants
+LOGO_DARK=dark.png LOGO_LIGHT=light.png ./scripts/install_logo.sh ~/status
+
+# Point config at the dark variant instead
+LOGO_CONFIG_PATH=logos/dark-logo.png ./scripts/install_logo.sh ...
+```

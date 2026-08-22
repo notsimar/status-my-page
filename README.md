@@ -15,6 +15,10 @@
 - **Database Persistence**: SQLite (`instance/status.db`) is the single source of truth for all service items, statuses, notes, positions, and mutation history
 - **Auto-Archival & Backups**: Pre-reset JSON snapshots (`archives/`) on restart, and atomic backup rotation (`.bak1`–`.bak5`) for `config.yaml` healthcheck edits
 - **Input Sanitization**: Every user-supplied field is validated through a dedicated filter layer — blocks XSS payloads, SQL injection patterns, path traversal, shell metacharacters, and fuzzing attacks
+- **Slack Notifications**: Optional integration queues every status change (manual toggles + healthcheck flips) into a persistent outbox and posts one digest message to a Slack channel when the admin logs out — survives restarts, retries failed deliveries
+- **Structured Request Logging**: `access.log` captures every request with client IP (X-Forwarded-For aware), browser/OS summary, method, path, status, duration; `app.log` records security events (login ok/failed/rate-limited with IP + User-Agent) — both rotate at 5 MB × 3 backups
+- **Logo Installer**: `scripts/install_logo.sh` drops customer logos into `static/logos/` and wires `config.yaml` — single file or dark/light variants
+- **Release Builder**: `scripts/build_release.sh` packages exactly the git-tracked files into a clean `dist/status-my-page-<version>.tar.gz` ready for `tar + ./install.sh` deployment
 
 ## 📸 Preview
 
@@ -421,6 +425,18 @@ cp config.yaml.bak1 config.yaml
 
 ## 🛠 Scripts reference
 
+| Script | Purpose |
+|---|---|
+| `install.sh` | One-command production installer (systemd, venv, DB seed, credentials) |
+| `start.sh` / `stop.sh` / `restart.sh` | Server lifecycle |
+| `rebuild.sh` | Rebuild DB from config.yaml |
+| `cleanup.sh` | Archive manager: list/show/prune/report |
+| `change_password.sh` | Rotate the admin password hash in `.env.local` |
+| `scripts/build_release.sh` | Build a clean deployable `dist/*.tar.gz` from git-tracked files |
+| `scripts/install_logo.sh` | Install customer logos into `static/logos/` + wire config.yaml |
+| `scripts/backup.sh` | Backup/restore CLI wrapper |
+| `scripts/backup_db.py` | Consistent SQLite snapshot & restore |
+
 | Script | Purpose | Example usage |
 |--------|---------|---------------|
 | `start.sh` | Launch dev server (PID tracking, logs → `logs/server.log`) | `./start.sh` |
@@ -450,36 +466,42 @@ cp config.yaml.bak1 config.yaml
 
 ### Test Coverage Summary
 
-| Test Suite                     | Coverage | Description                                                                                                                                        |
-|--------------------------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `test_input_filter.py`         | **100%** | 95 assertions: XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, safe-string passthrough                                      |
-| `test_healthcheck.py` | 84% | 91 tests: healthcheck parsing across all 5 types, endpoints, worker lock, exception paths (timeout, missing binaries, bad curl/ping/soap output) |
-| `test_healthcheck_admin.py`    | —        | 82 tests: admin healthcheck CRUD + per-type validation (curl/ping/tcp/soap/rss), public feed toggle + endpoints                                    |
-| `test_healthcheck_one_shot.py` | —        | One-shot `/api/healthcheck/run` flow for each type, incl. rss + worker restart                                                                     |
-| `test_healthcheck_worker.py`   | —        | Worker thread lifecycle: E2E green→red→green, history rows, single-instance lock, hot restart                                                      |
-| `test_rss_healthcheck.py`      | —        | 20 tests: rss runtime (red/degraded/green map, precedence, Atom, case-folding), edge cases (empty feed, entry cap, >512 KB body), prune regression |
-| `test_rss_feed.py`             | —        | 26 tests: public `/feed.xml` output — well-formedness, escaping, guid/publish dates, enabled/disabled toggle                                       |
-| `test_mc_dc.py`                | —        | **MC/DC formal verification** of app.py decisions D1, D2, D3 (security gate ×4 endpoints), D6 (CSRF internals), D7 (delete cleanup)                |
-| `test_structural.py`           | —        | MC/DC for reorder override (D4) and set_notes YAML persist gate (D5)                                                                               |
-| `test_history.py`              | —        | 19 end-to-end scenarios (T0–T18): history recording, public access, admin clear, cascade delete, pruning — suite enables the (default-off) history feature itself |
-| `test_routes_and_features.py`  | —        | Auth, mutations, security headers, backups, admin credential validation, **Page Settings** (admin history-button toggle: API gating, HTML rendering, config persistence, section preservation — 11 tests) |
-| `test_restart_persistence.py`  | —        | 2 critical restart-simulation tests (add/delete survival)                                                                                          |
-| `test_healthcheck_mc_dc.py` | — | MC/DC for all 9 healthcheck decisions (D_hc1, D_hc2, D_hc3, D_hc5, D_hc7, and the rss family D_hc8–D_hc11) + worker lock — 50 tests |
+| Test Suite | Focus |
+|---|---|
+| `test_input_filter.py` | **100%** — XSS payloads, SQLi patterns, path traversal, shell injection, fuzzing, length caps |
+| `test_healthcheck.py` | Healthcheck parsing across all 5 types, endpoints, worker lock, exception paths |
+| `test_healthcheck_admin.py` | Admin healthcheck CRUD + per-type validation, public redaction, disabled-module guards |
+| `test_rss_healthcheck.py` | RSS runtime (red/degraded/green map, precedence, Atom), edge cases, one-shot runs |
+| `test_rss_feed.py` | Public `/feed.xml` output — well-formedness, escaping, guid/dates, toggle |
+| `test_mc_dc.py` | MC/DC formal verification D1–D13 (restore filters, security gate, CSRF, delete cleanup, Slack enqueue/flush/CSRF gates, logo resolution) |
+| `test_structural.py` | Reorder override (D4), notes persist gate (D5), Slack wiring |
+| `test_history.py` | End-to-end history scenarios (T0–T18): recording, public access, admin clear, pruning |
+| `test_routes_and_features.py` | Auth, mutations, security headers, backups, page settings |
+| `test_restart_persistence.py` | Restart-simulation survival tests |
+| `test_slack.py` | Slack queueing, digest building, delivery failure/retry, admin API, logout flush |
+| `test_dogfood_fixes.py` | Regression suite for adversarial-QA findings (disabled-healthcheck guards, notes cap, JSON 404s, lockout seconds) |
+| `test_logging.py` | Access log fields (IP + browser info), XFF extraction, security events, rotation |
+| `test_env_shell_safety.py` | `.env` credential quoting regression guards |
+| `test_install_robustness.py` | install.sh error-reporting helpers + env sanity checks |
+| `test_install_logo.py` | Logo installer: single/dual modes, config write, rejections |
+| `test_coverage_gaps*.py`, `test_coverage_round*.py` | Branch-coverage suites for routes/db/auth/slack edge paths |
+| `test_healthcheck_mc_dc.py` | MC/DC for the 9 healthcheck decisions + worker lock |
 
-**Overall coverage: 87%** (453 tests, measured 2026-08-18)
+**Overall coverage: 95%** (642 tests, measured 2026-08-22)
 
 | Module | Coverage |
 |--------|----------|
 | `input_filter.py` | 100% |
-| `statuspage/auth.py` | 97% |
 | `statuspage/services.py` | 98% |
+| `statuspage/slack.py` | 98% |
 | `statuspage/rss.py` | 96% |
-| `statuspage/db.py` | 90% |
-| `statuspage/routes.py` | 89% |
+| `statuspage/logging_setup.py` | 98% |
+| `statuspage/auth.py` | 92% |
+| `statuspage/db.py` | 91% |
+| `statuspage/routes.py` | 95% |
+| `statuspage/config.py` | 87% |
 | `healthcheck.py` (root worker) | 84% |
-| `statuspage/config.py` | 88% |
-| `app.py` (composition root) | 74% |
-| **TOTAL (all modules)** | **87%** |
+| **TOTAL** | **95%** |
 
 ### Running Tests
 
@@ -536,16 +558,23 @@ status-my-page/
 ├── config.yaml              # Read-only service definitions, admin creds, server cfg
 ├── input_filter.py          # Centralized input validation (XSS, SQLi, fuzzing sanitization)
 ├── app.py                   # Flask composition root & bootstrap
-├── statuspage/              # Application package (db, services, routes, auth, healthcheck, rss)
+├── statuspage/              # Application package (db, services, routes, auth,
+│                            #   healthcheck, rss, slack, logging_setup)
+├── lib.sh                   # Shared error-reporting helpers for shell scripts
 ├── scripts/
 │   ├── backup.sh            # Backup/restore CLI wrapper
 │   ├── backup_db.py         # Consistent SQLite snapshot & restore tool
-│   └── export_db.py         # DB export script
+│   ├── export_db.py         # DB export script
+│   ├── install_logo.sh      # Customer logo installer
+│   ├── build_release.sh     # Clean deployable tar.gz builder
+│   └── fake_slack.py        # Local Slack-webhook stub for testing
 ├── cleanup.sh               # Archive manager: list / show / prune / report
+├── change_password.sh       # Admin password rotation
 ├── requirements.txt         # flask, pyyaml
 ├── static/
 │   ├── css/style.css        # Dark theme, 3 breakpoints (≤640px, ≤425px)
-│   └── js/                  # Vanilla JS: app.js, healthchecks.js, rss.js
+│   └── js/                  # Vanilla JS: app.js, csrf.js, healthchecks.js,
+│                            #   rss.js, slack.js
 ├── templates/index.html     # Jinja2-rendered UI with login & history modals
 ├── start.sh / stop.sh / restart.sh / rebuild.sh / install.sh
 ├── tests/
@@ -601,6 +630,8 @@ status-my-page/
 | `/api/healthchecks/<name>`           | `PUT`    | 🔒 Admin+CSRF | Update a healthcheck (partial body), hot-restarts the worker |
 | `/api/healthchecks/<name>`           | `DELETE` | 🔒 Admin+CSRF | Remove a healthcheck                                         |
 | `/api/rss`                           | `POST`   | 🔒 Admin+CSRF | Toggle the public status feed on/off                         |
+| `/api/slack`                         | `GET`    | 🔒 Admin      | Slack integration state (enabled/configured, masked webhook, queue count) |
+| `/api/slack`                         | `POST`   | 🔒 Admin+CSRF | Toggle Slack, set webhook/channel, clear queue |
 | `/api/settings`                      | `GET`    | Public        | Read page settings (`history_enabled`, `healthchecks_enabled`) |
 | `/api/settings`                      | `POST`   | 🔒 Admin+CSRF | Update page settings (`history_enabled`, `healthchecks_enabled`); persists to config.yaml `settings:` |
 | `/api/csrf-token`                    | `GET`    | 🔒 Admin      | Fetch fresh CSRF token                                       |
