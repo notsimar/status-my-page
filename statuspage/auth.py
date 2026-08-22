@@ -6,6 +6,7 @@ Handles login, session management, CSRF protection, and rate limiting.
 import hashlib
 import hmac
 import json
+import logging
 import sqlite3
 import time
 from collections import defaultdict
@@ -15,6 +16,7 @@ from flask import abort, request, session, jsonify
 from werkzeug.security import check_password_hash
 
 from statuspage.config import get_admin_user as config_get_admin_user
+from statuspage.logging_setup import client_ip
 from constants import (
     MAX_LOGIN_ATTEMPTS,
     LOCKOUT_SECONDS,
@@ -286,9 +288,12 @@ def enforce_session_idle_expiry() -> None:
 
 def login_route():
     ip = request.remote_addr or ""
+    seclog = logging.getLogger("statuspage.app")
 
     # Rate limit: lock out IP after too many failures
     if is_locked(ip):
+        seclog.warning("LOGIN blocked (rate-limited): ip=%s ua=%r",
+                       client_ip(), request.headers.get("User-Agent", ""))
         return jsonify(ok=False, error="Too many attempts. Wait 30s."), 429
 
     data = validate_json_data(request.get_json(silent=True))
@@ -309,9 +314,14 @@ def login_route():
         response = jsonify(ok=True)
         _failed_logins.pop(ip, None)       # unlock current IP on success
         _persist_rate_state("login_failures", _failed_logins)
+        seclog.info("LOGIN ok: ip=%s ua=%r",
+                    client_ip(), request.headers.get("User-Agent", ""))
         return response
 
     record_attempt(ip)
+    seclog.warning("LOGIN failed: ip=%s ua=%r user=%r",
+                   client_ip(), request.headers.get("User-Agent", ""),
+                   user_supplied)
     return jsonify(ok=False, error="Invalid credentials"), 401
 
 
@@ -323,9 +333,13 @@ def logout_route():
         from flask import request as _req
         sent, remaining, detail = flush(base_url=_req.host_url)
         if sent or remaining:
-            print(f"Slack: flushed {sent} on logout ({remaining} still queued: {detail})")
+            logging.getLogger("statuspage.app").info(
+                "Slack: flushed %d on logout (ip=%s, %d still queued: %s)",
+                sent, client_ip(), remaining, detail)
     except Exception as exc:
-        print(f"Slack warning: logout flush failed ({exc})")
+        logging.getLogger("statuspage.app").warning(
+            "Slack warning: logout flush failed (ip=%s, %s)",
+            client_ip(), exc)
     session.clear()
     return jsonify(ok=True, slack_flushed=True)
 

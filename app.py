@@ -94,6 +94,13 @@ app = Flask(__name__)
 # Initialize config paths (this sets up the config module's internal state)
 init_config_paths(BASE_DIR)
 
+# Structured request + application logging (access.log / app.log with
+# client IP and browser info). Must come after init_config_paths so the
+# log directory resolves under the install base dir.
+from statuspage import logging_setup
+logging_setup.init_logging()
+logging_setup.register_request_logging(app)
+
 # After init_config_paths, the config module's getters return the correct paths
 # Module-level paths will be resolved via __getattr__ dynamically
 
