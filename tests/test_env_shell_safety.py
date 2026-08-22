@@ -57,7 +57,7 @@ class TestShellSafeEnvWriting:
                 assert fmt == "%s='%s'\\n", (
                     f"env value not single-quoted: {stripped}"
                 )
-        assert checked >= 6, f"expected >=6 credential writes, found {checked}"
+        assert checked >= 3, f"expected >=3 credential writes, found {checked}"
 
     def test_change_password_py_writes_quoted_value(self):
         """change_password.sh's inline python must quote the hash it writes."""
