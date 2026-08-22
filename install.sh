@@ -56,9 +56,19 @@ echo ""
 
 echo "=== Deploying files ==="
 cp -r app.py healthcheck.py input_filter.py constants.py config.yaml requirements.txt \
-      statuspage/ templates/ static/ tests/ docs/ start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md \
+      statuspage/ templates/ static/ tests/ docs/ start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md scripts/ \
       "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR"/*.sh 2>/dev/null || true
+chmod +x "$INSTALL_DIR"/*.sh "$INSTALL_DIR"/scripts/*.sh 2>/dev/null || true
+echo ""
+
+# ── Customer logos (optional) ────────────────────────────────────
+# Copy any repo-level logos/ directory into the deploy so a fresh clone
+# keeps branding. Configure via config.yaml `logo: {path: ...}`.
+if [ -d "$ROOT_DIR/logos" ] && [ -n "$(ls -A "$ROOT_DIR/logos" 2>/dev/null)" ]; then
+    mkdir -p "$INSTALL_DIR/static/logos"
+    cp -r "$ROOT_DIR/logos/." "$INSTALL_DIR/static/logos/"
+    echo "Copied customer logos from $ROOT_DIR/logos -> static/logos"
+fi
 echo ""
 
 if [ "$ROOT" -eq 1 ]; then
@@ -231,4 +241,5 @@ echo "========================================"
 echo "  Deployment complete!"
 echo "  Install dir: $INSTALL_DIR"
 echo "  Admin user: $ADMIN_USER"
+echo "  Logo (optional): ./scripts/install_logo.sh /path/to/logo.png $INSTALL_DIR"
 echo "========================================"
