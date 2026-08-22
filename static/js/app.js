@@ -59,9 +59,51 @@ list && list.addEventListener('click', async e => {
     label.className = 'status-label ' + next;
     label.textContent = STATUS_LABELS[next];
     row.classList.toggle('show-notes', next !== 'green');
-    try { await csrfFetch('/api/toggle/' + id, { method: 'POST' }); } catch (err) { location.reload(); }
+
+    // Debounce guard: ignore clicks while a previous toggle is still in
+    // flight — rapid clicking previously fired overlapping requests whose
+    // 409/429 rejections were invisible, making the final state ambiguous.
+    if (main.dataset.toggleInflight === '1') {
+        // Revert the optimistic paint and tell the user why.
+        dot.className = 'status-dot ' + current;
+        label.className = 'status-label ' + current;
+        label.textContent = STATUS_LABELS[current];
+        row.classList.remove('show-notes', next !== 'green');
+        showToggleNotice(row, 'Previous change still saving — one click at a time.');
+        return;
+    }
+    main.dataset.toggleInflight = '1';
+
+    try {
+        const res = await csrfFetch('/api/toggle/' + id, { method: 'POST' });
+        if (res.status === 409 || res.status === 429) {
+            // Rate-limited: revert optimistic paint with an explanation.
+            dot.className = 'status-dot ' + current;
+            label.className = 'status-label ' + current;
+            label.textContent = STATUS_LABELS[current];
+            row.classList.remove('show-notes', next !== 'green');
+            showToggleNotice(row, 'Too many changes too fast — wait a moment and retry.');
+        }
+    } catch (err) {
+        location.reload();
+    } finally {
+        delete main.dataset.toggleInflight;
+    }
     updateBadge();
 });
+
+// Transient inline notice under a status row (auto-dismisses).
+function showToggleNotice(row, text) {
+    let n = row.querySelector('.toggle-notice');
+    if (!n) {
+        n = document.createElement('div');
+        n.className = 'toggle-notice';
+        n.style.cssText = 'color:#c0392b;font-size:0.78rem;margin-top:2px;';
+        row.appendChild(n);
+    }
+    n.textContent = text;
+    setTimeout(() => n.remove(), 5000);
+}
 
 // ── Notes auto-save on blur (admin only), debounce 800ms ─────────
 var timers = {};
@@ -80,6 +122,20 @@ if (list) {
         if (e.target.matches('textarea.notes-input')) {
             const ta = e.target;
             const id = ta.dataset.id;
+            // Surface server-side length cap before save: trim + warn once.
+            const MAX_NOTES = 2000;
+            if (ta.value.length > MAX_NOTES) {
+                ta.value = ta.value.slice(0, MAX_NOTES);
+                let warn = ta.parentElement.querySelector('.notes-length-warn');
+                if (!warn) {
+                    warn = document.createElement('div');
+                    warn.className = 'notes-length-warn';
+                    warn.style.cssText = 'color:#c0392b;font-size:0.78rem;margin-top:2px;';
+                    ta.insertAdjacentElement('afterend', warn);
+                }
+                warn.textContent = 'Note limited to ' + MAX_NOTES + ' characters — extra text removed.';
+                setTimeout(() => warn.remove(), 6000);
+            }
             if (timers[id]) clearTimeout(timers[id]);
             timers[id] = setTimeout(async () => {
                 try {
@@ -151,7 +207,7 @@ if (addItemForm) {
                     <span class="status-name"></span>
                     <span class="status-label green">Operational</span>
                 </div>
-                <textarea class="notes-input" placeholder="Add status notes…" data-id="${item.id}"></textarea>
+                <textarea class="notes-input" placeholder="Add status notes…" maxlength="2000" data-id="${item.id}"></textarea>
                 <button class="btn-history" title="View history" data-id="${item.id}">🕙</button>
                 <button class="btn-history-clear" title="Clear history for this service (admin)" data-id="${item.id}">🧹</button>
                 <button class="btn-delete" title="Delete this item" data-id="${item.id}">✕</button>
@@ -444,8 +500,10 @@ function setTheme(theme) {
     if (theme === 'light') root.setAttribute('data-theme', 'light');
     else root.removeAttribute('data-theme');
     try {
-        if (theme === 'light') localStorage.setItem('theme', 'light');
-        else localStorage.removeItem('theme');
+        // Persist BOTH choices explicitly so the saved value always mirrors
+        // what's on screen ('dark' previously relied on removeItem + default,
+        // which made the stored state ambiguous during rapid toggles).
+        localStorage.setItem('theme', theme);
     } catch (e) { /* localStorage unavailable — theme is view-only in that case */ }
     syncThemeUI();
 }

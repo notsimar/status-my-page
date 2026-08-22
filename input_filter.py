@@ -31,7 +31,7 @@ class InputRejected(Exception):
 
 
 # ── Limits ───────────────────────────────────────────────────────────
-MAX_TEXT_LENGTH = 500          # hard cap for free-text fields (notes, etc.)
+MAX_TEXT_LENGTH = 2000         # hard cap for free-text fields (notes, etc.); mirrors constants.MAX_TEXT_LENGTH
 MAX_NAME_LENGTH = 128          # service name
 MAX_USERNAME_LENGTH = 64       # login username/password per-field
 

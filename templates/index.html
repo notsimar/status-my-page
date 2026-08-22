@@ -10,9 +10,9 @@
            Dark is the default; 'light' is only set by an explicit user choice. */
         (function () {
             try {
-                if (localStorage.getItem('theme') === 'light') {
-                    document.documentElement.setAttribute('data-theme', 'light');
-                }
+                const saved = localStorage.getItem('theme');
+                    if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+                    else if (saved === 'dark') document.documentElement.removeAttribute('data-theme');
             } catch (e) { /* localStorage unavailable (private mode) — stay dark */ }
         })();
     </script>
@@ -43,7 +43,7 @@
                         {% if item.status == 'green' %}Operational{% elif item.status == 'degraded' %}Degraded{% else %}Outage{% endif %}
                     </span>
                 </div>
-                <textarea class="notes-input" placeholder="Add status notes…" data-id="{{ item.id }}">{{ item.notes }}</textarea>
+                <textarea class="notes-input" placeholder="Add status notes…" maxlength="2000" data-id="{{ item.id }}">{{ item.notes }}</textarea>
                 {% if history_enabled %}
                 <button class="btn-history" title="View history" data-id="{{ item.id }}">🕙</button>
                 {% endif %}

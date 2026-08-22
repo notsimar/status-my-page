@@ -61,6 +61,9 @@ def get_admin_pass_hash() -> str:
 # ── Rate-limiter state ──────────────────────────────────────────────
 
 _failed_logins: dict[str, list[float]] = defaultdict(list)
+# IP -> epoch seconds when the current lockout expires (drives the
+# "wait Ns" message so users see the real remaining window).
+_lockout_until: dict[str, float] = {}
 _mutation_rates: dict[str, list[float]] = defaultdict(list)
 
 
@@ -111,7 +114,16 @@ def is_locked(ip: str) -> bool:
         _failed_logins[ip] = ts
     else:
         _failed_logins.pop(ip, None)
-    return len(ts) >= MAX_LOGIN_ATTEMPTS
+    if len(ts) >= MAX_LOGIN_ATTEMPTS:
+        _lockout_until[ip] = max(_lockout_until.get(ip, 0),
+                                 ts[-1] + LOCKOUT_SECONDS)
+        return True
+    return False
+
+
+def lockout_remaining(ip: str) -> int:
+    """Whole seconds left in this IP's login lockout (0 when not locked)."""
+    return max(0, int(_lockout_until.get(ip, 0) - time.time()))
 
 
 def _persist_rate_state(scope: str, data) -> None:
@@ -292,9 +304,13 @@ def login_route():
 
     # Rate limit: lock out IP after too many failures
     if is_locked(ip):
-        seclog.warning("LOGIN blocked (rate-limited): ip=%s ua=%r",
-                       client_ip(), request.headers.get("User-Agent", ""))
-        return jsonify(ok=False, error="Too many attempts. Wait 30s."), 429
+        remaining = lockout_remaining(ip)
+        seclog.warning("LOGIN blocked (rate-limited): ip=%s ua=%r remaining=%ds",
+                       client_ip(), request.headers.get("User-Agent", ""),
+                       remaining)
+        return jsonify(ok=False,
+                       error=f"Too many attempts. Try again in {max(remaining, 1)}s.",
+                       retry_after=remaining), 429
 
     data = validate_json_data(request.get_json(silent=True))
     user_supplied = validate_user_input(data.get("user", ""), "user")

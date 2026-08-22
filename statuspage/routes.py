@@ -16,6 +16,7 @@ from statuspage.db import get_connection
 from statuspage.healthcheck import (
     get_configured_healthchecks,
     run_healthchecks_once,
+    is_configured as get_configured_healthchecks_module_state,
 )
 from statuspage.services import (
     get_all_status_items,
@@ -143,7 +144,12 @@ def api_healthchecks():
     Admins get the full config (the admin panel needs url/host/port to render
     and edit). Everyone else gets a redacted summary — the endpoint is
     reachable without auth, and probe targets are internal-network detail.
+
+    Returns an empty payload (not 500) when healthchecking is disabled via
+    STATUS_DISABLE_HEALTHCHECKS — the admin panel renders its empty state.
     """
+    if not get_configured_healthchecks_module_state():
+        return jsonify({})
     hc = get_configured_healthchecks()
     if session.get("admin"):
         return jsonify(hc)
@@ -347,7 +353,7 @@ api_csrf = csrf_token_route
 def api_toggle(item_id: int):
     result = toggle_item(item_id)
     if result is None:
-        abort(404, description="Service not found")
+        return jsonify(error="Service not found"), 404
     return jsonify(result)
 
 
@@ -367,7 +373,7 @@ def api_notes(item_id: int):
     data = validate_json_data(request.get_json(silent=True))
     notes = validate_notes(data.get("notes", ""), "notes")
     if not update_notes(item_id, notes):
-        abort(404, description="Service not found")
+        return jsonify(error="Service not found"), 404
     return jsonify(ok=True)
 
 
@@ -392,7 +398,14 @@ def api_delete(item_id: int):
 
 @require_admin()
 def api_healthcheck_run():
-    """Trigger a one-shot healthcheck run for all services. Admin only."""
+    """Trigger a one-shot healthcheck run for all services. Admin only.
+
+    Returns 409 with a clear message when the healthcheck module is disabled
+    (STATUS_DISABLE_HEALTHCHECKS=1) instead of an unhandled 500.
+    """
+    if not get_configured_healthchecks_module_state():
+        return jsonify(error="Healthchecks are disabled on this deployment "
+                             "(STATUS_DISABLE_HEALTHCHECKS is set)."), 409
     results = run_healthchecks_once()
     return jsonify(results)
 

@@ -16,10 +16,22 @@ from constants import MAX_HISTORY_PER_ITEM
 # Healthcheck thread reference
 _HEALTHCHECK_THREAD: threading.Thread | None = None
 _HEALTHCHECK_START_LOCK = threading.Lock()
+_MODULE_CONFIGURED = False
+
+
+def is_configured() -> bool:
+    """Whether the underlying healthcheck module has been configured.
+
+    False when started with STATUS_DISABLE_HEALTHCHECKS=1 (dev/test mode) —
+    routes must guard on this instead of letting the underlying module's
+    RuntimeError surface as an HTTP 500.
+    """
+    return _MODULE_CONFIGURED
 
 
 def configure_healthcheck_module() -> None:
     """Initialize healthcheck module with paths from app config. Call once at startup."""
+    global _MODULE_CONFIGURED
     import healthcheck as hc
     hc.configure_healthcheck(
         get_base_dir(),
@@ -28,6 +40,7 @@ def configure_healthcheck_module() -> None:
         load_config,
         MAX_HISTORY_PER_ITEM,
     )
+    _MODULE_CONFIGURED = True
 
 
 def start_healthchecks() -> None:

@@ -24,7 +24,7 @@ ADMIN_SESSION_IDLE_TIMEOUT = 300  # 5 min idle before admin session is wiped (sl
 
 
 # ── Input validation limits ─────────────────────────────────────────
-MAX_TEXT_LENGTH = 500           # Hard cap for free-text fields (notes, etc.)
+MAX_TEXT_LENGTH = 2000          # Hard cap for free-text fields (notes, etc.)
 MAX_NAME_LENGTH = 128           # Service name max length
 MAX_USERNAME_LENGTH = 64        # Login username/password per-field max length
 

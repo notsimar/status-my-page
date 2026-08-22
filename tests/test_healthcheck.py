@@ -1012,8 +1012,9 @@ class TestApiHealthchecks:
         r = client.get("/api/healthchecks")
         assert r.get_json() == {}
 
-    def test_healthy_codes_serialized_as_list(self, A, client):
+    def test_healthy_codes_serialized_as_list(self, A, client, monkeypatch):
         """Sets -> sorted lists (JSON can't serialize sets)."""
+        monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
         with open(str(A.CONFIG_PATH), "w") as f:
             yaml.dump(
                 {
@@ -1046,8 +1047,10 @@ class TestApiHealthcheckRun:
         )
         assert r.status_code == 403
 
-    def test_admin_with_csrf_runs_on_demand(self, admin, token, A):
+    def test_admin_with_csrf_runs_on_demand(self, admin, token, A, monkeypatch):
         """Triggered check returns results without mutating DB."""
+        monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
+        monkeypatch.setattr("healthcheck._DB_PATH", A.DB_PATH)
         with open(str(A.CONFIG_PATH), "w") as f:
             yaml.dump(
                 {

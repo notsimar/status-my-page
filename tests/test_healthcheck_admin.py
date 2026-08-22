@@ -515,7 +515,8 @@ class TestHealthcheckDelete:
 class TestHealthcheckIntegration:
     """API writes ↔ public read, worker parsing, item deletion."""
 
-    def test_public_read_reflects_write_redacted(self, admin, A, clean_hc):
+    def test_public_read_reflects_write_redacted(self, admin, A, clean_hc, monkeypatch):
+        monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
         """Public readers see the check exist but NOT its probe target."""
         name = _name("Pub")
         assert _mutate(admin, "POST", "/api/healthchecks",
@@ -792,7 +793,8 @@ class TestRssFeedApi:
         assert r.status_code == 400
         assert "degraded" in r.get_json()["error"]
 
-    def test_public_read_redacts_rss_target(self, admin, A, clean_hc):
+    def test_public_read_redacts_rss_target(self, admin, A, clean_hc, monkeypatch):
+        monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
         name = _name("RssPub")
         assert _mutate(admin, "POST", "/api/healthchecks",
                        {"name": name, "type": "rss",

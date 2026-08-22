@@ -1,0 +1,12 @@
+{
+  "add empty name": "400:{\"error\":\"empty after sanitization\"}\n",
+  "add 500-char name": "403:{\"error\":\"Request rejected (CSRF)\",\"ok\":false}\n",
+  "add script-tag name": "403:{\"error\":\"Request rejected (CSRF)\",\"ok\":false}\n",
+  "toggle missing id": "403:{\"error\":\"Request rejected (CSRF)\",\"ok\":false}\n",
+  "notes xss attempt": "403:{\"error\":\"Not authenticated\",\"ok\":false}\n",
+  "reorder bogus id": "403:{\"error\":\"Not authenticated\",\"ok\":false}\n",
+  "healthcheck invalid type": "403:{\"error\":\"Not authenticated\",\"ok\":false}\n",
+  "settings bad value": "403:{\"error\":\"Not authenticated\",\"ok\":false}\n",
+  "slack webhook http": "403:{\"error\":\"Not authenticated\",\"ok\":false}\n",
+  "rss toggle garbage": "403:{\"error\":\"Not authenticated\",\"ok\":false}\n"
+}

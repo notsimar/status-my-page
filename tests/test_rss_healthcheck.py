@@ -285,7 +285,9 @@ class TestRssFeedCheckEdgeCases:
 class TestRssFeedOneShot:
     """POST /api/healthcheck/run includes rss results (dry run, no DB writes)."""
 
-    def test_one_shot_result_shape(self, A, feed_server, admin, token, clean_hc):
+    def test_one_shot_result_shape(self, A, feed_server, admin, token, clean_hc, monkeypatch):
+        monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
+        monkeypatch.setattr("healthcheck._DB_PATH", A.DB_PATH)
         """One-shot run serializes rss results and never writes the DB.
 
         No status item needs to exist: run_healthchecks_once() is a pure

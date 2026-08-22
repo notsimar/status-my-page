@@ -294,7 +294,7 @@ class TestValidateNotes:
 
     def test_max_length_enforced(self):
         with pytest.raises(InputRejected, match="max length"):
-            validate_notes("x" * 600)
+            validate_notes("x" * 2001)
 
 
 # ─── validate_user_input ────────────────────────────────────────────

@@ -1,0 +1,1 @@
+{"console": [{"type": "error", "text": "Failed to load healthchecks: Error: Failed to load\n    at loadHealthchecks (http://127.0.0.1:8920/static/js/healthchecks.js:217:28)"}, {"type": "error", "text": "Failed to load healthchecks: Error: Failed to load\n    at loadHealthchecks (http://127.0.0.1:8920/static/js/healthchecks.js:217:28)"}]}
