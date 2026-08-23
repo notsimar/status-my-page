@@ -15,7 +15,83 @@
                     else if (saved === 'dark') document.documentElement.removeAttribute('data-theme');
             } catch (e) { /* localStorage unavailable (private mode) — stay dark */ }
         })();
-    </script>
+    </script
+
+    <script>
+        // Drag-and-drop reordering for admin items
+        document.addEventListener('DOMContentLoaded', function() {
+            let dragSrc = null;
+            let ghost;
+            
+            function handleDragStart(e) {
+                dragSrc = e.target.closest('.status-row');
+                if (!dragSrc) return;
+                ghost = dragSrc.cloneNode(true);
+                ghost.style.position = 'fixed';
+                ghost.style.top = '0';
+                ghost.style.left = '0';
+                ghost.style.zIndex = '10000';
+                ghost.style.pointerEvents = 'none';
+                ghost.style.opacity = '0.8';
+                document.body.appendChild(ghost);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/html', dragSrc.innerHTML);
+            }
+            
+            function handleDragOver(e) {
+                e.preventDefault();
+                e.dataTransfer.effectAllowed = 'move';
+                const afterElement = getDragAfterElement(document.elementFromPoint(e.clientX, e.clientY));
+                const dragContainer = document.querySelector('.status-list');
+                if (afterElement == null) {
+                    dragContainer.appendChild(dragSrc);
+                } else {
+                    dragContainer.insertBefore(dragSrc, afterElement);
+                }
+            }
+            
+            function handleDragEnd(e) {
+                document.body.removeChild(ghost);
+                dragSrc = null;
+                // Save reorder via API
+                saveReorder();
+            }
+            
+            function getDragAfterElement(clientX) {
+                const draggableElements = [...document.querySelectorAll('.status-row:not(.dragging)')];
+                return draggableElements.reduce((closest, child) => {
+                    const box = child.getBoundingClientRect();
+                    const offset = e.clientX - box.left - box.width / 2;
+                    return offset < 0 ? child : null;
+                });
+            }
+            
+            // Add drag handles
+            const handles = document.querySelectorAll('.drag-handle');
+            handles.forEach(handle => {
+                handle.addEventListener('dragstart', handleDragStart);
+                handle.addEventListener('dragover', handleDragOver);
+                handle.addEventListener('dragend', handleDragEnd);
+            });
+            
+            // Save reorder to server
+            function saveReorder() {
+                const rows = document.querySelectorAll('.status-row:not(.dragging)');
+                const orderMap = {};
+                rows.forEach((row, index) => {
+                    orderMap[row.dataset.id] = index;
+                });
+                fetch('/api/reorder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': document.querySelector('meta[name=csrf-token]').content
+                    },
+                    body: JSON.stringify(orderMap)
+                });
+            }
+        });
+    </script>>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body class="{% if session_admin %}admin{% endif %}">
@@ -334,5 +410,86 @@
     <script src="/static/js/healthchecks.js"></script>
     <script src="/static/js/rss.js"></script>
     <script src="/static/js/slack.js"></script>
-</body>
+    <script>
+        // Drag-and-drop reordering for admin items
+        document.addEventListener('DOMContentLoaded', function() {
+            let dragSrc = null;
+            let dragOverRow = null;
+            
+            function handleDragStart(e) {
+                dragSrc = e.target.closest('.status-row');
+                if (!dragSrc) return;
+                dragSrc.classList.add('dragging');
+            }
+            
+            function handleDragEnd(e) {
+                dragSrc.classList.remove('dragging');
+                dragSrc = null;
+                if (dragOverRow) {
+                    saveReorder();
+                }
+            }
+            
+            function handleDragOver(e) {
+                e.preventDefault();
+                e.dataTransfer.effectAllowed = 'move';
+                const list = document.querySelector('.status-list');
+                if (!list) return;
+                const mouseY = e.clientY;
+                const rows = list.querySelectorAll('.status-row:not(.dragging)');
+                let foundRow = null;
+                for (const row of rows) {
+                    const rect = row.getBoundingClientRect();
+                    if (mouseY >= rect.top && mouseY <= rect.bottom) {
+                        foundRow = row;
+                        break;
+                    }
+                }
+                dragOverRow = foundRow;
+                const rows = list.querySelectorAll('.status-row');
+                rows.forEach(r => r.classList.toggle('drag-over', r === dragOverRow));
+            }
+            
+            function handleDragLeave(e) {
+                const rows = document.querySelectorAll('.status-row');
+                rows.forEach(r => r.classList.remove('drag-over'));
+                dragOverRow = null;
+            }
+            
+            function handleDragEnd(e) {
+                dragSrc.classList.remove('dragging');
+                dragSrc = null;
+                const rows = document.querySelectorAll('.status-row');
+                rows.forEach(r => r.classList.remove('drag-over'));
+                dragOverRow = null;
+                if (dragOverRow) {
+                    saveReorder();
+                }
+            }
+            
+            function saveReorder() {
+                const rows = document.querySelectorAll('.status-row:not(.dragging)');
+                const orderMap = {};
+                rows.forEach((row, index) => {
+                    orderMap[row.dataset.id] = index;
+                });
+                fetch('/api/reorder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': document.querySelector('meta[name=csrf-token]').content
+                    },
+                    body: JSON.stringify(orderMap)
+                });
+            }
+            
+            const handles = document.querySelectorAll('.drag-handle');
+            handles.forEach(handle => {
+                handle.addEventListener('dragstart', handleDragStart);
+                handle.addEventListener('dragover', handleDragOver);
+                handle.addEventListener('dragleave', handleDragLeave);
+                handle.addEventListener('dragend', handleDragEnd);
+            });
+        });
+    </script></body>
 </html>
