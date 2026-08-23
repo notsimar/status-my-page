@@ -103,11 +103,10 @@ fi
 # Try upgrading pip quietly (ignore network 403 / offline errors)
 "$PY" -m pip install --upgrade pip --quiet 2>/dev/null || true
 
-# Install dependencies (use vendor/ wheels first, fall back to PyPI)
+# Install dependencies (use vendor/ wheels first with --no-index to prevent 403 PyPI network blocks)
 install_deps() {
     if [ -d "$ROOT_DIR/vendor" ] && [ -n "$(ls -A "$ROOT_DIR/vendor"/*.whl 2>/dev/null)" ]; then
-        "$PY" -m pip install --no-index --find-links "$ROOT_DIR/vendor" -r "$ROOT_DIR/requirements.txt" --quiet 2>/dev/null || \
-        "$PY" -m pip install --find-links "$ROOT_DIR/vendor" -r "$ROOT_DIR/requirements.txt" --quiet
+        "$PY" -m pip install --no-index --find-links "$ROOT_DIR/vendor" -r "$ROOT_DIR/requirements.txt" --quiet
     else
         "$PY" -m pip install -r "$ROOT_DIR/requirements.txt" --quiet
     fi
@@ -206,8 +205,11 @@ step "Environment file"
 if [ "$NEED_ENV" -eq 1 ]; then
     if ! "$PY" -c "import werkzeug.security" 2>/dev/null; then
         warn "werkzeug not found in $VENV_DIR — installing requirements..."
-        "$PY" -m pip install -r "$ROOT_DIR/requirements.txt" --quiet 2>/dev/null || \
-        "$PY" -m pip install werkzeug --quiet 2>/dev/null || true
+        if [ -d "$ROOT_DIR/vendor" ] && [ -n "$(ls -A "$ROOT_DIR/vendor"/*.whl 2>/dev/null)" ]; then
+            "$PY" -m pip install --no-index --find-links "$ROOT_DIR/vendor" werkzeug --quiet 2>/dev/null || true
+        else
+            "$PY" -m pip install werkzeug --quiet 2>/dev/null || true
+        fi
     fi
 
     export _SP_PASS="$ADMIN_PASS"
