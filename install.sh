@@ -85,8 +85,8 @@ require_cmd python3 "Install python3 + python3-venv first (e.g. brew install pyt
 PYTHON_VER=$(python3 --version | awk '{print $2}' | cut -d. -f1,2)
 PYTHON_MAJOR=$(python3 --version | awk '{print $2}' | cut -d. -f1)
 PYTHON_MINOR=$(python3 --version | awk '{print $2}' | cut -d. -f2)
-if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]; }; then
-    die "Python >= 3.10 required, found $PYTHON_VER." \
+if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 9 ]; }; then
+    die "Python >= 3.9 required, found $PYTHON_VER." \
         "Install a newer Python 3 and re-run."
 fi
 ok "Python version: $PYTHON_VER"

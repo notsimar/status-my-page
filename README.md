@@ -32,7 +32,7 @@ A dark-themed, mobile-responsive dashboard showing monitored services with color
 
 | Requirement        | Minimum Version     | Notes                                                  |
 |--------------------|---------------------|--------------------------------------------------------|
-| Python             | 3.10+               | Tested on 3.12–3.14 with CPython                       |
+| Python             | 3.9+                | Tested on 3.9–3.14 with CPython (incl. macOS default 3.9.6) |
 | pip                | Any recent version  | Used only for `requirements.txt` (flask, pyyaml)       |
 | SQLite             | Bundled with Python | Database lives in `instance/status.db` (WAL mode auto) |
 | Optional: gunicorn | 20+                 | Production WSGI server (used by `install.sh`)          |

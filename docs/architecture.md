@@ -180,7 +180,7 @@ All state transitions and service entries are committed directly to SQLite (`ins
 
 | Layer            | Technology                       | Version Constraint           | Justification                                                           |
 |------------------|----------------------------------|------------------------------|-------------------------------------------------------------------------|
-| Runtime          | Python                           | 3.10+ (tested 3.12–3.14)     | stdlib sqlite3, yaml via pyyaml                                         |
+| Runtime          | Python                           | 3.9+ (tested 3.9–3.14)       | stdlib sqlite3, yaml via pyyaml                                         |
 | Web Framework    | Flask                            | Latest from requirements.txt | Lightweight WSGI, built-in sessions                                     |
 | Database         | SQLite                           | Bundled with Python 3        | Zero-config file-based DB, WAL mode                                     |
 | Config Format    | YAML (PyYAML)                    | —                            | Human-editable, standard for config files                               |
