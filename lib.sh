@@ -78,3 +78,27 @@ dotenv_key() {
 creds_in_env() {
     [ -f "${ENV_FILE:-}" ] && grep -q '^STATUS_ADMIN_PASS_HASH=..*' "$ENV_FILE"
 }
+
+# normalize_path <path> — resolve absolute path portably across Linux and macOS
+# (avoids GNU `realpath -m` dependency which fails on BSD/macOS).
+normalize_path() {
+    local target="$1"
+    if command -v python3 &>/dev/null; then
+        python3 -c "import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))" "$target" 2>/dev/null && return 0
+    fi
+    if command -v realpath &>/dev/null; then
+        realpath -m "$target" 2>/dev/null || realpath "$target" 2>/dev/null && return 0
+    fi
+    # Fallback to pure shell/pwd if directory exists or parent exists
+    if [ -d "$target" ]; then
+        (cd "$target" && pwd)
+    else
+        local parent
+        parent="$(dirname "$target")"
+        if [ -d "$parent" ]; then
+            printf "%s/%s\n" "$(cd "$parent" && pwd)" "$(basename "$target")"
+        else
+            printf "%s\n" "$target"
+        fi
+    fi
+}

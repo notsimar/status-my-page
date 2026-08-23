@@ -76,12 +76,12 @@ case "$INSTALL_DIR" in
     *..*) die "Invalid install path (traversal not allowed): $INSTALL_DIR" \
           "Remove any '..' segments from the path." ;;
 esac
-INSTALL_DIR=$(realpath -m "$INSTALL_DIR")
+INSTALL_DIR=$(normalize_path "$INSTALL_DIR")
 export INSTALL_DIR
 ok "Install directory: $INSTALL_DIR"
 
 step "Preflight checks"
-require_cmd python3 "Install python3 + python3-venv first (e.g. sudo dnf install python3)."
+require_cmd python3 "Install python3 + python3-venv first (e.g. brew install python3 or sudo dnf install python3)."
 PYTHON_VER=$(python3 --version | awk '{print $2}' | cut -d. -f1,2)
 PYTHON_MAJOR=$(python3 --version | awk '{print $2}' | cut -d. -f1)
 PYTHON_MINOR=$(python3 --version | awk '{print $2}' | cut -d. -f2)
@@ -91,7 +91,6 @@ if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR"
 fi
 ok "Python version: $PYTHON_VER"
 
-require_cmd realpath "It is part of coreutils; update your system packages."
 if [ "$(id -u)" -eq 0 ]; then
     warn "Running as root. Will attempt system installs and ownership changes."
     ROOTMODE=1
@@ -208,7 +207,7 @@ else
     if [ ${#ADMIN_PASS_INPUT} -lt 8 ]; then
         warn "Password is shorter than 8 characters — consider a stronger one."
     fi
-    if printf '%s' "$ADMIN_PASS_INPUT" | grep -q $'\t'; then
+    if printf '%s' "$ADMIN_PASS_INPUT" | grep -q "$(printf '\t')"; then
         die "Password contains a tab character (terminal echo artefact)." \
             "Re-run the install."
     fi
@@ -344,8 +343,18 @@ SVCEOF
 else
     # Keep start.sh's bind target in sync so manual starts match this install.
     if ! grep -q -- "--bind $BIND_HOST:$STATUS_PORT" "$INSTALL_DIR/start.sh" 2>/dev/null; then
-        sed -i "s|gunicorn --bind [^ ]*|gunicorn --bind $BIND_HOST:$STATUS_PORT|" \
-            "$INSTALL_DIR/start.sh" 2>/dev/null || true
+        "$PY" -c "
+import sys, re
+path, host, port = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, 'r') as f:
+        content = f.read()
+    content = re.sub(r'gunicorn --bind [^ ]*', f'gunicorn --bind {host}:{port}', content)
+    with open(path, 'w') as f:
+        f.write(content)
+except Exception:
+    pass
+" "$INSTALL_DIR/start.sh" "$BIND_HOST" "$STATUS_PORT" 2>/dev/null || true
     fi
     echo ""
     echo "Non-root install complete. Start manually:"

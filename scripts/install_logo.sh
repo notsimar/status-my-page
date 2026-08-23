@@ -55,7 +55,11 @@ case "$INSTALL_DIR" in
     /*) : ;;
     *) echo "ERROR: Install path must be absolute: $INSTALL_DIR"; exit 1 ;;
 esac
-INSTALL_DIR=$(realpath -m "$INSTALL_DIR")
+if command -v python3 &>/dev/null; then
+    INSTALL_DIR=$(python3 -c "import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))" "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+elif command -v realpath &>/dev/null; then
+    INSTALL_DIR=$(realpath -m "$INSTALL_DIR" 2>/dev/null || realpath "$INSTALL_DIR" 2>/dev/null || echo "$INSTALL_DIR")
+fi
 CONFIG_YAML="$INSTALL_DIR/config.yaml"
 
 if [ ! -f "$CONFIG_YAML" ]; then
