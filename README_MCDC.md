@@ -10,7 +10,7 @@ We use MC/DC to verify "Guard" logic where multiple conditions determine whether
 
 ## Decision Mapping & Proof Table
 
-The following table maps every critical compound decision in `app.py` to its corresponding test cases. To satisfy MC/DC, we must prove that each condition $\text{C}_n$ can independently change the outcome of the decision.
+The following table maps every critical compound decision in the codebase (formerly the `app.py` monolith — now split across `statuspage/db.py`, `statuspage/services.py`, and `statuspage/auth.py`) to its corresponding test cases. To satisfy MC/DC, we must prove that each condition $\text{C}_n$ can independently change the outcome of the decision.
 
 ### D1: DB Status & State Persistence Across Restart
 **Behavior:** Verifies that items and their status in SQLite are maintained across `init_db()` restarts without relying on YAML runtime overrides.
@@ -22,7 +22,7 @@ The following table maps every critical compound decision in `app.py` to its cor
 
 ---
 
-### D3: Global API Security Guard (L679, L689, L701)
+### D3: Global API Security Guard (`statuspage/auth.py` — `require_admin`)
 **Expression:** `if _not_admin() or not _check_csrf() or not _check_mutation_rate(ip): abort(403)`
 
 | Test Method | C1 (Admin) | C2 (CSRF OK) | C3 (Rate OK) | Outcome | Proof |
@@ -49,10 +49,10 @@ The following table maps every critical compound decision in `app.py` to its cor
 MC/DC structural tests are located in three files:
 
 ```bash
-# App.py decisions (D1, D2, D3, D6, D7)
+# statuspage decisions (D1, D2, D3, D6, D7)
 ./.venv/bin/pytest tests/test_mc_dc.py -v
 
-# App.py decisions (D4, D5)
+# statuspage decisions (D4, D5)
 ./.venv/bin/pytest tests/test_structural.py -v
 
 # Healthcheck worker decisions (D_hc1–D_hc11) + worker lock
@@ -75,15 +75,15 @@ Proven in `tests/test_healthcheck_mc_dc.py` against the pure parsing/dispatch fu
 
 | Decision | Location | Expression | Tests |
 |------|----------|------------|-------|
-| D_hc1: HealthResultGate | `healthcheck.py` `_run_curl_check` | `code in healthy_codes and (not expected or expected in body)` | 4 |
-| D_hc2: UrlSanitisation | `healthcheck.py` `_parse_healthchecks` (curl) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(...)` | 5 |
-| D_hc3: TypeAutoDetection | `healthcheck.py` `_parse_healthchecks` | soap → tcp → ping → curl elif chain | 6 |
-| D_hc5: TcpValidation | `healthcheck.py` `_parse_healthchecks` (tcp) | `not host or not isinstance(host, str) or not _safe_host(host) or port not 1..65535` | 8 |
-| D_hc7: SoapValidation | `healthcheck.py` `_parse_healthchecks` (soap) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(url.strip())` | 4 |
-| D_hc8: RssResponseGate | `healthcheck.py` `_run_rss_feed_check` | `"\n" in stdout and code.isdigit() and 1≤code≤599 and code==200 and no ET.ParseError` | 7 |
-| D_hc9: RssKeywordPrecedence | `healthcheck.py` `_run_rss_feed_check` | `red set & match → red; degraded set & match → degraded; else green` (red precedence) | 6 |
-| D_hc10: RssUrlGuard | `healthcheck.py` `_parse_healthchecks` (rss) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(...)` | 5 |
-| D_hc11: RssEntryFilter | `healthcheck.py` `_run_rss_feed_check` | tag in `item`/`entry` **and** local-name in `title`/`description`/`summary` | 3 |
+| D_hc1: HealthResultGate | `_impl._run_curl_check` | `code in healthy_codes and (not expected or expected in body)` | 4 |
+| D_hc2: UrlSanitisation | `_impl._parse_healthchecks` (curl) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(...)` | 5 |
+| D_hc3: TypeAutoDetection | `_impl._parse_healthchecks` | soap → tcp → ping → curl elif chain | 6 |
+| D_hc5: TcpValidation | `_impl._parse_healthchecks` (tcp) | `not host or not isinstance(host, str) or not _safe_host(host) or port not 1..65535` | 8 |
+| D_hc7: SoapValidation | `_impl._parse_healthchecks` (soap) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(url.strip())` | 4 |
+| D_hc8: RssResponseGate | `_impl._run_rss_feed_check` | `"\n" in stdout and code.isdigit() and 1≤code≤599 and code==200 and no ET.ParseError` | 7 |
+| D_hc9: RssKeywordPrecedence | `_impl._run_rss_feed_check` | `red set & match → red; degraded set & match → degraded; else green` (red precedence) | 6 |
+| D_hc10: RssUrlGuard | `_impl._parse_healthchecks` (rss) | `not url or not isinstance(url, str) or not url.strip() or not _safe_url(...)` | 5 |
+| D_hc11: RssEntryFilter | `_impl._run_rss_feed_check` | tag in `item`/`entry` **and** local-name in `title`/`description`/`summary` | 3 |
 
 Plus 2 worker single-instance lock tests (fcntl `LOCK_EX | LOCK_NB`).
 

@@ -22,22 +22,22 @@ Prove that every guard condition in compound boolean expressions **independently
 
 | Decision | Location | Expression | Test File | Coverage |
 |----------|----------|------------|-----------|----------|
-| D1: RestoreStatus | app.py L342 | `not in seed_set or state in ('green','')` | Test_D1_RestoreStatus (4 tests) | Full MC/DC |
-| D2: RestoreNotes | app.py L355 | `not in seed_set or not note_text.strip()` | Test_D2_NotesRestore (3 tests) | Full MC/DC |
-| D3: SecurityGate | app.py L680+ | `_not_admin() or not _check_csrf() or not _check_mutation_rate(ip)` | Test_D3_SecurityGuard (14 tests across 4 endpoints) | Full MC/DC |
-| D4: ReorderOverride | app.py L395 | `reorder_list and isinstance(reorder_list, list)` | Test_D4_ReorderOverride (7 tests) | Full MC/DC |
-| D5: SetNotesGuard | app.py L547 | `current_row and notes.strip()` | Test_D5_SetNotesGuard (7 tests) | Full MC/DC |
-| D6: CsrfInternalGuard | app.py L648 | `not expected or not hmac.compare_digest(sent, expected)` | Test_D6_CsrfInternalGuard (4 tests) | Full MC/DC |
-| D7: DeleteCleanupGate | app.py L851 | `"items" in rt and name in rt["items"]` | Test_D7_DeleteCleanupGate (5 tests) | Full MC/DC |
-| D_hc1: HealthResultGate | healthcheck.py L222 | `code is not None and code in healthy_codes` | Test_Dhc1_HealthResultGate (3 tests) | Full MC/DC |
-| D_hc2: UrlSanitisation | healthcheck.py L124 | `not url or not isinstance(url, str) or not url.strip()` | Test_Dhc2_UrlSanitisation (5 tests) | Full MC/DC |
-| D_hc3: TypeAutoDetection | healthcheck.py L144 | soap→tcp→ping→curl inference chain | Test_Dhc3_TypeAutoDetection (6 tests) | Full MC/DC |
-| D_hc5: TcpValidation | healthcheck.py L188 | host type + `_safe_host` + port range | Test_Dhc5_TcpValidation (8 tests) | Full MC/DC |
-| D_hc7: SoapResultGate | healthcheck.py L323 | `code in healthy_codes and expected in body` | Test_Dhc7_SoapResultGate (4 tests) | Full MC/DC |
-| D_hc8: RssResponseGate | healthcheck.py L447 | `\n` in stdout → isdigit → 1≤code≤599 → code==200 → no ParseError | Test_Dhc8_RssResponseGate (7 tests) | Full MC/DC |
-| D_hc9: RssKeywordPrecedence | healthcheck.py L479 | `(red set & match) → red; (deg set & match) → deg; else green` | Test_Dhc9_RssKeywordPrecedence (6 tests) | Full MC/DC |
-| D_hc10: RssUrlGuard | healthcheck.py L213 | `not url or not str or not url.strip() or not _safe_url` | Test_Dhc10_RssUrlGuard (5 tests) | Full MC/DC |
-| D_hc11: RssEntryFilter | healthcheck.py L468 | item/entry tag + child tag local-name filter | Test_Dhc11_RssEntryFilter (3 tests) | Full MC/DC |
+| D1: RestoreStatus | statuspage/db.py (`sync_db_to_config`) | `not in seed_set or state in ('green','')` | Test_D1_RestoreStatus (4 tests) | Full MC/DC |
+| D2: RestoreNotes | statuspage/db.py (`sync_db_to_config`) | `not in seed_set or not note_text.strip()` | Test_D2_NotesRestore (3 tests) | Full MC/DC |
+| D3: SecurityGate | statuspage/auth.py (`require_admin`) | `_not_admin() or not _check_csrf() or not _check_mutation_rate(ip)` | Test_D3_SecurityGuard (14 tests across 4 endpoints) | Full MC/DC |
+| D4: ReorderOverride | statuspage/services.py (`reorder_items`) | `reorder_list and isinstance(reorder_list, list)` | Test_D4_ReorderOverride (7 tests) | Full MC/DC |
+| D5: SetNotesGuard | statuspage/services.py (`update_notes`) | `current_row and notes.strip()` | Test_D5_SetNotesGuard (7 tests) | Full MC/DC |
+| D6: CsrfInternalGuard | statuspage/auth.py (`check_csrf`) | `not expected or not hmac.compare_digest(sent, expected)` | Test_D6_CsrfInternalGuard (4 tests) | Full MC/DC |
+| D7: DeleteCleanupGate | statuspage/db.py (`delete_item`) | `"items" in rt and name in rt["items"]` | Test_D7_DeleteCleanupGate (5 tests) | Full MC/DC |
+| D_hc1: HealthResultGate | _healthcheck_impl.py L222 | `code is not None and code in healthy_codes` | Test_Dhc1_HealthResultGate (3 tests) | Full MC/DC |
+| D_hc2: UrlSanitisation | _healthcheck_impl.py L124 | `not url or not isinstance(url, str) or not url.strip()` | Test_Dhc2_UrlSanitisation (5 tests) | Full MC/DC |
+| D_hc3: TypeAutoDetection | _healthcheck_impl.py L144 | soap→tcp→ping→curl inference chain | Test_Dhc3_TypeAutoDetection (6 tests) | Full MC/DC |
+| D_hc5: TcpValidation | _healthcheck_impl.py L188 | host type + `_safe_host` + port range | Test_Dhc5_TcpValidation (8 tests) | Full MC/DC |
+| D_hc7: SoapResultGate | _healthcheck_impl.py L323 | `code in healthy_codes and expected in body` | Test_Dhc7_SoapResultGate (4 tests) | Full MC/DC |
+| D_hc8: RssResponseGate | _healthcheck_impl.py L447 | `\n` in stdout → isdigit → 1≤code≤599 → code==200 → no ParseError | Test_Dhc8_RssResponseGate (7 tests) | Full MC/DC |
+| D_hc9: RssKeywordPrecedence | _healthcheck_impl.py L479 | `(red set & match) → red; (deg set & match) → deg; else green` | Test_Dhc9_RssKeywordPrecedence (6 tests) | Full MC/DC |
+| D_hc10: RssUrlGuard | _healthcheck_impl.py L213 | `not url or not str or not url.strip() or not _safe_url` | Test_Dhc10_RssUrlGuard (5 tests) | Full MC/DC |
+| D_hc11: RssEntryFilter | _healthcheck_impl.py L468 | item/entry tag + child tag local-name filter | Test_Dhc11_RssEntryFilter (3 tests) | Full MC/DC |
 | D8: SlackEnqueueGate | statuspage/slack.py | `not enabled or not webhook_url` | Test_D8_SlackEnqueueGate (4 tests) | Full MC/DC |
 | D9: CsrfMethodGate | statuspage/auth.py | `require_csrf and method not in (GET,HEAD,OPTIONS)` | Test_D9_CsrfMethodGate (4 tests) | Full MC/DC |
 | D10: SlackFlushGate | statuspage/slack.py | `enabled` / `webhook_url` / delivery-ok | Test_D10_SlackFlushGate (4 tests) | Full MC/DC |
@@ -173,7 +173,7 @@ bash tests/test_health.sh http://myserver:9920  # Custom URL
 
 ### How It Works
 
-Each structural test class targets **one compound decision** in `app.py` or `healthcheck.py`. The methodology:
+Each structural test class targets **one compound decision** in `statuspage/*` (implementation modules). The methodology:
 
 1. **Baseline**: Set all conditions to pass so the function proceeds normally
 2. **Individual Failure**: Flip exactly one condition to the opposite truth value while holding other constants at values that would allow the guard to pass — if the guard now blocks/skips, that condition is proven independent
@@ -290,7 +290,7 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 
 ### For Structural/MC/DC Tests
 
-1. **Identify a compound expression** in `app.py` or `healthcheck.py`: Search for lines containing `or` or `and` with 2+ conditions
+1. **Identify a compound expression** in `statuspage/*` (implementation modules): Search for lines containing `or` or `and` with 2+ conditions
 2. **Extract the conditions**: Break the boolean expression into atomic predicates (C1, C2, etc.)
 3. **Write baseline test**: All conditions pass so function succeeds
 4. **Write individual failure tests**: For each condition Ci:

@@ -217,6 +217,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;  # Critical for secure cookies!
     }
 }
+```
+
+> **Important — proxy trust:** the app ignores `X-Forwarded-For` unless
+> `STATUS_TRUST_PROXY=1` is set in `/etc/status-page/env`. With this nginx
+> config in front, add it so access logs and login rate-limiting see real
+> client IPs instead of `127.0.0.1`:
+>
+> ```bash
+> echo 'STATUS_TRUST_PROXY=1' | sudo tee -a /etc/status-page/env
+> sudo systemctl restart status-page
+> ```
+>
+> Only enable it when a trusted proxy always sets the header; on a directly
+> exposed server, leaving it off prevents clients from spoofing IPs.
 
 # Redirect HTTP → HTTPS automatically
 server {
@@ -353,7 +367,7 @@ sudo systemctl restart status-page
 
 ### Automatic Archival
 
-On every server restart, a JSON snapshot of the database state is saved to `archives/`:
+On every server restart, a JSON snapshot of the database state is saved to `archives/`. Snapshots are pruned automatically — only the most recent **50** are kept (oldest deleted first), so frequent restarts cannot fill the disk. `./cleanup.sh prune --keep N` still works for manual control:
 
 ```bash
 # List all archived snapshots

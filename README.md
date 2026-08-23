@@ -542,7 +542,7 @@ cp config.yaml.bak1 config.yaml
 | `statuspage/db.py` | 91% |
 | `statuspage/routes.py` | 95% |
 | `statuspage/config.py` | 87% |
-| `healthcheck.py` (root worker) | 84% |
+| `healthcheck.py` (worker impl, via `statuspage/_healthcheck_impl.py`) | 84% |
 | **TOTAL** | **95%** |
 
 ### Running Tests

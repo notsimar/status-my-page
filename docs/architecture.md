@@ -63,9 +63,11 @@
 │  └─────────────────────────────────────────────────┘    │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │   Healthcheck worker thread (healthcheck.py)    │    │
+│  │  Healthcheck worker (statuspage/_healthcheck_   │    │
+│  │  impl.py; facade in statuspage/healthcheck.py)  │    │
 │  │   daemon, fcntl single-instance lock            │    │
 │  │   curl / ping / tcp / soap / rss dispatch       │    │
+│  │   due probes run in a bounded thread pool       │    │
 │  │   → writes status + status_history via db.py    │    │
 │  └─────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘
@@ -204,7 +206,7 @@ app.py                      # composition root: app factory, route table, header
 │   ├── services.py          # domain operations
 │   ├── routes.py            # HTTP handlers (status CRUD, healthcheck CRUD, feed)
 │   ├── auth.py              # session, CSRF, rate limit, lockout, idle expiry
-│   ├── healthcheck.py       # worker thread + curl/ping/tcp/soap/rss dispatch
+│   ├── healthcheck.py       # integration facade + re-exports; implementation in _healthcheck_impl.py (worker, bounded probe pool, curl/ping/tcp/soap/rss dispatch)
 │   └── rss.py               # public RSS 2.0 feed builder
 constants.py                 # shared tunables (timeouts, caps, ports)
 ```
@@ -284,7 +286,7 @@ Incoming POST/PUT/DELETE /api/*
 
 ## 5. Healthcheck Worker
 
-A daemon thread (`statuspage/_healthcheck_impl.py`) polls each configured check at its own `interval`; due probes run in a bounded thread pool (8 workers) so one slow endpoint cannot delay other services' intervals and drives the item's DB status automatically. It is the only writer of healthcheck-driven status rows, and it shares the same history table the admin mutations write.
+A daemon thread (`statuspage/_healthcheck_impl.py`) polls each configured check at its own `interval` and drives the item's DB status automatically. Due probes run concurrently in a bounded thread pool (8 workers) so one slow endpoint cannot delay other services' intervals; result handling (fail counters, status flips, scheduling) is applied serially afterwards. It is the only writer of healthcheck-driven status rows, and it shares the same history table the admin mutations write. The top-level `healthcheck.py` is a compatibility alias that loads the implementation under the historical module name — both import paths resolve to the same module object.
 
 ```
 worker loop (one thread, fcntl-locked to a single instance)

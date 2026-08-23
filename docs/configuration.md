@@ -206,6 +206,22 @@ healthchecks:
 | `STATUS_ADMIN_PASS_HASH` | Password hash for Flask auth (REQUIRED for production) | Yes | `scrypt$72816$salt...` | **Never** store plaintext passwords |
 | `STATUS_SECRET_KEY` | Flask session signing key | Recommended | `a1b2c3d4e5f6...` | Auto-generated if unset but doesn't survive restarts |
 | `STATUS_NO_ARCHIVE=1` | Disable DB archival on server restart | No | (any value) | Use only for development/testing |
+| `STATUS_TRUST_PROXY=1` | Trust `X-Forwarded-For` header for client IP resolution | No | — | Enable **only** behind a reverse proxy that *overwrites* (not appends to) the header. Default off: direct clients cannot spoof IPs into access.log or dodge per-IP rate limits |
+| `STATUS_SECURE_COOKIES=1` | Set the `Secure` flag on session cookies | No | — | Enable on HTTPS deployments |
+| `STATUS_DISABLE_HEALTHCHECKS=1` | Don't start the background healthcheck worker | No | — | Development/testing only |
+| `STATUS_SLACK_WEBHOOK_URL` | Slack incoming webhook fallback | No | `https://hooks.slack.com/...` | Used when `slack.webhook_url` is unset in config.yaml (config wins if both set) |
+
+> **Behind a reverse proxy?** Add `STATUS_TRUST_PROXY=1` to `/etc/status-page/env`
+> so access logs and login-lockout rate limiting see real client IPs. Without it,
+> every visitor appears as the proxy's IP (`127.0.0.1`) and a single abusive
+> client could lock out all users sharing that address.
+
+### Archives retention
+
+Archive snapshots in `archives/` are pruned automatically: the oldest
+snapshots beyond **50** are deleted each time a new snapshot is written, so
+frequent restarts cannot grow the directory unboundedly. `./cleanup.sh prune`
+still works for manual control with a custom `--keep` count.
 
 ### Generating Values
 
