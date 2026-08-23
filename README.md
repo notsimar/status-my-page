@@ -47,6 +47,42 @@ A dark-themed, mobile-responsive dashboard showing monitored services with color
 
 The quickest path — ideal for testing on your own machine or a VPS before production deploy.
 
+**Interactive setup (recommended):**
+
+```bash
+git clone https://github.com/notsimar/status-my-page.git
+cd status-my-page
+./dev-setup.sh
+```
+
+`dev-setup.sh` performs a safe `git pull` (skipped when there are uncommitted
+local changes), creates the virtualenv, installs dependencies, then
+**prompts you for each setup option** with sensible defaults:
+
+| Prompt            | Default      | Written to                        |
+|-------------------|--------------|-----------------------------------|
+| Admin username    | `admin`      | `DEV_ADMIN_USER`                  |
+| Admin password    | *(asked)*    | `STATUS_ADMIN_PASS_HASH` (scrypt) |
+| Dev server port   | `8920`       | `DEV_PORT`                        |
+| Disable healthchecks? | `Y`    | `STATUS_DISABLE_HEALTHCHECKS`     |
+| Logo file         | *(blank)*    | `DEV_LOGO_PATH`                   |
+
+Re-runs offer your existing values as the defaults, so you just press Enter,
+and an existing password is kept unless you explicitly choose to reset it.
+The script writes `.env.local` (mode `600`, single-quoted values so
+`source` never truncates `$` in scrypt hashes), seeds the database, and
+prints the exact command to start the dev server.
+
+After setup, start the dev server with:
+
+```bash
+source .venv/bin/activate
+flask --app app run --host 0.0.0.0 --port 8920
+```
+
+<details>
+<summary>Manual equivalent (no prompts)</summary>
+
 ```bash
 # 1️⃣  Clone the repository
 git clone https://github.com/notsimar/status-my-page.git
@@ -63,6 +99,8 @@ python3 -c "from werkzeug.security import generate_password_hash; print(generate
 
 # 📌 Copy the output — it looks like: scrypt$72816...
 ```
+
+</details>
 
 **Edit `config.yaml`** to list your services:
 

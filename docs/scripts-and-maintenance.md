@@ -3,12 +3,13 @@
 ## Table of Contents
 
 - [1. Shell Script Inventory](#1-shell-script-inventory)
-- [2. start.sh — Development Server Launcher](#2-startsh--development-server-launcher)
-- [3. stop.sh / restart.sh — Process Management](#3-stopsh--restartsh--process-management)
-- [4. rebuild.sh — Full Installation & Migration](#4-rebuildsh--full-installation--migration)
-- [5. install.sh — Production Deploy Wizard](#5-installsh---production-deploy-wizard)
-- [6. cleanup.sh — Archive Manager](#6-cleanupsh--archive-manager)
-- [7. Maintenance Procedures](#7-maintenance-procedures)
+- [2. dev-setup.sh — Interactive Developer Setup](#2-dev-setupsh--interactive-developer-setup)
+- [3. start.sh — Development Server Launcher](#3-startsh--development-server-launcher)
+- [4. stop.sh / restart.sh — Process Management](#4-stopsh--restartsh--process-management)
+- [5. rebuild.sh — Full Installation & Migration](#5-rebuildsh--full-installation--migration)
+- [6. install.sh — Production Deploy Wizard](#6-installsh---production-deploy-wizard)
+- [build_release.sh](#build_releasesh)
+- [install_logo.sh](#install_logosh)
 
 ---
 
@@ -26,11 +27,69 @@
 | `scripts/build_release.sh` | Build clean deployable `dist/*.tar.gz` from git-tracked files | None (user) | Creates `dist/` tarball |
 | `scripts/install_logo.sh` | Install customer logos into `static/logos/` + write config.yaml logo section | None (user) | `static/logos/`, `config.yaml` |
 | `lib.sh` (sourced, not run) | Shared error-reporting helpers: die/warn/step/ok/run_step/require_cmd | — | — |
+| `dev-setup.sh` | Interactive developer quick-start: git pull, venv, prompts, env | None (user) | Creates `.env.local`, venv, `instance/` DB |
 
 
 ---
 
-## 2. start.sh — Development Server Launcher
+## 2. dev-setup.sh — Interactive Developer Setup
+
+### Purpose
+
+One-command local development bootstrap. Run it after `git clone` and
+again after any `git pull` to (re)configure the workspace. It is
+interactive: it syncs the code, creates the virtualenv, installs
+dependencies, and **prompts for each setup option** with sensible
+defaults, then writes `.env.local`, seeds the DB, and prints the exact
+dev-server start command.
+
+### Prompts
+
+| Prompt | Default | Writes |
+|--------|---------|--------|
+| Admin username | `admin` | `DEV_ADMIN_USER` |
+| Admin password (asked only when `.env.local` is absent or reset chosen) | — | `STATUS_ADMIN_PASS_HASH` |
+| Dev server port | `8920` | `DEV_PORT` |
+| Disable background healthchecks? | `Y` | `STATUS_DISABLE_HEALTHCHECKS` |
+| Logo file to install (optional) | blank | `DEV_LOGO_PATH` |
+
+Existing values stored in `.env.local` are offered as defaults, so
+re-runs are mostly Enter keys. A stored password is reused unless you
+explicitly answer `y` to the reset question.
+
+### Behavior details
+
+- **Git sync:** `git pull --ff-only` runs first; the pull is skipped
+  (with a warning) when the working tree has uncommitted changes or the
+  checkout is in detached HEAD, so local work is never clobbered.
+- **Password handling:** the entered password is piped into Python via
+  stdin (never a shell argument or environment variable); the scrypt
+  hash is written single-quoted so `source .env.local` cannot truncate
+  the `$` characters inside the hash.
+- **Validation:** the port must be numeric 1–65535; the password must be
+  non-empty and must match its confirmation. Invalid input re-prompts.
+- **DB seed:** `init_db()` runs with the freshly written env sourced,
+  so `STATUS_ADMIN_PASS_HASH` is present at import time.
+- **Logo:** if a path is given, `scripts/install_logo.sh` installs it.
+- **Exit codes:** any failed step aborts with `die`, writing details to
+  the shared install error log.
+
+### Usage
+
+```bash
+./dev-setup.sh
+```
+
+### Test coverage
+
+`tests/test_dev_setup.py` drives the script end-to-end with piped stdin:
+defaults acceptance, custom values, password mismatch re-prompt, invalid
+port re-prompt, declined password reset preserving the stored hash,
+single-quoted env values, `600` permissions, and `$`-surviving sourcing.
+
+---
+
+## 3. start.sh — Development Server Launcher
 
 ### Purpose
 
@@ -80,7 +139,7 @@ Environment variables are loaded from:
 
 ---
 
-## 3. stop.sh / restart.sh — Process Management
+## 4. stop.sh / restart.sh — Process Management
 
 ### stop.sh
 
@@ -116,7 +175,7 @@ sudo systemctl restart status-page
 
 ---
 
-## 4. rebuild.sh — Full Installation & Migration
+## 5. rebuild.sh — Full Installation & Migration
 
 ### Purpose
 
@@ -156,7 +215,7 @@ rebuild.sh
 
 ---
 
-## 5. install.sh — Production Deploy Wizard
+## 6. install.sh — Production Deploy Wizard
 
 ### Purpose
 
