@@ -157,10 +157,14 @@ if [ ! -x "$PIP" ]; then
     fi
 fi
 
-run_step "upgrade pip" "$PY" -m pip install --upgrade pip --quiet
+# Try upgrading pip quietly (ignore network 403 / offline errors)
+"$PY" -m pip install --upgrade pip --quiet 2>/dev/null || true
 
+# Install dependencies with offline vendor/ wheels preferred to prevent 403 PyPI network blocks
 if [ -d "$INSTALL_DIR/vendor" ] && [ -n "$(ls -A "$INSTALL_DIR/vendor"/*.whl 2>/dev/null)" ]; then
-    run_step "install requirements.txt (vendor wheels + PyPI fallback)" \
+    run_step "install requirements.txt (from vendor wheels)" \
+        "$PY" -m pip install --no-index --find-links "$INSTALL_DIR/vendor" -r "$INSTALL_DIR/requirements.txt" --quiet 2>/dev/null || \
+    run_step "install requirements.txt (with online fallback)" \
         "$PY" -m pip install --find-links "$INSTALL_DIR/vendor" -r "$INSTALL_DIR/requirements.txt" --quiet
 else
     run_step "install requirements.txt" "$PY" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet

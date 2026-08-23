@@ -100,11 +100,14 @@ if [ ! -x "$VENV_DIR/bin/pip" ]; then
     fi
 fi
 
-run_step "upgrade pip" "$PY" -m pip install --upgrade pip --quiet
+# Try upgrading pip quietly (ignore network 403 / offline errors)
+"$PY" -m pip install --upgrade pip --quiet 2>/dev/null || true
 
-# Install dependencies (first try local vendor/ wheels if present, then fall back to PyPI)
+# Install dependencies with offline vendor/ wheels preferred to prevent 403 PyPI network blocks
 if [ -d "$ROOT_DIR/vendor" ] && [ -n "$(ls -A "$ROOT_DIR/vendor"/*.whl 2>/dev/null)" ]; then
-    run_step "install requirements (vendor wheels + PyPI fallback)" \
+    run_step "install requirements (from vendor wheels)" \
+        "$PY" -m pip install --no-index --find-links "$ROOT_DIR/vendor" -r "$ROOT_DIR/requirements.txt" --quiet 2>/dev/null || \
+    run_step "install requirements (with online fallback)" \
         "$PY" -m pip install --find-links "$ROOT_DIR/vendor" -r "$ROOT_DIR/requirements.txt" --quiet
 else
     run_step "install requirements" "$PY" -m pip \
