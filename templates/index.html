@@ -47,7 +47,7 @@
                         {% if item.status == 'green' %}Operational{% elif item.status == 'degraded' %}Degraded{% else %}Outage{% endif %}
                     </span>
                 </div>
-                <textarea class="notes-input" placeholder="Add status notes…" maxlength="2000" data-id="{{ item.id }}">{{ item.notes }}</textarea>
+                <textarea class="notes-input" placeholder="Add status notes…" maxlength="2000" data-id="{{ item.id }}" spellcheck="true">{{ item.notes }}</textarea>
                 {% if history_enabled %}
                 <button class="btn-history" title="View history" data-id="{{ item.id }}">🕙</button>
                 {% endif %}
@@ -251,38 +251,38 @@
                 
                 <div id="hcBodyRow" class="form-row hc-type-field hidden">
                     <label for="hcBody">SOAP Body (XML)</label>
-                    <textarea id="hcBody" rows="4" placeholder="<soap:Envelope>...</soap:Envelope>"></textarea>
+                    <textarea id="hcBody" rows="4" placeholder="<soap:Envelope>...</soap:Envelope>" spellcheck="true"></textarea>
                     <small class="help-text">Optional. Uses default envelope if empty.</small>
                 </div>
                 
                 <div id="hcExpectedStringRow" class="form-row hc-type-field hidden">
-                    <label for="hcExpectedString">Expected Response String</label>
-                    <input type="text" id="hcExpectedString" placeholder="OK">
-                    <small class="help-text">Optional. If set, response must contain this string.</small>
-                </div>
-                
-                <div id="hcFailureKeywordRow" class="form-row hc-type-field hidden">
-                    <label for="hcFailureKeyword">Failure / Outage Keyword (Red)</label>
-                    <input type="text" id="hcFailureKeyword" placeholder="Error, Exception, 500, Database failure">
-                    <small class="help-text">Optional. If found in response body, check marks item RED (case-insensitive).</small>
-                </div>
+                                    <label for="hcExpectedString">Expected Response String</label>
+                                    <input type="text" id="hcExpectedString" placeholder="OK" spellcheck="true">
+                                    <small class="help-text">Optional. If set, response must contain this string.</small>
+                                </div>
 
-                <div id="hcDegradedKeywordRow" class="form-row hc-type-field hidden">
-                    <label for="hcDegradedKeyword">Degraded Keyword (Yellow)</label>
-                    <input type="text" id="hcDegradedKeyword" placeholder="Slow, Warning, High Latency, Maintenance">
-                    <small class="help-text">Optional. If found in response body, check marks item DEGRADED (case-insensitive).</small>
-                </div>
+                                <div id="hcFailureKeywordRow" class="form-row hc-type-field hidden">
+                                    <label for="hcFailureKeyword">Failure / Outage Keyword (Red)</label>
+                                    <input type="text" id="hcFailureKeyword" placeholder="Error, Exception, 500, Database failure" spellcheck="true">
+                                    <small class="help-text">Optional. If found in response body, check marks item RED (case-insensitive).</small>
+                                </div>
+
+                                <div id="hcDegradedKeywordRow" class="form-row hc-type-field hidden">
+                                    <label for="hcDegradedKeyword">Degraded Keyword (Yellow)</label>
+                                    <input type="text" id="hcDegradedKeyword" placeholder="Slow, Warning, High Latency, Maintenance" spellcheck="true">
+                                    <small class="help-text">Optional. If found in response body, check marks item DEGRADED (case-insensitive).</small>
+                                </div>
                 
                 <!-- rss fields -->
                 <div id="hcRssKeywordsRow" class="form-row hc-type-field hidden">
                     <label for="hcRssKeywordsRed">Red Keywords (comma-separated)</label>
-                    <input type="text" id="hcRssKeywordsRed" placeholder="outage, down, major issue, critical">
+                    <input type="text" id="hcRssKeywordsRed" placeholder="outage, down, major issue, critical" spellcheck="true">
                     <small class="help-text">Feed entry text containing any of these → item goes red</small>
                 </div>
 
                 <div id="hcRssKeywordsDegRow" class="form-row hc-type-field hidden">
                     <label for="hcRssKeywordsDeg">Degraded Keywords (comma-separated)</label>
-                    <input type="text" id="hcRssKeywordsDeg" placeholder="degraded, partial, minor">
+                    <input type="text" id="hcRssKeywordsDeg" placeholder="degraded, partial, minor" spellcheck="true">
                     <small class="help-text">Feed entry text containing any of these → item goes degraded</small>
                 </div>
 
