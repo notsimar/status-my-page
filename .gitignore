@@ -16,6 +16,7 @@ archives/
 wheels/
 scripts/_download_vendor.py
 scripts/_get_platform_wheels.py
+scripts/_download_all_mac.py
 
 # Test stubs (leave untracked to avoid cluttering working directory)
 test_fixes.*
