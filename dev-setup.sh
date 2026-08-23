@@ -283,16 +283,21 @@ init_db()
 print('DB initialized')"
 
 # ── 5. Optional logo ────────────────────────────────────────────────
-if [ -n "$LOGO_PATH" ] && [ -f "$LOGO_PATH" ]; then
-    step "Logo"
-    if [ -x "$ROOT_DIR/scripts/install_logo.sh" ]; then
-        run_step "install logo" bash "$ROOT_DIR/scripts/install_logo.sh" \
-            "$LOGO_PATH" "$ROOT_DIR"
+if [ -n "$LOGO_PATH" ]; then
+    # Expand tilde and relative paths portably
+    RESOLVED_LOGO_PATH=$("$PY" -c "import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))" "$LOGO_PATH" 2>/dev/null || echo "$LOGO_PATH")
+    if [ -f "$RESOLVED_LOGO_PATH" ]; then
+        step "Logo"
+        if [ -x "$ROOT_DIR/scripts/install_logo.sh" ]; then
+            run_step "install logo" bash "$ROOT_DIR/scripts/install_logo.sh" \
+                "$RESOLVED_LOGO_PATH" "$ROOT_DIR"
+            LOGO_PATH="$RESOLVED_LOGO_PATH"
+        else
+            warn "scripts/install_logo.sh not found — skipping logo install."
+        fi
     else
-        warn "scripts/install_logo.sh not found — skipping logo install."
+        warn "Logo file not found: $LOGO_PATH (resolved: $RESOLVED_LOGO_PATH) — skipped."
     fi
-elif [ -n "$LOGO_PATH" ]; then
-    warn "Logo file not found: $LOGO_PATH — skipped."
 fi
 
 # ── 6. Summary ──────────────────────────────────────────────────────
