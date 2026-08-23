@@ -126,6 +126,9 @@ def register_request_logging(app) -> None:
             duration_ms = (time.perf_counter() - start) * 1000
 
         ua = request.headers.get("User-Agent", "-")[:200]
+        # Log-forgery guard: strip control chars so a crafted UA cannot
+        # inject fake log lines into access.log.
+        ua = ua.replace("\n", "\\n").replace("\r", "\\r").replace("\t", " ")
         access_logger.info(
             '%s %s "%s %s" %d %.1fms %db ua="%s" [%s]',
             client_ip(),

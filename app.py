@@ -154,6 +154,17 @@ def _resolve_secret_key() -> str:
 
 app.secret_key = _resolve_secret_key()
 
+# Session cookie hardening. HttpOnly is Flask's default; we pin SameSite=Lax
+# (CSRF defense-in-depth behind the CSRF token) and allow Secure to be
+# enabled per-deployment for HTTPS-fronted installs.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(
+        os.environ.get("STATUS_SECURE_COOKIES", "").lower() in ("1", "true", "yes")
+    ),
+)
+
 # Initialize admin auth (requires STATUS_ADMIN_PASS_HASH env var)
 init_admin_auth()
 

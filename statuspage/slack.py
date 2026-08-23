@@ -128,6 +128,15 @@ def enqueue_status_change(item_name: str, old_status: str, new_status: str,
                 ")",
                 (conf["max_queue"],),
             )
+            # Age-out: entries older than 7 days are stale regardless of
+            # count — an admin who never logs out shouldn't accumulate an
+            # indefinitely old backlog that eventually posts as a wall of
+            # outdated digests.
+            conn.execute(
+                "DELETE FROM slack_outbox WHERE occurred < ?",
+                ((dt.datetime.now(dt.timezone.utc)
+                  - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S"),),
+            )
             conn.commit()
         finally:
             conn.close()
