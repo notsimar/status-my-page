@@ -215,25 +215,29 @@ else
 fi
 
 step "Hashing credentials"
-if ! "$PY" -c "import werkzeug" 2>/dev/null; then
-    warn "werkzeug not found in $VENV_DIR — attempting install..."
+if ! "$PY" -c "import werkzeug.security" 2>/dev/null; then
+    warn "werkzeug not found in $VENV_DIR — installing requirements..."
+    "$PIP" install -r "$INSTALL_DIR/requirements.txt" --quiet 2>/dev/null || \
     "$PIP" install werkzeug --quiet 2>/dev/null || true
 fi
 
-PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
-import sys, os, secrets
-pwd = sys.stdin.read().rstrip('\n')
+export _SP_PASS="$ADMIN_PASS"
+PASS_HASH="$("$PY" - << 'PYEOF'
+import os, sys
+pwd = os.environ.get('_SP_PASS', '')
 try:
     from werkzeug.security import generate_password_hash
     print(generate_password_hash(pwd))
 except Exception:
-    import hashlib
+    import hashlib, secrets
     salt = secrets.token_hex(16)
     h = hashlib.scrypt(pwd.encode('utf-8'), salt=salt.encode('utf-8'), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
-    print(f'scrypt:32768:8:1\${salt}\${h}')
-")" || die "Could not hash the password." \
-           "Check that requirements.txt installed cleanly: $PIP install -r $INSTALL_DIR/requirements.txt"
-[ -n "$PASS_HASH" ] || die "Password hashing produced an empty result."
+    print('scrypt:32768:8:1$' + salt + '$' + h)
+PYEOF
+)"
+unset _SP_PASS
+[ -n "$PASS_HASH" ] || die "Could not hash the password." \
+       "Check that requirements.txt installed cleanly: $PIP install -r $INSTALL_DIR/requirements.txt"
 
 SECRET_KEY="$("$PY" -c "import secrets; print(secrets.token_hex(32))")"
 

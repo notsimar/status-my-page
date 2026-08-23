@@ -54,18 +54,21 @@ while true; do
 done
 
 # Generate werkzeug hash
-NEW_HASH="$(printf '%s' "$PASS1" | "$PYTHON_BIN" -c '
-import sys, os, secrets
-pwd = sys.stdin.read().rstrip("\r\n")
+export _SP_PASS="$PASS1"
+NEW_HASH="$("$PYTHON_BIN" - << 'PYEOF'
+import os, sys
+pwd = os.environ.get('_SP_PASS', '')
 try:
     from werkzeug.security import generate_password_hash
     print(generate_password_hash(pwd))
 except Exception:
-    import hashlib
+    import hashlib, secrets
     salt = secrets.token_hex(16)
     h = hashlib.scrypt(pwd.encode("utf-8"), salt=salt.encode("utf-8"), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
-    print(f"scrypt:32768:8:1\${salt}\${h}")
-')"
+    print('scrypt:32768:8:1$' + salt + '$' + h)
+PYEOF
+)"
+unset _SP_PASS
 
 # Target env file resolution (.env.local takes precedence if it exists, else .env)
 if [ -f "$ROOT_DIR/.env.local" ]; then

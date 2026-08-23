@@ -186,23 +186,27 @@ echo ""
 step "Environment file"
 
 if [ "$NEED_ENV" -eq 1 ]; then
-    if ! "$PY" -c "import werkzeug" 2>/dev/null; then
-        warn "werkzeug not found in $VENV_DIR — attempting install..."
+    if ! "$PY" -c "import werkzeug.security" 2>/dev/null; then
+        warn "werkzeug not found in $VENV_DIR — installing requirements..."
+        "$VENV_DIR/bin/pip" install -r "$ROOT_DIR/requirements.txt" --quiet 2>/dev/null || \
         "$VENV_DIR/bin/pip" install werkzeug --quiet 2>/dev/null || true
     fi
 
-    PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
-import sys, os, secrets
-pwd = sys.stdin.read().rstrip('\n')
+    export _SP_PASS="$ADMIN_PASS"
+    PASS_HASH="$("$PY" - << 'PYEOF'
+import os, sys
+pwd = os.environ.get('_SP_PASS', '')
 try:
     from werkzeug.security import generate_password_hash
     print(generate_password_hash(pwd))
 except Exception:
-    import hashlib
+    import hashlib, secrets
     salt = secrets.token_hex(16)
     h = hashlib.scrypt(pwd.encode('utf-8'), salt=salt.encode('utf-8'), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
-    print(f'scrypt:32768:8:1\${salt}\${h}')
-" 2>/dev/null || true)"
+    print('scrypt:32768:8:1$' + salt + '$' + h)
+PYEOF
+)"
+    unset _SP_PASS
     if [ -z "$PASS_HASH" ]; then
         die "Failed to generate password hash." \
             "Re-run the script; check that the venv has werkzeug installed."
