@@ -186,6 +186,11 @@ echo ""
 step "Environment file"
 
 if [ "$NEED_ENV" -eq 1 ]; then
+    if ! "$PY" -c "import werkzeug" 2>/dev/null; then
+        warn "werkzeug not found in $VENV_DIR — attempting install..."
+        "$VENV_DIR/bin/pip" install werkzeug --quiet 2>/dev/null || true
+    fi
+
     PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
 import sys, os, secrets
 pwd = sys.stdin.read().rstrip('\n')

@@ -215,6 +215,11 @@ else
 fi
 
 step "Hashing credentials"
+if ! "$PY" -c "import werkzeug" 2>/dev/null; then
+    warn "werkzeug not found in $VENV_DIR — attempting install..."
+    "$PIP" install werkzeug --quiet 2>/dev/null || true
+fi
+
 PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
 import sys, os, secrets
 pwd = sys.stdin.read().rstrip('\n')
