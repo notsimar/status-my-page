@@ -151,7 +151,7 @@ if [ ! -x "$PY" ]; then
 fi
 
 # Ensure pip is available inside the venv (handles macOS/Linux distros where venv lacks pip)
-if [ ! -x "$PIP" ]; then
+if ! "$PY" -m pip --version >/dev/null 2>&1; then
     if "$PY" -m ensurepip --upgrade >/dev/null 2>&1; then
         ok "pip installed via ensurepip"
     fi
@@ -160,15 +160,16 @@ fi
 # Try upgrading pip quietly (ignore network 403 / offline errors)
 "$PY" -m pip install --upgrade pip --quiet 2>/dev/null || true
 
-# Install dependencies with offline vendor/ wheels preferred to prevent 403 PyPI network blocks
-if [ -d "$INSTALL_DIR/vendor" ] && [ -n "$(ls -A "$INSTALL_DIR/vendor"/*.whl 2>/dev/null)" ]; then
-    run_step "install requirements.txt (from vendor wheels)" \
+# Install dependencies (use vendor/ wheels first, fall back to PyPI)
+install_deps_install() {
+    if [ -d "$INSTALL_DIR/vendor" ] && [ -n "$(ls -A "$INSTALL_DIR/vendor"/*.whl 2>/dev/null)" ]; then
         "$PY" -m pip install --no-index --find-links "$INSTALL_DIR/vendor" -r "$INSTALL_DIR/requirements.txt" --quiet 2>/dev/null || \
-    run_step "install requirements.txt (with online fallback)" \
         "$PY" -m pip install --find-links "$INSTALL_DIR/vendor" -r "$INSTALL_DIR/requirements.txt" --quiet
-else
-    run_step "install requirements.txt" "$PY" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet
-fi
+    else
+        "$PY" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet
+    fi
+}
+run_step "install requirements.txt" install_deps_install
 "$PY" -c "import flask, gunicorn, werkzeug, yaml" 2>/dev/null \
     || die "Dependency verification failed." \
            "The venv exists but key packages are missing. Delete '$VENV_DIR' and re-run."
