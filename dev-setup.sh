@@ -186,11 +186,10 @@ echo ""
 step "Environment file"
 
 if [ "$NEED_ENV" -eq 1 ]; then
-    PASS_HASH="$("$PY" -c "
+    PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
 import sys
 from werkzeug.security import generate_password_hash
-print(generate_password_hash(sys.stdin.read().rstrip('\n')))")" \
-        <<< "$ADMIN_PASS" 2>/dev/null || true
+print(generate_password_hash(sys.stdin.read().rstrip('\n')))" 2>/dev/null || true)"
     if [ -z "$PASS_HASH" ]; then
         die "Failed to generate password hash." \
             "Re-run the script; check that the venv has werkzeug installed."

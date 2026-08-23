@@ -54,12 +54,12 @@ while true; do
 done
 
 # Generate werkzeug hash
-NEW_HASH=$("$PYTHON_BIN" -c '
+NEW_HASH="$(printf '%s' "$PASS1" | "$PYTHON_BIN" -c '
 import sys
 from werkzeug.security import generate_password_hash
 password = sys.stdin.read().rstrip("\r\n")
 print(generate_password_hash(password))
-' <<< "$PASS1")
+')"
 
 # Target env file resolution (.env.local takes precedence if it exists, else .env)
 if [ -f "$ROOT_DIR/.env.local" ]; then
