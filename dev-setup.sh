@@ -187,9 +187,17 @@ step "Environment file"
 
 if [ "$NEED_ENV" -eq 1 ]; then
     PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
-import sys
-from werkzeug.security import generate_password_hash
-print(generate_password_hash(sys.stdin.read().rstrip('\n')))" 2>/dev/null || true)"
+import sys, os, secrets
+pwd = sys.stdin.read().rstrip('\n')
+try:
+    from werkzeug.security import generate_password_hash
+    print(generate_password_hash(pwd))
+except Exception:
+    import hashlib
+    salt = secrets.token_hex(16)
+    h = hashlib.scrypt(pwd.encode('utf-8'), salt=salt.encode('utf-8'), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
+    print(f'scrypt:32768:8:1\${salt}\${h}')
+" 2>/dev/null || true)"
     if [ -z "$PASS_HASH" ]; then
         die "Failed to generate password hash." \
             "Re-run the script; check that the venv has werkzeug installed."

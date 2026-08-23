@@ -215,8 +215,18 @@ else
 fi
 
 step "Hashing credentials"
-PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "from werkzeug.security import generate_password_hash; import sys; pwd=sys.stdin.read(); print(generate_password_hash(pwd.rstrip('\n')))")" \
-    || die "Could not hash the password (werkzeug import failed?)." \
+PASS_HASH="$(printf '%s' "$ADMIN_PASS" | "$PY" -c "
+import sys, os, secrets
+pwd = sys.stdin.read().rstrip('\n')
+try:
+    from werkzeug.security import generate_password_hash
+    print(generate_password_hash(pwd))
+except Exception:
+    import hashlib
+    salt = secrets.token_hex(16)
+    h = hashlib.scrypt(pwd.encode('utf-8'), salt=salt.encode('utf-8'), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
+    print(f'scrypt:32768:8:1\${salt}\${h}')
+")" || die "Could not hash the password." \
            "Check that requirements.txt installed cleanly: $PIP install -r $INSTALL_DIR/requirements.txt"
 [ -n "$PASS_HASH" ] || die "Password hashing produced an empty result."
 
