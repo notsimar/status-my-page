@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import sqlite3
+import threading
 import time
 from collections import defaultdict
 from functools import wraps
@@ -117,6 +118,7 @@ def is_locked(ip: str) -> bool:
     if len(ts) >= MAX_LOGIN_ATTEMPTS:
         _lockout_until[ip] = max(_lockout_until.get(ip, 0),
                                  ts[-1] + LOCKOUT_SECONDS)
+        _persist_rate_state("login_failures", _failed_logins, force=True)
         return True
     return False
 
@@ -126,14 +128,30 @@ def lockout_remaining(ip: str) -> int:
     return max(0, int(_lockout_until.get(ip, 0) - time.time()))
 
 
-def _persist_rate_state(scope: str, data) -> None:
+# Minimum seconds between SQLite snapshots of the same scope. The in-memory
+# dict stays authoritative and exact; persistence is a restart-recovery
+# side-channel, so coalescing bursts of writes is safe and keeps per-request
+# cost O(1) instead of O(state size) JSON dumps on every mutation.
+_RATE_PERSIST_MIN_INTERVAL = 5.0
+_rate_persist_last: dict[str, float] = {}
+_rate_persist_lock = threading.Lock()
+
+
+def _persist_rate_state(scope: str, data, force: bool = False) -> None:
     """Write a rate-limiter dict to the shared SQLite ``rate_limits`` table.
 
-    Best-effort persistence across worker restarts / reloads. The in-memory
-    dict remains the authoritative, fast path within a process; this is a
-    side-channel snapshot. Never raises — a persistence hiccup must not
-    break authentication or mutations.
+    Best-effort persistence across worker restarts / reloads. Writes are
+    throttled to one snapshot per scope per _RATE_PERSIST_MIN_INTERVAL
+    seconds (the in-memory dict remains the authoritative, fast path within
+    a process). Never raises — a persistence hiccup must not break
+    authentication or mutations. Callers that need an IMMEDIATE durable
+    snapshot (e.g. a lockout just started) pass ``force=True``.
     """
+    now = time.time()
+    with _rate_persist_lock:
+        if not force and now - _rate_persist_last.get(scope, 0.0) < _RATE_PERSIST_MIN_INTERVAL:
+            return
+        _rate_persist_last[scope] = now
     try:
         from statuspage.db import get_db_path
         conn = sqlite3.connect(str(get_db_path()), timeout=2.0)
@@ -329,7 +347,7 @@ def login_route():
         session[ADMIN_ACTIVE_SINCE_KEY] = time.time()  # start the 5-min idle clock
         response = jsonify(ok=True)
         _failed_logins.pop(ip, None)       # unlock current IP on success
-        _persist_rate_state("login_failures", _failed_logins)
+        _persist_rate_state("login_failures", _failed_logins, force=True)
         seclog.info("LOGIN ok: ip=%s ua=%r",
                     client_ip(), request.headers.get("User-Agent", ""))
         return response

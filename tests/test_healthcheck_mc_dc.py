@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+import statuspage.config as _cfg
+import healthcheck as _hc
 
 
 # ─── D_hc1: curl health result gate ──────────────────────────────
@@ -48,7 +50,7 @@ class Test_Dhc1_HealthResultGate:
     """MC/DC for the healthy-result guard on L222 inside _healthcheck_worker()."""
 
     def _write(self, A, data):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     # ── T_hc1 baseline: C1=True, C2=True -> green path taken ─────
@@ -63,7 +65,7 @@ class Test_Dhc1_HealthResultGate:
             },
         )
         # Verify _parse_healthchecks() loads correctly.
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
 
         # Simulate the guard expression with known values (code=200, healthy_codes={200}).
@@ -83,7 +85,7 @@ class Test_Dhc1_HealthResultGate:
                 "healthchecks": {"SvcA": {"url": "http://bad/", "interval": 60}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         code = None  # C1=False
         hc_entry = hc["SvcA"]
 
@@ -102,7 +104,7 @@ class Test_Dhc1_HealthResultGate:
                 "healthchecks": {"SvcA": {"url": "http://localhost/", "healthy_codes": [200]}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         code = 404  # C1=True (not None)
         hc_entry = hc["SvcA"]
 
@@ -124,7 +126,7 @@ class Test_Dhc1_HealthResultGate:
                 }},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         code = 204
         enters_healthy = code in hc["SvcA"]["healthy_codes"] if code is not None else False
         assert enters_healthy, "C1=T + C2=T for custom whitelisted code=204"
@@ -141,7 +143,7 @@ class Test_Dhc2_UrlSanitisation:
     """MC/DC for the three-condition URL skip guard on L124 of _parse_healthchecks()."""
 
     def _write(self, A, data):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     # ── C1=True alone -> skip ──
@@ -156,7 +158,7 @@ class Test_Dhc2_UrlSanitisation:
                 "healthchecks": {"SvcA": {}},  # no url key at all
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     # ── C2=True alone -> skip (url exists but is not string) ──
     def test_C2_True_non_string_url__skipped(self, A):
@@ -169,7 +171,7 @@ class Test_Dhc2_UrlSanitisation:
                 "healthchecks": {"SvcA": {"url": 12345}},  # int, not str.
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     # ── C3=True alone -> skip (string but empty/whitespace) ──
     def test_C3_True_empty_string_url__skipped(self, A):
@@ -181,7 +183,7 @@ class Test_Dhc2_UrlSanitisation:
                 "healthchecks": {"SvcA": {"url": ""}},  # C1=F (present), C2=F (str), C3=T
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C3_True_whitespace_only__skipped(self, A):
         """Whitespace-only URL string -> also rejected (C3=True)."""
@@ -193,7 +195,7 @@ class Test_Dhc2_UrlSanitisation:
                 "healthchecks": {"SvcA": {"url": "   "}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     # ── Baseline: all False -> entry proceeds ──
     def test_all_False__proceeds(self, A):
@@ -206,7 +208,7 @@ class Test_Dhc2_UrlSanitisation:
                 "healthchecks": {"SvcA": {"url": "http://localhost:8080/"}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
 
 
@@ -231,7 +233,7 @@ class Test_Dhc3_TypeAutoDetection:
     """MC/DC for the type auto-detection chain in _parse_healthchecks()."""
 
     def _write(self, A, data):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     # ── C1=True alone -> soap ──────────────────────────────────────
@@ -245,7 +247,7 @@ class Test_Dhc3_TypeAutoDetection:
                 "healthchecks": {"SvcA": {"url": "http://x/", "soap_action": "GetStatus"}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         assert hc["SvcA"]["type"] == "soap"
 
@@ -261,7 +263,7 @@ class Test_Dhc3_TypeAutoDetection:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["SvcA"]["type"] == "soap"
 
     # ── C1=False, C2=True -> tcp ───────────────────────────────────
@@ -275,7 +277,7 @@ class Test_Dhc3_TypeAutoDetection:
                 "healthchecks": {"SvcA": {"host": "127.0.0.1", "port": 5432}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         assert hc["SvcA"]["type"] == "tcp"
 
@@ -290,7 +292,7 @@ class Test_Dhc3_TypeAutoDetection:
                 "healthchecks": {"SvcA": {"host": "10.0.0.1"}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         assert hc["SvcA"]["type"] == "ping"
 
@@ -305,7 +307,7 @@ class Test_Dhc3_TypeAutoDetection:
                 "healthchecks": {"SvcA": {"url": "http://localhost/health"}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         assert hc["SvcA"]["type"] == "curl"
 
@@ -320,7 +322,7 @@ class Test_Dhc3_TypeAutoDetection:
                 "healthchecks": {"SvcA": {"interval": 30}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
 
 # ─── D_hc5: TCP validation gate ────────────────────────────────────
@@ -344,7 +346,7 @@ class Test_Dhc5_TcpValidation:
     """MC/DC for TCP host+port validation in _parse_healthchecks()."""
 
     def _write(self, A, data):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     def test_C1_True_missing_host__skipped(self, A):
@@ -353,7 +355,7 @@ class Test_Dhc5_TcpValidation:
             A,
             {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"type": "tcp", "port": 5432}}},
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C1_True_non_string_host__skipped(self, A):
         """C1=True: host is int -> skipped."""
@@ -365,7 +367,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": 12345, "port": 5432}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C2_True_unsafe_host__skipped(self, A):
         """C2=True: host passes type check but fails _safe_host -> skipped."""
@@ -377,7 +379,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "-c", "port": 80}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C3_True_missing_port__skipped(self, A):
         """C3=True: port key absent -> skipped."""
@@ -389,7 +391,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1"}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C3_True_invalid_port_zero__skipped(self, A):
         """C3=True: port=0 (out of range) -> skipped."""
@@ -401,7 +403,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 0}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C3_True_invalid_port_high__skipped(self, A):
         """C3=True: port=70000 (out of range) -> skipped."""
@@ -413,7 +415,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 70000}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C3_True_negative_port__skipped(self, A):
         """C3=True: negative port -> skipped."""
@@ -425,7 +427,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": -1}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_all_False_valid_host_port__proceeds(self, A):
         """All conditions False: valid host and port -> parsed."""
@@ -437,7 +439,7 @@ class Test_Dhc5_TcpValidation:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 5432}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         assert hc["SvcA"]["type"] == "tcp"
         assert hc["SvcA"]["port"] == 5432
@@ -467,7 +469,7 @@ class Test_Dhc7_SoapResultGate:
     """MC/DC for SOAP healthy-result guard in _run_soap_check()."""
 
     def _write(self, A, data):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     def test_C1T_C2T__baseline_healthy(self, A):
@@ -553,7 +555,7 @@ class Test_Dhc8_RssResponseGate:
 
     def _check(self, A, monkeypatch, stdout, words=None):
         monkeypatch.setattr(subprocess, "run", _fake_run(stdout))
-        return A._run_rss_feed_check("http://vendor.example/feed", 5, words or EMPTY_WORDS)
+        return _hc._run_rss_feed_check("http://vendor.example/feed", 5, words or EMPTY_WORDS)
 
     def test_all_False__baseline_green(self, A, monkeypatch):
         """All guards pass: valid 200 + XML -> keyword mapping runs (green)."""
@@ -630,7 +632,7 @@ class Test_Dhc9_RssKeywordPrecedence:
 
     def _check(self, A, monkeypatch, body, words):
         monkeypatch.setattr(subprocess, "run", _fake_run(body + "\n200"))
-        return A._run_rss_feed_check("http://vendor.example/feed", 5, words)
+        return _hc._run_rss_feed_check("http://vendor.example/feed", 5, words)
 
     def test_C1T_C2T__baseline_red(self, A, monkeypatch):
         """C1=True (red list set) + C2=True (feed has 'outage') -> red."""
@@ -686,7 +688,7 @@ class Test_Dhc10_RssUrlGuard:
     """MC/DC for the 4-condition url guard on the rss parse branch."""
 
     def _write(self, A, details):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": details}},
                 f, default_flow_style=False, sort_keys=False,
@@ -695,28 +697,28 @@ class Test_Dhc10_RssUrlGuard:
     def test_C1_True_missing_url__skipped(self, A):
         """C1=True: type=rss with no url -> entry rejected."""
         self._write(A, {"type": "rss"})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C2_True_non_string_url__skipped(self, A):
         """C1=False (key present), C2=True (int) -> rejected."""
         self._write(A, {"type": "rss", "url": 12345})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C3_True_whitespace_url__skipped(self, A):
         """C1=C2=False (present, str), C3=True (blank) -> rejected."""
         self._write(A, {"type": "rss", "url": "   "})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_C4_True_bad_scheme__skipped(self, A):
         """C1..C3=False, C4=True (ftp scheme fails _safe_url) -> rejected."""
         self._write(A, {"type": "rss", "url": "ftp://vendor.example/feed"})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_all_False__parsed_as_rss(self, A):
         """All False: valid http url -> parsed as rss with default empty
         keyword lists and sane numerics."""
         self._write(A, {"type": "rss", "url": "http://vendor.example/feed"})
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         entry = hc["SvcA"]
         assert entry["type"] == "rss"
@@ -776,7 +778,7 @@ class Test_Dhc11_RssEntryFilter:
 
     def _check(self, A, monkeypatch, body, words):
         monkeypatch.setattr(subprocess, "run", _fake_run(body + "\n200"))
-        return A._run_rss_feed_check("http://vendor.example/feed", 5, words)
+        return _hc._run_rss_feed_check("http://vendor.example/feed", 5, words)
 
     def test_baseline_item_title_matched__red(self, A, monkeypatch):
         """C1=True: keyword inside <item><title> -> scanned -> red."""

@@ -21,6 +21,9 @@ import xml.etree.ElementTree as ET
 
 import pytest
 import yaml
+import statuspage.config as _cfg
+import statuspage.auth as _auth
+import app as app_obj
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -41,7 +44,7 @@ def _write_rss(A, section: dict) -> None:
 def _mutate(client, method: str, url: str, payload: dict | None = None):
     """Mutation with a fresh CSRF token + clean rate-limit window."""
     import app as m
-    m._mutation_rates.clear()
+    _auth._mutation_rates.clear()
     tok = client.get("/api/csrf-token").get_json()["token"]
     headers = {"X-CSRF-Token": tok}
     if payload is None:
@@ -125,7 +128,7 @@ class TestBuildFeedXml:
 
     def _hist(self, A, item, old, new, occurred):
         """Insert a status-history row directly (surgical, no admin/CSRF)."""
-        c = sqlite3.connect(str(A.DB_PATH))
+        c = sqlite3.connect(str(_cfg.get_db_path()))
         c.row_factory = sqlite3.Row
         iid = c.execute(
             "SELECT id FROM status_items WHERE name=?", (item,)).fetchone()["id"]
@@ -138,7 +141,7 @@ class TestBuildFeedXml:
         return occurred
 
     def _cleanup(self, A, *occurred):
-        c = sqlite3.connect(str(A.DB_PATH))
+        c = sqlite3.connect(str(_cfg.get_db_path()))
         c.executemany("DELETE FROM status_history WHERE occurred=?",
                       [(o,) for o in occurred])
         c.commit()
@@ -146,7 +149,7 @@ class TestBuildFeedXml:
 
     def _feed(self, A, base=None):
         from statuspage.rss import build_feed_xml
-        c = sqlite3.connect(str(A.DB_PATH))
+        c = sqlite3.connect(str(_cfg.get_db_path()))
         c.row_factory = sqlite3.Row
         try:
             # base_url only matters for the <link>; pass a stable one in tests.
@@ -180,7 +183,7 @@ class TestBuildFeedXml:
         """Notes / rename events are excluded; only status transitions appear."""
         occ_note = "2999-01-02T00:00:00.000000Z"
         occ_status = "2999-01-03T00:00:00.000000Z"
-        c = sqlite3.connect(str(A.DB_PATH))
+        c = sqlite3.connect(str(_cfg.get_db_path()))
         c.row_factory = sqlite3.Row
         iid = c.execute(
             "SELECT id FROM status_items WHERE name='SvcB'").fetchone()["id"]
@@ -231,7 +234,7 @@ class TestBuildFeedXml:
 class TestFeedRoute:
     def _mk_history(self, A, item="SvcA", old="green", new="degraded"):
         occ = f"{time.time_ns()}Z"
-        c = sqlite3.connect(str(A.DB_PATH))
+        c = sqlite3.connect(str(_cfg.get_db_path()))
         c.row_factory = sqlite3.Row
         iid = c.execute(
             "SELECT id FROM status_items WHERE name=?", (item,)).fetchone()["id"]
@@ -317,19 +320,19 @@ class TestRssToggleApi:
 
     def test_feed_404_after_toggling_off(self, admin, A, rss_roundtrip):
         _write_rss(A, {"enabled": True})
-        assert A.app.test_client().get("/feed.xml").status_code == 200
+        assert app_obj.app.test_client().get("/feed.xml").status_code == 200
         _mutate(admin, "POST", "/api/rss", {"enabled": False})
         assert client_get_feed_404(A)
 
     def test_unauthenticated_403(self, client, A, rss_roundtrip):
-        A._mutation_rates.clear()
+        _auth._mutation_rates.clear()
         r = client.post("/api/rss", json={"enabled": False},
                         content_type="application/json")
         assert r.status_code == 403
 
 
 def client_get_feed_404(A):
-    r = A.app.test_client().get("/feed.xml")
+    r = app_obj.app.test_client().get("/feed.xml")
     assert r.status_code == 404
     return r.status_code == 404
 
@@ -343,7 +346,7 @@ class TestE2EFeedUpdatesOnStatusChange:
         # every DB row name into _runtime.items, which would leak into other
         # tests' seed/position assertions in the shared session DB).
         item_name = "RSS Live"
-        c = sqlite3.connect(str(A.DB_PATH))
+        c = sqlite3.connect(str(_cfg.get_db_path()))
         c.row_factory = sqlite3.Row
         c.execute(
             "INSERT OR IGNORE INTO status_items (name, status, position) "
@@ -363,7 +366,7 @@ class TestE2EFeedUpdatesOnStatusChange:
             assert any("RSS Live: Operational → Degraded" in (t or "") for t in titles), titles
         finally:
             # Direct DB delete (no _runtime.items flush). Prunes history too.
-            c2 = sqlite3.connect(str(A.DB_PATH))
+            c2 = sqlite3.connect(str(_cfg.get_db_path()))
             c2.row_factory = sqlite3.Row
             c2.execute("DELETE FROM status_history WHERE item_id=?", (iid,))
             c2.execute("DELETE FROM status_items WHERE id=?", (iid,))

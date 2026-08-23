@@ -25,6 +25,16 @@ from pathlib import Path
 
 import pytest
 import yaml
+import statuspage.config as _cfg
+import constants as _consts
+import statuspage.auth as _auth
+import healthcheck as _hc
+import statuspage.db as _dbmod
+import statuspage.config as _lc
+import statuspage.config as _gbd
+import statuspage.config as _gdp
+import statuspage.config as _gcp
+import app as app_obj
 
 # ─── _safe_url ──────────────────────────────────────────────────
 
@@ -32,36 +42,36 @@ class TestSafeUrl:
     """URL scheme validation: only http:// and https:// allowed."""
 
     def test_http_allowed(self, A):
-        assert A._safe_url("http://example.com/health") is True
+        assert _hc._safe_url("http://example.com/health") is True
 
     def test_https_allowed(self, A):
-        assert A._safe_url("https://example.com/health") is True
+        assert _hc._safe_url("https://example.com/health") is True
 
     def test_file_rejected(self, A):
-        assert A._safe_url("file:///etc/passwd") is False
+        assert _hc._safe_url("file:///etc/passwd") is False
 
     def test_gopher_rejected(self, A):
-        assert A._safe_url("gopher://evil.com") is False
+        assert _hc._safe_url("gopher://evil.com") is False
 
     def test_ftp_rejected(self, A):
-        assert A._safe_url("ftp://server.org/file") is False
+        assert _hc._safe_url("ftp://server.org/file") is False
 
     def test_data_rejected(self, A):
-        assert A._safe_url("data:text/html,<script>alert(1)</script>") is False
+        assert _hc._safe_url("data:text/html,<script>alert(1)</script>") is False
 
     def test_javascript_rejected(self, A):
-        assert A._safe_url("javascript:alert(1)") is False
+        assert _hc._safe_url("javascript:alert(1)") is False
 
     def test_http_with_port_and_path(self, A):
-        assert A._safe_url("http://localhost:8080/api/v1/health") is True
+        assert _hc._safe_url("http://localhost:8080/api/v1/health") is True
 
     def test_https_with_query_string(self, A):
-        assert A._safe_url("https://api.example.com/health?check=true") is True
+        assert _hc._safe_url("https://api.example.com/health?check=true") is True
 
     # Edge cases ──────────────────────────────────────────────
     def test_malformed_empty_host(self, A):
         """http:// with no hostname -> parsed returns empty netloc."""
-        assert A._safe_url("http://") is False
+        assert _hc._safe_url("http://") is False
 
 
 # ─── _safe_host ─────────────────────────────────────────────────
@@ -70,30 +80,30 @@ class TestSafeHost:
     """Host / IP validation for ping check to prevent command/option injection."""
 
     def test_ipv4_allowed(self, A):
-        assert A._safe_host("127.0.0.1") is True
-        assert A._safe_host("192.168.10.1") is True
+        assert _hc._safe_host("127.0.0.1") is True
+        assert _hc._safe_host("192.168.10.1") is True
 
     def test_ipv6_allowed(self, A):
-        assert A._safe_host("::1") is True
-        assert A._safe_host("2001:db8::1") is True
+        assert _hc._safe_host("::1") is True
+        assert _hc._safe_host("2001:db8::1") is True
 
     def test_hostname_allowed(self, A):
-        assert A._safe_host("localhost") is True
-        assert A._safe_host("router.home") is True
-        assert A._safe_host("dns.google.com") is True
+        assert _hc._safe_host("localhost") is True
+        assert _hc._safe_host("router.home") is True
+        assert _hc._safe_host("dns.google.com") is True
 
     def test_option_injection_rejected(self, A):
-        assert A._safe_host("-c") is False
-        assert A._safe_host("--help") is False
+        assert _hc._safe_host("-c") is False
+        assert _hc._safe_host("--help") is False
 
     def test_command_injection_rejected(self, A):
-        assert A._safe_host("127.0.0.1; id") is False
-        assert A._safe_host("127.0.0.1 && reboot") is False
-        assert A._safe_host("`id`") is False
+        assert _hc._safe_host("127.0.0.1; id") is False
+        assert _hc._safe_host("127.0.0.1 && reboot") is False
+        assert _hc._safe_host("`id`") is False
 
     def test_empty_host_rejected(self, A):
-        assert A._safe_host("") is False
-        assert A._safe_host("   ") is False
+        assert _hc._safe_host("") is False
+        assert _hc._safe_host("   ") is False
 
 
 # ─── _parse_healthchecks ──────────────────────────────────────────
@@ -103,12 +113,12 @@ class TestParseHealthchecks:
 
     def _write(self, A, data):
         """Helper to write config.yaml on disk."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     def test_no_healthcheck_section(self, A):
         self._write(A, {"items": ["SvcA"], "_runtime": {}})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_valid_single_entry(self, A):
         """Minimal valid entry gets parsed correctly."""
@@ -120,12 +130,12 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"url": "http://localhost:8080/"}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "SvcA" in hc
         assert hc["SvcA"]["url"] == "http://localhost:8080/"
-        assert hc["SvcA"]["interval"] == A.HEALTHCHECK_INTERVAL_DEFAULT
-        assert hc["SvcA"]["timeout"] == A.HEALTHCHECK_TIMEOUT_DEFAULT
-        assert hc["SvcA"]["retries"] == A.HEALTHCHECK_RETRIES_DEFAULT
+        assert hc["SvcA"]["interval"] == _consts.HEALTHCHECK_INTERVAL_DEFAULT
+        assert hc["SvcA"]["timeout"] == _consts.HEALTHCHECK_TIMEOUT_DEFAULT
+        assert hc["SvcA"]["retries"] == _consts.HEALTHCHECK_RETRIES_DEFAULT
         assert 200 in hc["SvcA"]["healthy_codes"]
 
     def test_custom_interval_timeout_retries(self, A):
@@ -144,7 +154,7 @@ class TestParseHealthchecks:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["SvcA"]["interval"] == 15
         assert hc["SvcA"]["timeout"] == 3
         assert hc["SvcA"]["retries"] == 5
@@ -158,30 +168,30 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"url": "http://localhost/", "healthy_codes": [200, 204]}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["SvcA"]["healthy_codes"] == {200, 204}
 
     # ── Rejected entries ──────────────────────────────────
     def test_missing_url_skipped(self, A):
         self._write(A, {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"interval": 30}}})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_non_string_url_skipped(self, A):
         self._write(A, {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"url": 12345}}})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_non_http_url_rejected(self, A):
         self._write(
             A, {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"url": "file:///etc/passwd"}}}
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_negative_interval_skipped(self, A):
         self._write(
             A,
             {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"url": "http://localhost/", "interval": -5}}},
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_non_numeric_interval_skipped(self, A):
         self._write(
@@ -192,17 +202,17 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"url": "http://localhost/", "interval": "abc"}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_details_not_dict_skipped(self, A):
         self._write(
             A, {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": "http://localhost/"}}
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_empty_url_string_skipped(self, A):
         self._write(A, {"items": ["SvcA"], "_runtime": {}, "healthchecks": {"SvcA": {"url": ""}}})
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_whitespace_url_trimmed(self, A):
         self._write(
@@ -213,7 +223,7 @@ class TestParseHealthchecks:
                 "healthchecks": {" My Svc ": {"url": "  http://localhost/  "}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "My Svc" in hc
         assert hc["My Svc"]["url"] == "http://localhost/"
 
@@ -229,7 +239,7 @@ class TestParseHealthchecks:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert len(hc) == 2
         assert hc["SvcA"]["interval"] != hc["SvcB"]["interval"]
 
@@ -242,7 +252,7 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"url": "http://localhost/", "healthy_codes": ["x", "y"]}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["SvcA"]["healthy_codes"] == {200}
 
     def test_config_parse_error_returns_empty(self, A, monkeypatch):
@@ -252,7 +262,7 @@ class TestParseHealthchecks:
 
         import healthcheck as hc
         monkeypatch.setattr(hc, "_LOAD_CONFIG", bad_load)
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_ping_healthcheck_explicit_type(self, A):
         self._write(
@@ -265,7 +275,7 @@ class TestParseHealthchecks:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "Router" in hc
         assert hc["Router"]["type"] == "ping"
         assert hc["Router"]["host"] == "192.168.10.1"
@@ -283,7 +293,7 @@ class TestParseHealthchecks:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "Gateway" in hc
         assert hc["Gateway"]["type"] == "ping"
         assert hc["Gateway"]["host"] == "10.0.0.1"
@@ -299,7 +309,7 @@ class TestParseHealthchecks:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "Database" in hc
         assert hc["Database"]["type"] == "tcp"
         assert hc["Database"]["host"] == "127.0.0.1"
@@ -318,7 +328,7 @@ class TestParseHealthchecks:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "Redis" in hc
         assert hc["Redis"]["type"] == "tcp"
         assert hc["Redis"]["host"] == "127.0.0.1"
@@ -333,7 +343,7 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"type": "tcp", "port": 5432}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_tcp_missing_port_skipped(self, A):
         self._write(
@@ -344,7 +354,7 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1"}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_tcp_invalid_port_skipped(self, A):
         self._write(
@@ -355,7 +365,7 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": 99999}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_tcp_negative_port_skipped(self, A):
         self._write(
@@ -366,7 +376,7 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "127.0.0.1", "port": -1}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_tcp_invalid_host_rejected(self, A):
         self._write(
@@ -377,7 +387,7 @@ class TestParseHealthchecks:
                 "healthchecks": {"SvcA": {"type": "tcp", "host": "-c", "port": 80}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
 
 # ─── _run_ping_check ──────────────────────────────────────────────
@@ -386,11 +396,11 @@ class TestRunPingCheck:
     """Real ping invocation + failure modes."""
 
     def test_localhost_ping_succeeds(self, A):
-        assert A._run_ping_check("127.0.0.1", timeout=1) is True
+        assert _hc._run_ping_check("127.0.0.1", timeout=1) is True
 
     def test_unreachable_ping_fails(self, A):
         # 192.0.2.1 is reserved for documentation (TEST-NET-1) — non-routable
-        assert A._run_ping_check("192.0.2.1", timeout=1) is False
+        assert _hc._run_ping_check("192.0.2.1", timeout=1) is False
 
 
 # ─── _run_tcp_check ──────────────────────────────────────────────
@@ -408,18 +418,18 @@ class TestRunTcpCheck:
         sock.listen(1)
         port = sock.getsockname()[1]
         try:
-            assert A._run_tcp_check("127.0.0.1", port, timeout=2) is True
+            assert _hc._run_tcp_check("127.0.0.1", port, timeout=2) is True
         finally:
             sock.close()
 
     def test_localhost_closed_port_fails(self, A):
         """TCP check to a closed port should fail."""
-        assert A._run_tcp_check("127.0.0.1", 19999, timeout=1) is False
+        assert _hc._run_tcp_check("127.0.0.1", 19999, timeout=1) is False
 
     def test_unreachable_host_fails(self, A):
         """TCP check to non-routable IP should fail/timeout."""
         # 192.0.2.1 is reserved for documentation (TEST-NET-1) — non-routable
-        assert A._run_tcp_check("192.0.2.1", 80, timeout=1) is False
+        assert _hc._run_tcp_check("192.0.2.1", 80, timeout=1) is False
 
 
 # ─── _run_curl_check ──────────────────────────────────────────────
@@ -428,17 +438,17 @@ class TestRunCurlCheck:
     """Real curl invocation + failure modes."""
 
     def test_connection_refused_returns_none(self, A):
-        ok, code, res_status = A._run_curl_check("http://localhost:19999/nonexistent", timeout=2)
+        ok, code, res_status = _hc._run_curl_check("http://localhost:19999/nonexistent", timeout=2)
         assert not ok and code is None and res_status == "red"
 
     def test_curl_binary_found(self, A):
         """At minimum curl should be discoverable on the build host."""
         # Just check it returns None (no crash or exception).
-        ok, code, res_status = A._run_curl_check("http://localhost:19997/bad", timeout=2)
+        ok, code, res_status = _hc._run_curl_check("http://localhost:19997/bad", timeout=2)
         assert not ok and code is None and res_status == "red"
 
     def test_nonexistent_local_url_returns_none(self, A):
-        ok, code, res_status = A._run_curl_check("http://127.0.0.1:19988/nope", timeout=2)
+        ok, code, res_status = _hc._run_curl_check("http://127.0.0.1:19988/nope", timeout=2)
         assert not ok and code is None and res_status == "red"
 
     def test_failure_keyword_flags_unhealthy(self, A, monkeypatch):
@@ -453,7 +463,7 @@ class TestRunCurlCheck:
         monkeypatch.setattr(subprocess, "run", mock_run_with_keyword)
         import healthcheck as hc
         monkeypatch.setattr(hc.subprocess, "run", mock_run_with_keyword)
-        ok, code, res_status = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
+        ok, code, res_status = _hc._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
         assert not ok and code == 200 and res_status == "red"
 
     def test_degraded_keyword_flags_degraded(self, A, monkeypatch):
@@ -468,7 +478,7 @@ class TestRunCurlCheck:
         monkeypatch.setattr(subprocess, "run", mock_run_with_deg)
         import healthcheck as hc
         monkeypatch.setattr(hc.subprocess, "run", mock_run_with_deg)
-        ok, code, res_status = A._run_curl_check("http://localhost/health", timeout=2, degraded_keyword="High Latency")
+        ok, code, res_status = _hc._run_curl_check("http://localhost/health", timeout=2, degraded_keyword="High Latency")
         assert not ok and code == 200 and res_status == "degraded"
 
     def test_failure_keyword_takes_precedence_over_degraded(self, A, monkeypatch):
@@ -483,7 +493,7 @@ class TestRunCurlCheck:
         monkeypatch.setattr(subprocess, "run", mock_run_both)
         import healthcheck as hc
         monkeypatch.setattr(hc.subprocess, "run", mock_run_both)
-        ok, code, res_status = A._run_curl_check(
+        ok, code, res_status = _hc._run_curl_check(
             "http://localhost/health", timeout=2,
             failure_keyword="Critical Error", degraded_keyword="High Latency"
         )
@@ -501,7 +511,7 @@ class TestRunCurlCheck:
         monkeypatch.setattr(subprocess, "run", mock_run_clean)
         import healthcheck as hc
         monkeypatch.setattr(hc.subprocess, "run", mock_run_clean)
-        ok, code, res_status = A._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
+        ok, code, res_status = _hc._run_curl_check("http://localhost/health", timeout=2, failure_keyword="Internal Error")
         assert ok and code == 200 and res_status == "green"
 
 
@@ -511,7 +521,7 @@ class TestParseSoapHealthcheck:
     """SOAP type detection, parsing, and sanitisation."""
 
     def test_explicit_soap_type(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -526,14 +536,14 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert "SvcA" in hcs
         assert hcs["SvcA"]["type"] == "soap"
         assert hcs["SvcA"]["soap_action"] == "GetStatus"
 
     def test_auto_detect_soap_from_soap_action(self, A):
         """If soap_action is present but type is omitted → auto-detect SOAP."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -547,12 +557,12 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert hcs["SvcA"]["type"] == "soap"
 
     def test_auto_detect_soap_from_body(self, A):
         """If body is present but type is omitted → auto-detect SOAP."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -566,11 +576,11 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert hcs["SvcA"]["type"] == "soap"
 
     def test_soap_body_preserved(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -585,11 +595,11 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert hcs["SvcA"]["body"] == "<ns:GetStatus xmlns:ns='urn:svc'/>"
 
     def test_soap_expected_string_preserved(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -604,11 +614,11 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert hcs["SvcA"]["expected_string"] == "<Status>OK</Status>"
 
     def test_soap_missing_url_skipped(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -619,10 +629,10 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_soap_invalid_url_scheme_rejected(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -633,10 +643,10 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_soap_custom_healthy_codes(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -651,12 +661,12 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert hcs["SvcA"]["healthy_codes"] == {200, 204}
 
     def test_soap_default_envelope_when_no_body(self, A):
         """No body set → should default to DEFAULT_SOAP_ENVELOPE."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -670,7 +680,7 @@ class TestParseSoapHealthcheck:
                 },
                 f,
             )
-        hcs = A._parse_healthchecks()
+        hcs = _hc._parse_healthchecks()
         assert "body" in hcs["SvcA"]
         # body is empty string; DEFAULT_SOAP_ENVELOPE is used at runtime
 
@@ -679,7 +689,7 @@ class TestRunSoapCheck:
     """SOAP POST probing via curl."""
 
     def test_connection_refused_returns_unhealthy(self, A):
-        healthy, code = A._run_soap_check(
+        healthy, code = _hc._run_soap_check(
             url="http://127.0.0.1:19981/nope",
             timeout=2,
         )
@@ -687,7 +697,7 @@ class TestRunSoapCheck:
 
     def test_timeout_returns_unhealthy(self, A, monkeypatch):
         """Force curl to fail via nonexistent host."""
-        healthy, code = A._run_soap_check(
+        healthy, code = _hc._run_soap_check(
             url="http://nonexistent.invalid.host.xzy/ws",
             timeout=2,
         )
@@ -705,7 +715,7 @@ class TestHealthcheckExceptionPaths:
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
         
         monkeypatch.setattr(subprocess, "run", mock_run_timeout)
-        result = A._run_ping_check("127.0.0.1", timeout=1)
+        result = _hc._run_ping_check("127.0.0.1", timeout=1)
         assert result is False
 
     def test_run_ping_check_file_not_found(self, A, monkeypatch):
@@ -716,7 +726,7 @@ class TestHealthcheckExceptionPaths:
             raise FileNotFoundError("ping command not found")
         
         monkeypatch.setattr(subprocess, "run", mock_run_fnf)
-        result = A._run_ping_check("127.0.0.1", timeout=1)
+        result = _hc._run_ping_check("127.0.0.1", timeout=1)
         assert result is False
 
     def test_run_ping_check_os_error(self, A, monkeypatch):
@@ -727,7 +737,7 @@ class TestHealthcheckExceptionPaths:
             raise OSError("Permission denied")
         
         monkeypatch.setattr(subprocess, "run", mock_run_os)
-        result = A._run_ping_check("127.0.0.1", timeout=1)
+        result = _hc._run_ping_check("127.0.0.1", timeout=1)
         assert result is False
 
     def test_run_curl_check_timeout(self, A, monkeypatch):
@@ -738,7 +748,7 @@ class TestHealthcheckExceptionPaths:
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
 
         monkeypatch.setattr(subprocess, "run", mock_run_timeout)
-        ok, code, res_status = A._run_curl_check("http://localhost/", timeout=1)
+        ok, code, res_status = _hc._run_curl_check("http://localhost/", timeout=1)
         assert not ok and code is None and res_status == "red"
 
     def test_run_curl_check_file_not_found(self, A, monkeypatch):
@@ -749,7 +759,7 @@ class TestHealthcheckExceptionPaths:
             raise FileNotFoundError("curl command not found")
 
         monkeypatch.setattr(subprocess, "run", mock_run_fnf)
-        ok, code, res_status = A._run_curl_check("http://localhost/", timeout=1)
+        ok, code, res_status = _hc._run_curl_check("http://localhost/", timeout=1)
         assert not ok and code is None and res_status == "red"
 
     def test_run_curl_check_os_error(self, A, monkeypatch):
@@ -760,7 +770,7 @@ class TestHealthcheckExceptionPaths:
             raise OSError("Network unreachable")
 
         monkeypatch.setattr(subprocess, "run", mock_run_os)
-        ok, code, res_status = A._run_curl_check("http://localhost/", timeout=1)
+        ok, code, res_status = _hc._run_curl_check("http://localhost/", timeout=1)
         assert not ok and code is None and res_status == "red"
 
     def test_run_soap_check_timeout(self, A, monkeypatch):
@@ -771,7 +781,7 @@ class TestHealthcheckExceptionPaths:
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get('timeout', 5))
         
         monkeypatch.setattr(subprocess, "run", mock_run_timeout)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -783,7 +793,7 @@ class TestHealthcheckExceptionPaths:
             raise FileNotFoundError("curl command not found")
         
         monkeypatch.setattr(subprocess, "run", mock_run_fnf)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -795,7 +805,7 @@ class TestHealthcheckExceptionPaths:
             raise OSError("Network unreachable")
         
         monkeypatch.setattr(subprocess, "run", mock_run_os)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -812,7 +822,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_empty)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -829,7 +839,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_no_nl)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -846,7 +856,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_bad_code)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -863,7 +873,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_zero)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -880,7 +890,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_high)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1)
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1)
         assert healthy is False
         assert code is None
 
@@ -897,7 +907,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_404)
-        healthy, code = A._run_soap_check(url="http://localhost/", timeout=1, healthy_codes={200})
+        healthy, code = _hc._run_soap_check(url="http://localhost/", timeout=1, healthy_codes={200})
         assert healthy is False
         assert code == 404
 
@@ -914,7 +924,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_missing)
-        healthy, code = A._run_soap_check(
+        healthy, code = _hc._run_soap_check(
             url="http://localhost/", timeout=1, 
             expected_string="ExpectedContent"
         )
@@ -934,7 +944,7 @@ class TestHealthcheckExceptionPaths:
             return MockResult()
         
         monkeypatch.setattr(subprocess, "run", mock_run_found)
-        healthy, code = A._run_soap_check(
+        healthy, code = _hc._run_soap_check(
             url="http://localhost/", timeout=1, 
             expected_string="ExpectedContent"
         )
@@ -948,12 +958,12 @@ class TestRunHealthchecksOnce:
     """Public entry-point returns results dict."""
 
     def test_no_config_returns_empty(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
-        assert A.run_healthchecks_once() == {}
+        assert _hc.run_healthchecks_once() == {}
 
     def test_with_config_returns_results(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -962,13 +972,13 @@ class TestRunHealthchecksOnce:
                 },
                 f,
             )
-        results = A.run_healthchecks_once()
+        results = _hc.run_healthchecks_once()
         assert "SvcA" in results
         assert "status_code" in results["SvcA"]
         assert "healthy" in results["SvcA"]
 
     def test_result_structure(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -977,7 +987,7 @@ class TestRunHealthchecksOnce:
                 },
                 f,
             )
-        result = A.run_healthchecks_once()
+        result = _hc.run_healthchecks_once()
         svc_result = result["SvcA"]
         assert isinstance(svc_result.get("status_code"), (int, type(None)))
         assert isinstance(svc_result.get("healthy"), bool)
@@ -989,10 +999,10 @@ class TestStartHealthchecks:
     """Daemon thread no-op when nothing configured."""
 
     def test_no_config_is_noop(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
         # Should not raise.
-        A.start_healthchecks()
+        _hc.start_healthchecks()
 
 
 # ─── GET /api/healthchecks ──────────────────────────────────────
@@ -1007,7 +1017,7 @@ class TestApiHealthchecks:
         assert isinstance(data, dict)
 
     def test_empty_when_not_configured(self, A, client):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
         r = client.get("/api/healthchecks")
         assert r.get_json() == {}
@@ -1015,7 +1025,7 @@ class TestApiHealthchecks:
     def test_healthy_codes_serialized_as_list(self, A, client, monkeypatch):
         """Sets -> sorted lists (JSON can't serialize sets)."""
         monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -1040,7 +1050,7 @@ class TestApiHealthcheckRun:
         assert r.status_code == 403
 
     def test_admin_without_csrf_returns_403(self, admin, A):
-        A._csrf_failures.clear()
+        _auth._csrf_failures.clear()
         r = admin.post(
             "/api/healthcheck/run",
             content_type="application/json",
@@ -1050,8 +1060,8 @@ class TestApiHealthcheckRun:
     def test_admin_with_csrf_runs_on_demand(self, admin, token, A, monkeypatch):
         """Triggered check returns results without mutating DB."""
         monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
-        monkeypatch.setattr("healthcheck._DB_PATH", A.DB_PATH)
-        with open(str(A.CONFIG_PATH), "w") as f:
+        monkeypatch.setattr("healthcheck._DB_PATH", _cfg.get_db_path())
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA"],
@@ -1071,7 +1081,7 @@ class TestApiHealthcheckRun:
     def test_no_db_mutation(self, admin, token, A):
         """Manual run should NOT update statuses (it's a dry preview)."""
         # Record starting status.
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         before = {
             row[0]: row[1] for row in db.execute(
                 "SELECT name, status FROM status_items"
@@ -1079,7 +1089,7 @@ class TestApiHealthcheckRun:
         }
         db.close()
 
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA", "SvcB"],
@@ -1094,7 +1104,7 @@ class TestApiHealthcheckRun:
         )
 
         # Statuses should be unchanged.
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         after = {
             row[0]: row[1] for row in db.execute(
                 "SELECT name, status FROM status_items"
@@ -1113,7 +1123,7 @@ class TestRunHealthchecksOnceBounded:
     def test_budget_exhaustion_marks_remaining_timed_out(self, A, monkeypatch):
         import healthcheck as hc
 
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["SvcA", "SvcB"],
@@ -1126,9 +1136,9 @@ class TestRunHealthchecksOnceBounded:
                 f,
             )
         hc.configure_healthcheck(
-            A.get_base_dir(), A.get_db_path(),
-            A.get_config_path(), A.load_config,
-            A.MAX_HISTORY_PER_ITEM,
+            _gbd.get_base_dir(), _gdp.get_db_path(),
+            _gcp.get_config_path(), _lc.load_config,
+            _consts.MAX_HISTORY_PER_ITEM,
         )
 
         # Fake a monotonic clock; the first check burns past the 20s budget.
@@ -1162,7 +1172,7 @@ class TestRunHealthchecksOnceBounded:
         import healthcheck as hc
         from constants import HEALTHCHECK_ONE_SHOT_TIMEOUT_CAP
 
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(
                 {
                     "items": ["Slow"],
@@ -1174,9 +1184,9 @@ class TestRunHealthchecksOnceBounded:
                 f,
             )
         hc.configure_healthcheck(
-            A.get_base_dir(), A.get_db_path(),
-            A.get_config_path(), A.load_config,
-            A.MAX_HISTORY_PER_ITEM,
+            _gbd.get_base_dir(), _gdp.get_db_path(),
+            _gcp.get_config_path(), _lc.load_config,
+            _consts.MAX_HISTORY_PER_ITEM,
         )
 
         seen = {}
@@ -1250,29 +1260,29 @@ class TestSetHealthStatus:
     """Direct DB mutation path used by the worker thread."""
 
     def test_flips_green_to_degraded(self, A):
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
         # Ensure SvcA is in DB
-        with A.app.test_request_context():
-            row = A.get_db().execute(
+        with app_obj.app.test_request_context():
+            row = _dbmod.get_connection().execute(
                 "SELECT id FROM status_items WHERE name='SvcA'"
             ).fetchone()
             if not row:
-                A.get_db().execute("INSERT INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
-                A.get_db().commit()
-                row = A.get_db().execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
+                _dbmod.get_connection().execute("INSERT INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
+                _dbmod.get_connection().commit()
+                row = _dbmod.get_connection().execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
             item_id = row["id"]
 
-        conn = A._health_db()
+        conn = _hc._health_db()
         try:
             conn.execute("UPDATE status_items SET status='green' WHERE id=?", (item_id,))
             conn.commit()
         finally:
             conn.close()
 
-        A._set_health_status("SvcA", "degraded")
+        _hc._set_health_status("SvcA", "degraded")
 
-        conn = A._health_db()
+        conn = _hc._health_db()
         try:
             st = conn.execute(
                 "SELECT status FROM status_items WHERE id=?", (item_id,)
@@ -1283,16 +1293,16 @@ class TestSetHealthStatus:
 
     def test_no_op_when_already_same_status(self, A):
         """If the item is already degraded, calling _set_health_status with 'degraded' is a no-op."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
-        with A.app.test_request_context():
-            row = A.get_db().execute(
+        with app_obj.app.test_request_context():
+            row = _dbmod.get_connection().execute(
                 "SELECT id FROM status_items WHERE name='SvcA'"
             ).fetchone()
             item_id = row["id"]
 
         # Set it to degraded first.
-        conn = A._health_db()
+        conn = _hc._health_db()
         try:
             conn.execute("UPDATE status_items SET status='degraded' WHERE id=?", (item_id,))
             conn.commit()
@@ -1303,9 +1313,9 @@ class TestSetHealthStatus:
             conn.close()
 
         # Another degraded call -> should be a no-op.
-        A._set_health_status("SvcA", "degraded")
+        _hc._set_health_status("SvcA", "degraded")
 
-        conn = A._health_db()
+        conn = _hc._health_db()
         try:
             after_count = conn.execute(
                 "SELECT COUNT(*) FROM status_history WHERE item_id=?", (item_id,)
@@ -1317,33 +1327,33 @@ class TestSetHealthStatus:
 
     def test_unknown_service_no_op(self, A):
         """Calling _set_health_status for a service that doesn't exist in the DB is safe."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
         # Should not raise.
-        A._set_health_status("NonExistentService", "red")
+        _hc._set_health_status("NonExistentService", "red")
 
     def test_records_history(self, A):
         """_set_health_status records a change in the status_history table."""
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump({"items": ["SvcA"], "_runtime": {}}, f)
         # Ensure clean baseline (green).
-        with A.app.test_request_context():
-            row = A.get_db().execute(
+        with app_obj.app.test_request_context():
+            row = _dbmod.get_connection().execute(
                 "SELECT id FROM status_items WHERE name='SvcA'"
             ).fetchone()
             item_id = row["id"]
 
-        conn = A._health_db()
+        conn = _hc._health_db()
         try:
             conn.execute("UPDATE status_items SET status='green' WHERE id=?", (item_id,))
             conn.commit()
         finally:
             conn.close()
 
-        A._set_health_status("SvcA", "red")
+        _hc._set_health_status("SvcA", "red")
 
         # Verify history entry exists.
-        conn = A._health_db()
+        conn = _hc._health_db()
         try:
             hist = conn.execute(
                 "SELECT old_value, new_value FROM status_history WHERE item_id=? ORDER BY id DESC LIMIT 1",

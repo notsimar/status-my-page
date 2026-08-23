@@ -101,19 +101,21 @@ def build_feed_xml(db, base_url: str | None = None) -> str:
     origin = (base_url or conf["base_url"]).rstrip("/") or conf["base_url"]
     feed_url = origin + "/feed.xml"
 
-    # Join status-change history to item names, newest first.
+    # Status-change history joined to item names, newest first, bounded in SQL
+    # (single join: the old query joined status_items twice for the same row).
     rows = db.execute(
         """SELECT i.name AS name, h.old_value AS old_value,
                   h.new_value AS new_value, h.occurred AS occurred,
-                  s.status AS cur_status
+                  i.status AS cur_status
            FROM status_history h
            JOIN status_items i ON i.id = h.item_id
-           LEFT JOIN status_items s ON s.id = h.item_id
            WHERE h.event_type = 'status'
-           ORDER BY h.occurred DESC"""
+           ORDER BY h.occurred DESC
+           LIMIT ?""",
+        (conf["max_items"],),
     ).fetchall()
 
-    items = rows[: conf["max_items"]]
+    items = rows
 
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")

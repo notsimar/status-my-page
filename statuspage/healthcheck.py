@@ -1,6 +1,9 @@
 """Healthcheck integration for status-my-page.
 
 Connects the healthcheck module with the app's configuration and database.
+Also re-exports the full implementation surface from the root-level
+``healthcheck`` alias module so ``statuspage.healthcheck.X`` and
+``healthcheck.X`` resolve to the same objects.
 """
 
 import threading
@@ -73,3 +76,37 @@ def get_configured_healthchecks() -> dict[str, dict]:
             d["healthy_codes"] = sorted(d["healthy_codes"])
         out[name] = d
     return out
+
+
+# ── Re-export the implementation surface under this namespace too ──
+from healthcheck import *  # noqa: F401,F403,E402
+from healthcheck import (  # noqa: F401,E402  (explicit for linters)
+    CURL_MAX_REDIRS,
+    DEFAULT_SOAP_ENVELOPE,
+    HEALTHCHECK_INTERVAL_DEFAULT,
+    HEALTHCHECK_RETRIES_DEFAULT,
+    HEALTHCHECK_TIMEOUT_DEFAULT,
+    RSS_MAX_BYTES,
+    RSS_MAX_ITEMS,
+    _BASE_DIR,
+    _CONFIG_PATH,
+    _DB_PATH,
+    _HEALTH_LOCK,
+    _LOAD_CONFIG,
+    _MAX_HISTORY_PER_ITEM,
+    _health_db,
+    _healthcheck_worker,
+    _parse_healthchecks,
+    _run_curl_check,
+    _run_ping_check,
+    _run_rss_feed_check,
+    _run_soap_check,
+    _run_tcp_check,
+    _safe_host,
+    _safe_port,
+    _safe_url,
+    _set_health_status,
+    configure_healthcheck,
+    feed_treats_as_unfetchable,
+    severity_from_failures,
+)

@@ -168,6 +168,32 @@ def init_db() -> None:
 
 # ── Archive snapshot ────────────────────────────────────────────────
 
+# Keep at most this many archive snapshots (oldest deleted first).
+MAX_ARCHIVES = 50
+
+
+def _prune_archives() -> int:
+    """Delete oldest archive snapshots beyond MAX_ARCHIVES. Returns removed count.
+
+    Called before writing a new snapshot so archives/ can't grow unboundedly
+    on hosts that restart the app frequently (systemd, gunicorn reloads).
+    """
+    archives_dir = get_archives_dir()
+    try:
+        snaps = sorted(archives_dir.glob("*.json"))
+    except OSError:
+        return 0
+    excess = len(snaps) - (MAX_ARCHIVES - 1)  # leave room for the new one
+    removed = 0
+    for old in snaps[:max(0, excess)]:
+        try:
+            old.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def archive_db_snapshot() -> None:
     """Take a timestamped JSON snapshot of current DB state before init_db() resets it.
 
@@ -200,6 +226,7 @@ def archive_db_snapshot() -> None:
         return
 
     get_archives_dir().mkdir(exist_ok=True)
+    _prune_archives()
     ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     filename = get_archives_dir() / f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
 

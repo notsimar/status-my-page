@@ -43,6 +43,8 @@ import time
 from pathlib import Path
 
 import pytest
+import statuspage.config as _cfg
+import constants as _consts
 
 # Ensure project root is on sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -61,9 +63,9 @@ def _history_on(A):
     section) that the admin UI uses, and restores the default afterwards
     so later test modules see pristine state.
     """
-    A.config._save_settings({**A.config._load_settings(), "history_enabled": True})
+    _cfg._save_settings({**_cfg._load_settings(), "history_enabled": True})
     yield
-    A.config._save_settings({**A.config._load_settings(), "history_enabled": False})
+    _cfg._save_settings({**_cfg._load_settings(), "history_enabled": False})
 
 
 class TestStatusHistory:
@@ -324,13 +326,15 @@ class TestStatusHistory:
         assert r_del.status_code == 200
 
         # Verify DB history table is cleaned up
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         rows = db.execute("SELECT id FROM status_history WHERE item_id=?", (item_id,)).fetchall()
         db.close()
         assert len(rows) == 0
 
-        # Verify runtime config history is cleaned up
-        rt = A._load_runtime()
+        # Verify runtime config history is cleaned up. (Runtime state lives in
+        # the DB only now — config.yaml runtime mirror was removed; the
+        # _load_runtime() stub always returns {} so this holds trivially.)
+        rt = _cfg._load_runtime()
         assert name not in rt.get("history", {})
 
     def test_t13_history_pruning_cap(self, admin, token, client, A):
@@ -346,7 +350,7 @@ class TestStatusHistory:
         item_id = r_add.get_json()["item"]["id"]
 
         # Insert 105 entries directly into status_history
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         for i in range(105):
             db.execute(
                 "INSERT INTO status_history (item_id, event_type, old_value, new_value, occurred) VALUES (?, ?, ?, ?, ?)",
@@ -359,10 +363,10 @@ class TestStatusHistory:
         tok = admin.get("/api/csrf-token").get_json()["token"]
         admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
 
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         count = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?",(item_id,)).fetchone()[0]
         db.close()
-        assert count <= A.MAX_HISTORY_PER_ITEM
+        assert count <= _consts.MAX_HISTORY_PER_ITEM
 
     # ── Clear history (POST /api/history/<id>/clear) ─────────────────
 
@@ -392,7 +396,7 @@ class TestStatusHistory:
         )
 
         # Sanity: 3 rows before the clear
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         before = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (item_id,)).fetchone()[0]
         db.close()
         assert before == 3
@@ -405,7 +409,7 @@ class TestStatusHistory:
         assert data["removed"] == 3
 
         # DB is clean, item itself still exists
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         rows = db.execute("SELECT id FROM status_history WHERE item_id=?", (item_id,)).fetchall()
         item = db.execute("SELECT id FROM status_items WHERE id=?", (item_id,)).fetchone()
         db.close()
@@ -447,14 +451,14 @@ class TestStatusHistory:
             for target in (id_a, id_b):
                 tok = admin.get("/api/csrf-token").get_json()["token"]
                 admin.post(f"/api/toggle/{target}", headers={"X-CSRF-Token": tok})
-            db = sqlite3.connect(str(A.DB_PATH))
+            db = sqlite3.connect(str(_cfg.get_db_path()))
             other_before = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (id_b,)).fetchone()[0]
             assert other_before >= 1
 
             tok = admin.get("/api/csrf-token").get_json()["token"]
             admin.post(f"/api/history/{id_a}/clear", headers={"X-CSRF-Token": tok})
 
-            db = sqlite3.connect(str(A.DB_PATH))
+            db = sqlite3.connect(str(_cfg.get_db_path()))
             mine_after = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (id_a,)).fetchone()[0]
             other_after = db.execute("SELECT COUNT(*) FROM status_history WHERE item_id=?", (id_b,)).fetchone()[0]
             db.close()

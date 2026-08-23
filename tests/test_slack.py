@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from statuspage import slack as slack_mod  # noqa: E402
+import app as app_obj
 
 
 # The fake webhook server (_FakeSlack + fake_slack_url fixture) lives in
@@ -263,7 +264,7 @@ class TestSlackAPI:
         _fake().fail_with = None
         slack_mod.enqueue_status_change("logout_api", "green", "red")
 
-        c = A.app.test_client()
+        c = app_obj.app.test_client()
         r = c.post("/login", json={"user": "admin", "pass": "testpass"})
         assert r.status_code == 200
         r = c.post("/logout")

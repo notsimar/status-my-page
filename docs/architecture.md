@@ -91,7 +91,7 @@
 4. **Config-driven seed data** — Service names in `config.yaml` act as read-only provisioning input; new items are inserted into SQLite on startup.
 5. **Database as Single Source of Truth** — Runtime mutations (status, notes, reorder, items, history) are maintained directly in SQLite.
 6. **Polling-free UI, RSS feed for consumers** — A prior SSE broadcast layer was removed; the client updates the DOM in response to each successful mutation (no long-lived connections holding gunicorn prefork slots). External consumers (uptime monitors, IFTTT, other dashboards) subscribe to the public `/feed.xml` RSS 2.0 status-change feed instead.
-7. **Package layout (`app.py` + `statuspage/`)** — `app.py` is a thin composition root (Flask app factory, route registration, security headers, bootstrap); each concern lives in `statuspage/`: `config.py` (parsing + runtime state), `db.py` (schema + history), `services.py` (domain ops), `routes.py` (HTTP handlers), `auth.py` (session/CSRF/rate-limit/lockout), `healthcheck.py` (worker + check dispatch), `rss.py` (public feed builder). `constants.py` holds shared tunables.
+7. **Package layout (`app.py` + `statuspage/`)** — `app.py` is a thin composition root (Flask app factory, route registration, security headers, bootstrap); each concern lives in `statuspage/`: `config.py` (parsing + runtime state), `db.py` (schema + history), `services.py` (domain ops), `routes.py` (HTTP handlers), `auth.py` (session/CSRF/rate-limit/lockout), `statuspage/healthcheck.py` (integration facade; implementation in `statuspage/_healthcheck_impl.py`, exposed compatibly as top-level `healthcheck`), `rss.py` (public feed builder). `constants.py` holds shared tunables.
 8. **RSS healthchecks are explicit-only** — `type: rss` must be stated; a bare `url` never auto-detects as rss (it stays `curl`). Feeds are fetched via a curl subprocess (redirect policy, max-filesize, max-redirs capped) and parsed with stdlib ElementTree — no third-party RSS library.
 
 ---
@@ -284,7 +284,7 @@ Incoming POST/PUT/DELETE /api/*
 
 ## 5. Healthcheck Worker
 
-A daemon thread (`healthcheck.py`) polls each configured check at its own `interval` and drives the item's DB status automatically. It is the only writer of healthcheck-driven status rows, and it shares the same history table the admin mutations write.
+A daemon thread (`statuspage/_healthcheck_impl.py`) polls each configured check at its own `interval`; due probes run in a bounded thread pool (8 workers) so one slow endpoint cannot delay other services' intervals and drives the item's DB status automatically. It is the only writer of healthcheck-driven status rows, and it shares the same history table the admin mutations write.
 
 ```
 worker loop (one thread, fcntl-locked to a single instance)

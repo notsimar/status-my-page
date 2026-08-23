@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
+import statuspage.config as _cfg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -45,7 +46,7 @@ class TestDeleteRequiresConfirmation:
 
     def test_delete_existing_removes_and_compacts(self, admin, token, A):
         import sqlite3
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             c.execute("INSERT INTO status_items (name, status, position) "
                       "VALUES ('DelMe', 'green', 99)")
             cid = c.execute("SELECT id FROM status_items WHERE name='DelMe'"
@@ -53,7 +54,7 @@ class TestDeleteRequiresConfirmation:
         r = admin.post(f"/api/delete/{cid}",
                        headers={"X-CSRF-Token": token})
         assert r.status_code == 200
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             gone = c.execute("SELECT 1 FROM status_items WHERE name='DelMe'"
                              ).fetchone() is None
         assert gone

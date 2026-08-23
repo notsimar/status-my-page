@@ -19,6 +19,11 @@ All tests reuse the A fixture from conftest.py (temp config + DB environment).
 
 import pytest
 import yaml
+import statuspage.config as _cfg
+import constants as _consts
+import statuspage.auth as _auth
+import healthcheck as _hc
+import app as app_obj
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -26,7 +31,7 @@ import yaml
 def _read_hc_yaml() -> dict:
     """Read the healthchecks section straight from config.yaml on disk."""
     import app as m
-    with open(str(m.CONFIG_PATH)) as f:
+    with open(str(_cfg.get_config_path())) as f:
         data = yaml.safe_load(f)
     return (data or {}).get("healthchecks") or {}
 
@@ -39,7 +44,7 @@ def _mutate(client, method: str, url: str, payload: dict | None = None):
     the 60/min mutation cap.
     """
     import app as m
-    m._mutation_rates.clear()
+    _auth._mutation_rates.clear()
     tok = client.get("/api/csrf-token").get_json()["token"]
     headers = {"X-CSRF-Token": tok}
     if payload is None:
@@ -102,7 +107,7 @@ class TestHealthcheckConfigWrite:
     def test_save_rotates_backup(self, A, clean_hc):
         from statuspage.config import _save_healthchecks
         _save_healthchecks({"X": {"url": "http://1/"}})
-        bak1 = A.CONFIG_PATH.parent / "config.yaml.bak1"
+        bak1 = _cfg.get_config_path().parent / "config.yaml.bak1"
         assert bak1.exists(), "_save_healthchecks should rotate a bak1 backup"
 
     def test_empty_dict_writes_empty_section(self, A, clean_hc):
@@ -113,10 +118,10 @@ class TestHealthcheckConfigWrite:
     def test_load_when_no_section(self, A, clean_hc):
         from statuspage.config import _load_healthchecks
         # clean_hc wrote {} — also verify a config with no key at all
-        with open(str(A.CONFIG_PATH)) as f:
+        with open(str(_cfg.get_config_path())) as f:
             data = yaml.safe_load(f) or {}
         data.pop("healthchecks", None)
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
         assert _load_healthchecks() == {}
 
@@ -376,7 +381,7 @@ class TestHealthcheckCreate:
 
     def test_malformed_json_body(self, admin, clean_hc):
         A = clean_hc  # clean_hc yields the app module
-        A._mutation_rates.clear()
+        _auth._mutation_rates.clear()
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r = admin.post("/api/healthchecks", data="not json",
                        content_type="application/json",
@@ -386,13 +391,13 @@ class TestHealthcheckCreate:
     # ── Auth gates ────────────────────────────────────────────────
 
     def test_unauthenticated_403(self, client, A, clean_hc):
-        A._mutation_rates.clear()
+        _auth._mutation_rates.clear()
         r = client.post("/api/healthchecks",
                         json={"name": "X", "type": "ping", "host": "10.0.0.1"})
         assert r.status_code == 403
 
     def test_bad_csrf_403(self, admin, A, clean_hc):
-        A._mutation_rates.clear()
+        _auth._mutation_rates.clear()
         r = admin.post(
             "/api/healthchecks",
             json={"name": "X", "type": "ping", "host": "10.0.0.1"},
@@ -505,7 +510,7 @@ class TestHealthcheckDelete:
         assert _read_hc_yaml()[name]["type"] == "curl"
 
     def test_delete_unauthenticated_403(self, client, A, clean_hc):
-        A._mutation_rates.clear()
+        _auth._mutation_rates.clear()
         r = client.delete("/api/healthchecks/X")
         assert r.status_code == 403
 
@@ -523,7 +528,7 @@ class TestHealthcheckIntegration:
                        {"name": name, "type": "tcp", "host": "127.0.0.1",
                         "port": 5432}).status_code == 200
         # Unauthenticated client reads the public endpoint
-        public_client = A.app.test_client()
+        public_client = app_obj.app.test_client()
         r = public_client.get("/api/healthchecks")
         assert r.status_code == 200
         body = r.get_json()
@@ -554,10 +559,10 @@ class TestHealthcheckIntegration:
     def test_worker_parser_ignores_garbage_created_manually(self, admin, A, clean_hc):
         """Entries with bad config are skipped by the parser (defensive)."""
         import healthcheck as hc
-        with open(str(A.CONFIG_PATH)) as f:
+        with open(str(_cfg.get_config_path())) as f:
             data = yaml.safe_load(f) or {}
         data["healthchecks"] = {"Bad": {"url": "file:///etc/passwd"}}
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
         assert "Bad" not in hc._parse_healthchecks()
 
@@ -592,8 +597,8 @@ class TestHealthcheckBackupRotation:
         for i in range(8):
             _save_healthchecks({"S": {"url": f"http://{i}/"}})
         import glob
-        baks = sorted(glob.glob(str(A.CONFIG_PATH.parent / "config.yaml.bak*")))
-        assert len(baks) == A._NUM_BACKUPS, f"expected {A._NUM_BACKUPS} backups, got {len(baks)}"
+        baks = sorted(glob.glob(str(_cfg.get_config_path().parent / "config.yaml.bak*")))
+        assert len(baks) == _consts.NUM_CONFIG_BACKUPS, f"expected {_consts.NUM_CONFIG_BACKUPS} backups, got {len(baks)}"
 
 
 # ── RSS feed healthcheck type ─────────────────────────────────────
@@ -609,13 +614,13 @@ class TestRssFeedParse:
     def _write(self, A, data):
         """Merge healthchecks into the EXISTING config (never clobbers the
         session's items/_runtime — other test files depend on them)."""
-        with open(str(A.CONFIG_PATH)) as f:
+        with open(str(_cfg.get_config_path())) as f:
             existing = yaml.safe_load(f) or {}
         for k, v in data.items():
             if k in ("items", "_runtime"):
                 continue  # parsing healthchecks does not depend on either
             existing[k] = v
-        with open(str(A.CONFIG_PATH), "w") as f:
+        with open(str(_cfg.get_config_path()), "w") as f:
             yaml.dump(existing, f, default_flow_style=False, sort_keys=False)
 
     def test_explicit_type(self, A):
@@ -634,7 +639,7 @@ class TestRssFeedParse:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert "Vendor" in hc
         entry = hc["Vendor"]
         assert entry["type"] == "rss"
@@ -654,7 +659,7 @@ class TestRssFeedParse:
                 "healthchecks": {"Svc": {"url": "http://x.com/feed"}},
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["Svc"]["type"] == "curl"
 
     def test_missing_url_skipped(self, A):
@@ -668,7 +673,7 @@ class TestRssFeedParse:
                 },
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_bad_scheme_skipped(self, A):
         self._write(
@@ -679,7 +684,7 @@ class TestRssFeedParse:
                 "healthchecks": {"Svc": {"type": "rss", "url": "file:///tmp/feed.xml"}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_keywords_case_folded_and_trimmed(self, A):
         self._write(
@@ -696,7 +701,7 @@ class TestRssFeedParse:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["Svc"]["keywords"]["red"] == ["outage"]
         assert hc["Svc"]["keywords"]["degraded"] == ["partial"]
 
@@ -712,7 +717,7 @@ class TestRssFeedParse:
                 },
             },
         )
-        hc = A._parse_healthchecks()
+        hc = _hc._parse_healthchecks()
         assert hc["Svc"]["keywords"] == {"red": [], "degraded": []}
 
     def test_negative_interval_skipped(self, A):
@@ -724,7 +729,7 @@ class TestRssFeedParse:
                 "healthchecks": {"Svc": {"type": "rss", "url": "http://x.com/", "interval": -1}},
             },
         )
-        assert A._parse_healthchecks() == {}
+        assert _hc._parse_healthchecks() == {}
 
     def test_api_created_entry_visible_to_worker_parser(self, admin, A, clean_hc):
         """Entry created via the admin API is picked up by the worker parser."""
@@ -799,7 +804,7 @@ class TestRssFeedApi:
         assert _mutate(admin, "POST", "/api/healthchecks",
                        {"name": name, "type": "rss",
                         "url": "https://status.vendor.com/rss"}).status_code == 200
-        r = A.app.test_client().get("/api/healthchecks")
+        r = app_obj.app.test_client().get("/api/healthchecks")
         assert r.status_code == 200
         body = r.get_json()
         assert body[name]["type"] == "rss"

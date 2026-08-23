@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["STATUS_NO_ARCHIVE"] = "1"
 
 import pytest
+import statuspage.config
+import statuspage.services as _svc
+import app as app_obj
 from input_filter import (
     InputRejected,
     sanitize_text,
@@ -34,35 +37,35 @@ class TestMissingRowPaths:
         """toggle_item() returns None for non-existent item_id (routes map
         that to HTTP 404 — before the fix it returned 'green', which the
         UI treated as a successful toggle-to-green)."""
-        with A.app.test_request_context():
-            result = A.toggle_item(999999)
+        with app_obj.app.test_request_context():
+            result = _svc.toggle_item(999999)
         assert result is None
 
     def test_update_item_name_missing_row_returns_not_found(self, A):
         """update_item_name() returns (False, 'Not found') for non-existent item_id."""
-        with A.app.test_request_context():
-            ok, msg = A.update_item_name(999999, "New Name")
+        with app_obj.app.test_request_context():
+            ok, msg = _svc.rename_item(999999, "New Name")
         assert ok is False
         assert msg == "Not found"
 
     def test_set_notes_missing_row_no_error(self, A):
         """set_notes() handles missing row gracefully (no error, no YAML write)."""
-        with A.app.test_request_context():
+        with app_obj.app.test_request_context():
             # This should not raise any exception
-            A.set_notes(999999, "Some notes")
+            _svc.update_notes(999999, "Some notes")
         
         # Verify no YAML write occurred for non-existent item
-        rt = A._load_runtime()
+        rt = statuspage.config._load_runtime()  # always {} — DB is source of truth
         notes_rt = rt.get("notes", {})
         # 999999 doesn't exist in items, so it shouldn't be in notes
         assert "999999" not in str(notes_rt)
 
     def test_set_notes_missing_row_no_crash_on_empty_notes(self, A):
         """set_notes() with empty notes on missing row also no-ops."""
-        with A.app.test_request_context():
-            A.set_notes(999999, "")
+        with app_obj.app.test_request_context():
+            _svc.update_notes(999999, "")
         
-        rt = A._load_runtime()
+        rt = statuspage.config._load_runtime()  # always {} — DB is source of truth
         notes_rt = rt.get("notes", {})
         assert "999999" not in str(notes_rt)
 

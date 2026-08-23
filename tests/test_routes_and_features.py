@@ -9,6 +9,10 @@ import time
 from pathlib import Path
 
 import pytest
+import statuspage.config as _cfg
+import constants as _consts
+import statuspage.auth as _auth
+import statuspage.db as _dbsnap
 
 # Ensure project root is on sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -70,7 +74,7 @@ class TestRoutesAndAuth:
 
     def test_login_invalid_password(self, client, A):
         """POST /login with wrong password returns 401."""
-        A._failed_logins.clear()
+        _auth._failed_logins.clear()
         r = client.post(
             "/login",
             data=json.dumps({"user": "admin", "pass": "wrongpassword"}),
@@ -81,7 +85,7 @@ class TestRoutesAndAuth:
 
     def test_login_rate_limiting_lockout(self, client, A):
         """5 failed login attempts result in 429 lockout."""
-        A._failed_logins.clear()
+        _auth._failed_logins.clear()
         r = None
         for _ in range(5):
             r = client.post(
@@ -101,7 +105,7 @@ class TestRoutesAndAuth:
         assert "Too many attempts" in r_locked.get_json().get("error", "")
 
         # Clean up rate limit state for other tests
-        A._failed_logins.clear()
+        _auth._failed_logins.clear()
 
     def test_logout_clears_session(self, admin):
         """POST /logout clears session and resets admin auth."""
@@ -133,7 +137,7 @@ class TestSessionIdleExpiry:
         """Requests within the idle window keep the session alive."""
         # Backdate the timer by 4 minutes — still under the 300s limit
         with admin.session_transaction() as sess:
-            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 4 * 60
+            sess[_auth.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 4 * 60
 
         r = admin.get("/auth-check")
         assert r.status_code == 200
@@ -142,7 +146,7 @@ class TestSessionIdleExpiry:
     def test_session_expires_after_idle_timeout(self, admin, A):
         """A request more than 5 min after the last activity logs out."""
         with admin.session_transaction() as sess:
-            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - (5 * 60 + 1)
+            sess[_auth.ADMIN_ACTIVE_SINCE_KEY] = time.time() - (5 * 60 + 1)
 
         r = admin.get("/auth-check")
         assert r.status_code == 200
@@ -152,7 +156,7 @@ class TestSessionIdleExpiry:
         """An active request at 4 min resets the clock, so a follow-up at
         6 min total (but 2 min after the reset) is still authenticated."""
         with admin.session_transaction() as sess:
-            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 4 * 60
+            sess[_auth.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 4 * 60
 
         # This request is 4 min after login but resets the timer
         r1 = admin.get("/auth-check")
@@ -160,7 +164,7 @@ class TestSessionIdleExpiry:
 
         # Now 2 min after the reset — total 6 min since login, still active
         with admin.session_transaction() as sess:
-            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 2 * 60
+            sess[_auth.ADMIN_ACTIVE_SINCE_KEY] = time.time() - 2 * 60
 
         r2 = admin.get("/auth-check")
         assert r2.get_json() == {"admin": True}
@@ -168,7 +172,7 @@ class TestSessionIdleExpiry:
     def test_expired_admin_mutations_are_forbidden(self, admin, A, token):
         """After expiry, admin mutation routes return 403."""
         with admin.session_transaction() as sess:
-            sess[A.ADMIN_ACTIVE_SINCE_KEY] = time.time() - (5 * 60 + 1)
+            sess[_auth.ADMIN_ACTIVE_SINCE_KEY] = time.time() - (5 * 60 + 1)
 
         r = admin.post(
             "/api/add",
@@ -225,7 +229,7 @@ class TestItemMutations:
         assert r_rename.get_json() == {"ok": True}
 
         # Verify in DB
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         row = db.execute("SELECT name FROM status_items WHERE id=?", (item_id,)).fetchone()
         db.close()
         assert row[0] == new_name
@@ -244,7 +248,7 @@ class TestItemMutations:
 
     def test_reorder_items_success(self, admin, token, A):
         """POST /api/reorder updates positions of items in DB."""
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         rows = db.execute("SELECT id FROM status_items ORDER BY position LIMIT 2").fetchall()
         db.close()
         assert len(rows) >= 2
@@ -260,7 +264,7 @@ class TestItemMutations:
         assert r.status_code == 200
         assert r.get_json() == {"ok": True}
 
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         pos1 = db.execute("SELECT position FROM status_items WHERE id=?", (id1,)).fetchone()[0]
         pos2 = db.execute("SELECT position FROM status_items WHERE id=?", (id2,)).fetchone()[0]
         db.close()
@@ -300,7 +304,7 @@ class TestItemMutations:
 
     def test_toggle_cycles_status_in_db(self, admin, token, A):
         """Toggling status cycles green -> degraded -> red -> green directly in DB."""
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         db.execute("UPDATE status_items SET status='green' WHERE name='SvcA'")
         db.commit()
         row = db.execute("SELECT id, name FROM status_items WHERE name='SvcA'").fetchone()
@@ -312,7 +316,7 @@ class TestItemMutations:
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r1 = admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
         assert r1.get_json()["status"] == "degraded"
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         st1 = db.execute("SELECT status FROM status_items WHERE id=?", (item_id,)).fetchone()[0]
         db.close()
         assert st1 == "degraded"
@@ -321,7 +325,7 @@ class TestItemMutations:
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r2 = admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
         assert r2.get_json()["status"] == "red"
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         st2 = db.execute("SELECT status FROM status_items WHERE id=?", (item_id,)).fetchone()[0]
         db.close()
         assert st2 == "red"
@@ -330,7 +334,7 @@ class TestItemMutations:
         tok = admin.get("/api/csrf-token").get_json()["token"]
         r3 = admin.post(f"/api/toggle/{item_id}", headers={"X-CSRF-Token": tok})
         assert r3.get_json()["status"] == "green"
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         st3 = db.execute("SELECT status FROM status_items WHERE id=?", (item_id,)).fetchone()[0]
         db.close()
         assert st3 == "green"
@@ -436,7 +440,7 @@ class TestPageSettings:
         the 404 came from the setting, not a missing item.
         """
         import sqlite3
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         item_id = db.execute("SELECT id FROM status_items LIMIT 1").fetchone()[0]
         db.close()
         assert item_id is not None, "no seeded items present"
@@ -455,7 +459,7 @@ class TestPageSettings:
         """
         self._set_history(admin, True)
         import sqlite3
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         item_id = db.execute("SELECT id FROM status_items LIMIT 1").fetchone()[0]
         db.close()
         assert item_id is not None, "no seeded items present"
@@ -487,18 +491,18 @@ class TestPageSettings:
         """Writes land in the settings section of the temp config.yaml."""
         import yaml
         self._set_history(admin, True)
-        raw = yaml.safe_load(A.CONFIG_PATH.read_text())
+        raw = yaml.safe_load(_cfg.get_config_path().read_text())
         assert raw.get("settings", {}).get("history_enabled") is True
 
     def test_settings_preserves_sibling_sections(self, admin, A):
         """Saving settings must not clobber items / _base / other sections."""
         import yaml
-        before = yaml.safe_load(A.CONFIG_PATH.read_text())
+        before = yaml.safe_load(_cfg.get_config_path().read_text())
         items_before = before.get("items")
         base_before = before.get("_base")
 
         self._set_history(admin, True)
-        raw = yaml.safe_load(A.CONFIG_PATH.read_text())
+        raw = yaml.safe_load(_cfg.get_config_path().read_text())
         assert raw.get("items") == items_before
         assert raw.get("_base") == base_before
         assert raw.get("settings", {}).get("history_enabled") is True
@@ -517,7 +521,7 @@ class TestPageSettings:
         assert r.get_json()["healthchecks_enabled"] is False
 
         assert client.get("/api/settings").get_json()["healthchecks_enabled"] is False
-        raw = yaml.safe_load(A.CONFIG_PATH.read_text())
+        raw = yaml.safe_load(_cfg.get_config_path().read_text())
         assert raw.get("settings", {}).get("healthchecks_enabled") is False
 
         tok2 = admin.get("/api/csrf-token").get_json()["token"]
@@ -548,9 +552,9 @@ class TestSecurityHeadersAndBackups:
         """_archive_db_snapshot creates JSON file in archives/ directory."""
         import app as m
         monkeypatch.delenv("STATUS_NO_ARCHIVE", raising=False)
-        m._archive_db_snapshot()
+        _dbsnap.archive_db_snapshot()
 
-        archives = list(m.ARCHIVES_DIR.glob("*.json"))
+        archives = list(_cfg.get_archives_dir().glob("*.json"))
         assert len(archives) > 0
         latest = sorted(archives)[-1]
 
@@ -569,7 +573,7 @@ class TestSecurityHeadersAndBackups:
         for i in range(7):
             _save_healthchecks({"_test": {"type": "curl", "url": f"http://test-{i}.local"}})
 
-        cfg_base = A.CONFIG_PATH
-        baks = [cfg_base.parent / f"{cfg_base.name}.bak{i}" for i in range(1, A._NUM_BACKUPS + 1)]
+        cfg_base = _cfg.get_config_path()
+        baks = [cfg_base.parent / f"{cfg_base.name}.bak{i}" for i in range(1, _consts.NUM_CONFIG_BACKUPS + 1)]
         existing_baks = [b for b in baks if b.exists()]
-        assert len(existing_baks) == A._NUM_BACKUPS
+        assert len(existing_baks) == _consts.NUM_CONFIG_BACKUPS

@@ -1,4 +1,4 @@
-"""Fixtures for status-my-page MC/DC tests."""
+"""Fixtures for status-my-page tests."""
 
 import json
 import os
@@ -12,28 +12,31 @@ import pytest
 import yaml
 
 BASE = Path(__file__).resolve().parent.parent
+if str(BASE) not in sys.path:
+    sys.path.insert(0, str(BASE))
+
+# Set these BEFORE any `import app` (conftest is imported before test modules,
+# and app.py skips loading .env when STATUS_ADMIN_PASS_HASH is already set).
+if "STATUS_ADMIN_PASS_HASH" not in os.environ:
+    from werkzeug.security import generate_password_hash
+    os.environ["STATUS_ADMIN_PASS_HASH"] = generate_password_hash("testpass")
 os.environ["STATUS_NO_ARCHIVE"] = "1"
 # Must be set before ANY test imports app, so the healthcheck worker thread
 # isn't started at import time (it holds DB connections that break re-init).
 os.environ["STATUS_DISABLE_HEALTHCHECKS"] = "1"
+
+import app as app_obj  # noqa: E402
+import statuspage.config as _cfg  # noqa: E402
+import constants as _consts  # noqa: E402
+import statuspage.auth as _auth  # noqa: E402
+import statuspage.db as _dbmod  # noqa: E402
+
 
 # ── Session-scoped: real patching of app paths + first init_db      ──
 @pytest.fixture(scope="session")
 def A():
     """Import app, repoint ALL paths to a temp env, run init_db once.
        Yields the app module — shared by every test."""
-    # Ensure project root is on sys.path once (idempotent).
-    if str(BASE) not in sys.path:
-        sys.path.insert(0, str(BASE))
-
-    from werkzeug.security import generate_password_hash
-    if "STATUS_ADMIN_PASS_HASH" not in os.environ:
-        os.environ["STATUS_ADMIN_PASS_HASH"] = generate_password_hash("testpass")
-
-    # Disable healthchecks for tests to avoid database locking issues
-    os.environ["STATUS_DISABLE_HEALTHCHECKS"] = "1"
-
-    import app as m  # noqa: F811
 
     # ── point at a fresh temp environment ---------------------------
     _td  = tempfile.mkdtemp(prefix="mc_")
@@ -52,25 +55,25 @@ def A():
     )
 
     # Reinitialize config paths
-    m.init_config_paths(Path(_td))
+    _cfg.init_config_paths(Path(_td))
 
-    # Clear rate limit state - use the module attributes exposed on m
-    m._failed_logins.clear()
-    m._mutation_rates.clear()
-    m._csrf_failures.clear()
+    # Clear rate limit state
+    _auth._failed_logins.clear()
+    _auth._mutation_rates.clear()
+    _auth._csrf_failures.clear()
 
     # Reload config to pick up the new config.yaml
-    m.reload_config()
+    _cfg.reload_config()
 
-    with m.app.test_request_context():           # so g is available (get_db needs it)
-        m.init_db()                               # first run — creates tables + seeds
+    with app_obj.app.test_request_context():           # so g is available (get_db needs it)
+        _dbmod.init_db()                               # first run — creates tables + seeds
 
     # Configure healthcheck module with the temp paths
     # Note: Don't call start_healthchecks() here - tests that need it will start it
     import healthcheck as hc
-    hc.configure_healthcheck(m.get_base_dir(), m.get_db_path(), m.get_config_path(), m.load_config, m.MAX_HISTORY_PER_ITEM)
+    hc.configure_healthcheck(_cfg.get_base_dir(), _cfg.get_db_path(), _cfg.get_config_path(), _cfg.load_config, _consts.MAX_HISTORY_PER_ITEM)
 
-    yield m  # app module (cfg path available via m.CONFIG_PATH etc.)
+    yield app_obj  # app module (cfg path available via _cfg.get_config_path() etc.)
 
 
 # ── Fake Slack webhook (shared by slack + MC/DC suites) ─────────────
@@ -117,7 +120,7 @@ def fake_slack_url():
 
 def db_conn(A):
     """Open a raw sqlite3 connection to the current DB_PATH."""
-    c = sqlite3.connect(str(A.DB_PATH))
+    c = sqlite3.connect(str(_cfg.get_db_path()))
     c.row_factory = sqlite3.Row
     try:
         return c

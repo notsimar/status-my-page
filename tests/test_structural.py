@@ -3,6 +3,8 @@
 import sqlite3
 import sys
 from pathlib import Path
+import statuspage.config as _cfg
+import app as app_obj
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -18,7 +20,7 @@ class Test_D4_ReorderOverride:
 
     def test_reorder_updates_db(self, admin, token, A):
         """Reorder API updates position in DB."""
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         db.row_factory = sqlite3.Row
         row_a = db.execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
         row_b = db.execute("SELECT id FROM status_items WHERE name='SvcB'").fetchone()
@@ -34,7 +36,7 @@ class Test_D4_ReorderOverride:
         )
         assert r.status_code == 200
 
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         db.row_factory = sqlite3.Row
         pos_b = self._position(db, "SvcB")
         pos_a = self._position(db, "SvcA")
@@ -46,7 +48,7 @@ class Test_D5_SetNotesGuard:
     """Verify set_notes updates DB notes directly."""
 
     def test_set_notes_updates_db(self, admin, token, A):
-        db_file = sqlite3.connect(str(A.DB_PATH))
+        db_file = sqlite3.connect(str(_cfg.get_db_path()))
         db_file.row_factory = sqlite3.Row
         row = db_file.execute(
             "SELECT name, id FROM status_items WHERE name='SvcA'"
@@ -63,7 +65,7 @@ class Test_D5_SetNotesGuard:
         )
         assert r.status_code == 200
 
-        db_file = sqlite3.connect(str(A.DB_PATH))
+        db_file = sqlite3.connect(str(_cfg.get_db_path()))
         note_db = db_file.execute("SELECT notes FROM status_items WHERE id=?", (row["id"],)).fetchone()[0]
         db_file.close()
         assert note_db == "Service is under maintenance"
@@ -81,7 +83,7 @@ class Test_D11_SlackWiring:
             "channel": "", "max_queue": 100})
         slack_mod.clear_queue()
 
-        db = sqlite3.connect(str(A.DB_PATH))
+        db = sqlite3.connect(str(_cfg.get_db_path()))
         db.row_factory = sqlite3.Row
         row = db.execute(
             "SELECT id FROM status_items WHERE name='SvcA'").fetchone()
@@ -106,7 +108,7 @@ class Test_D11_SlackWiring:
         _ct._FakeSlack.payloads.clear()
         _ct._FakeSlack.fail_with = None
 
-        c = A.app.test_client()
+        c = app_obj.app.test_client()
         assert c.post("/login", json={"user": "admin", "pass": "testpass"}
                       ).status_code == 200
         slack_mod.enqueue_status_change("struct_svc", "green", "red")
@@ -128,7 +130,7 @@ class Test_D11_SlackWiring:
         slack_mod.clear_queue()
 
         # Ensure SvcA exists and is green
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             c.row_factory = sqlite3.Row
             row = c.execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
             assert row

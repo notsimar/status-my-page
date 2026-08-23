@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from statuspage import logging_setup  # noqa: E402
+import app as app_obj
 
 
 @pytest.fixture()
@@ -48,7 +49,17 @@ class TestAccessLog:
         assert "Safari/macOS" in content
         assert ua[:40] in content                    # raw UA excerpt
 
-    def test_x_forwarded_for_honoured(self, client, logs):
+    def test_xff_ignored_without_trust_proxy(self, client, logs, monkeypatch):
+        """Default: XFF is NOT trusted (spoofable) — remote_addr is logged."""
+        monkeypatch.delenv("STATUS_TRUST_PROXY", raising=False)
+        _client(client, headers={"X-Forwarded-For": "203.0.113.7, 10.0.0.1"})
+        content = (logs / "access.log").read_text()
+        assert "203.0.113.7" not in content
+        assert "127.0.0.1" in content
+
+    def test_x_forwarded_for_honoured_with_trust_proxy(self, client, logs, monkeypatch):
+        """STATUS_TRUST_PROXY=1: leftmost XFF entry = original client."""
+        monkeypatch.setenv("STATUS_TRUST_PROXY", "1")
         _client(client, headers={"X-Forwarded-For": "203.0.113.7, 10.0.0.1"})
         content = (logs / "access.log").read_text()
         assert "203.0.113.7" in content              # leftmost = original client
@@ -69,18 +80,28 @@ class TestAccessLog:
 
 class TestClientIpExtraction:
     def test_direct_remote_addr(self, A):
-        with A.app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.1.2.3"}):
+        with app_obj.app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.1.2.3"}):
             assert logging_setup.client_ip() == "10.1.2.3"
 
-    def test_forwarded_for_leftmost(self, A):
-        with A.app.test_request_context(
+    def test_forwarded_for_ignored_by_default(self, A, monkeypatch):
+        """Without STATUS_TRUST_PROXY, XFF must not override remote_addr."""
+        monkeypatch.delenv("STATUS_TRUST_PROXY", raising=False)
+        with app_obj.app.test_request_context(
+            "/", environ_base={"REMOTE_ADDR": "10.0.0.9"},
+            headers={"X-Forwarded-For": "198.51.100.5, 10.0.0.1"},
+        ):
+            assert logging_setup.client_ip() == "10.0.0.9"
+
+    def test_forwarded_for_leftmost_with_trust_proxy(self, A, monkeypatch):
+        monkeypatch.setenv("STATUS_TRUST_PROXY", "1")
+        with app_obj.app.test_request_context(
             "/", environ_base={"REMOTE_ADDR": "10.0.0.9"},
             headers={"X-Forwarded-For": "198.51.100.5, 10.0.0.1"},
         ):
             assert logging_setup.client_ip() == "198.51.100.5"
 
     def test_no_remote_addr_placeholder(self, A):
-        with A.app.test_request_context("/", environ_base={"REMOTE_ADDR": ""}):
+        with app_obj.app.test_request_context("/", environ_base={"REMOTE_ADDR": ""}):
             assert logging_setup.client_ip() == "-"
 
 
@@ -94,13 +115,13 @@ class TestBrowserSummary:
         ("", "-"),
     ])
     def test_summary_parsing(self, A, ua, expected):
-        with A.app.test_request_context("/", headers={"User-Agent": ua}):
+        with app_obj.app.test_request_context("/", headers={"User-Agent": ua}):
             assert logging_setup.browser_summary() == expected
 
 
 class TestSecurityEventLog:
     def test_failed_login_logged_with_ip_and_ua(self, A, logs):
-        c = A.app.test_client()
+        c = app_obj.app.test_client()
         c.post("/login", json={"user": "admin", "pass": "wrong-password"},
                headers={"User-Agent": "evil-bot/1.0"})
         content = (logs / "app.log").read_text()
@@ -109,7 +130,7 @@ class TestSecurityEventLog:
         assert "ua='evil-bot/1.0'" in content
 
     def test_successful_login_logged(self, A, logs):
-        c = A.app.test_client()
+        c = app_obj.app.test_client()
         r = c.post("/login", json={"user": "admin", "pass": "testpass"},
                    headers={"User-Agent": "good-client/2.0"})
         assert r.status_code == 200

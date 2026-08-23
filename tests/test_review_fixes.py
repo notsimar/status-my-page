@@ -10,20 +10,21 @@ import time
 from pathlib import Path
 
 import pytest
+import app as app_obj
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 class TestSessionCookieFlags:
     def test_samesite_lax_set(self, A):
-        assert A.app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+        assert app_obj.app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
 
     def test_httponly_set(self, A):
-        assert A.app.config["SESSION_COOKIE_HTTPONLY"] is True
+        assert app_obj.app.config["SESSION_COOKIE_HTTPONLY"] is True
 
     def test_secure_defaults_off_for_local_http(self, A):
         # Local/LAN deployments serve plain HTTP; Secure must be opt-in.
-        assert A.app.config["SESSION_COOKIE_SECURE"] is False
+        assert app_obj.app.config["SESSION_COOKIE_SECURE"] is False
 
     def test_secure_opt_in_via_env(self, A, monkeypatch):
         monkeypatch.setenv("STATUS_SECURE_COOKIES", "1")

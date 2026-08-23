@@ -435,6 +435,10 @@ DTD (`healthcheck.feed_treats_as_unfetchable`).
 | `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production)         | **Yes**  | `scrypt$72816$...` |
 | `STATUS_SECRET_KEY`      | Flask session signing key (auto-generated if unset) | No       | Any random string  |
 | `STATUS_NO_ARCHIVE=1`    | Skip DB archival on restart (dev/testing only)      | No       | —                  |
+| `STATUS_TRUST_PROXY=1`   | Trust `X-Forwarded-For` for client IP (enable ONLY behind a reverse proxy that overwrites the header) | No | — |
+| `STATUS_SECURE_COOKIES=1`| Set the `Secure` flag on session cookies (HTTPS deployments) | No | — |
+| `STATUS_DISABLE_HEALTHCHECKS=1` | Don't start the healthcheck worker (dev/testing) | No | — |
+| `STATUS_SLACK_WEBHOOK_URL` | Slack webhook fallback if unset in config.yaml   | No       | `https://hooks.slack.com/...` |
 
 **Generate a hash:**
 
@@ -645,6 +649,18 @@ status-my-page/
 | **Input sanitization**      | Centralized `input_filter.py` layer — blocks XSS, SQLi, path traversal, shell injection, null bytes, and oversized payloads on every mutation route |
 | **Content Security Policy** | `default-src 'self'`; inline CSS via `'unsafe-inline'` on style-src only                                                                            |
 | **Additional headers**      | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, Permissions-Policy                                                                   |
+| **Client IP / proxy trust** | `X-Forwarded-For` ignored unless `STATUS_TRUST_PROXY=1` — direct clients cannot spoof IPs to poison logs or dodge per-IP limits                      |
+
+### Known input-filter trade-offs (intentional)
+
+- The XSS pattern check rejects any text containing HTML entities (`&lt;`,
+  `&amp;…`, numeric refs). A note that legitimately *mentions* an escaped
+  entity will be rejected with a 400 rather than stored — accepted
+  false-positive in exchange for blocking encoded-vector bypasses.
+- The login lockout (5 failures → 30 s) is sized for LAN/self-hosted use.
+  For internet-exposed deployments prefer firewall/Tailscale fronting and
+  HTTPS; the werkzeug scrypt hash cost remains the primary brute-force
+  defense.
 
 ## 💻 API endpoints
 

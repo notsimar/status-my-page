@@ -28,6 +28,11 @@ import yaml
 import json
 import pytest
 from pathlib import Path
+import statuspage.config as _cfg
+import constants as _consts
+import statuspage.auth as _auth
+import statuspage.db as _dbmod
+import app as app_obj
 
 # D1 (L620): if item_name not in seed_set or new_state in ('green', ''): continue
 #   MC/DC conditions — expressed from the *code* side so labels map 1:1 to source:
@@ -35,65 +40,65 @@ from pathlib import Path
 #     C2 = new_state in ('green', '')   (T => skip, F => proceed with restore)
 class Test_D1_RestoreStatus:
     def _query(self, A, sql, params=()):
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             c.row_factory = sqlite3.Row
             return c.execute(sql, params).fetchone()
 
     def _set_db_status(self, A, name, status):
         """Directly set DB status for test setup."""
-        with A.app.test_request_context():
-            row = A.get_db().execute("SELECT id FROM status_items WHERE name=?", (name,)).fetchone()
+        with app_obj.app.test_request_context():
+            row = _dbmod.get_connection().execute("SELECT id FROM status_items WHERE name=?", (name,)).fetchone()
             if row:
-                A.get_db().execute("UPDATE status_items SET status=? WHERE id=?", (status, row["id"]))
-                A.get_db().commit()
+                _dbmod.get_connection().execute("UPDATE status_items SET status=? WHERE id=?", (status, row["id"]))
+                _dbmod.get_connection().commit()
 
     def test_db_maintains_status_across_init_db(self, A):
         """Status in DB is preserved across init_db() calls without relying on YAML runtime."""
         # Ensure SvcA exists in DB first
-        with A.app.test_request_context():
-            row = A.get_db().execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
+        with app_obj.app.test_request_context():
+            row = _dbmod.get_connection().execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
             if not row:
-                A.get_db().execute("INSERT INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
-                A.get_db().commit()
+                _dbmod.get_connection().execute("INSERT INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
+                _dbmod.get_connection().commit()
 
         self._set_db_status(A, "SvcA", "degraded")
 
-        with A.app.test_request_context():
-            A.init_db()
+        with app_obj.app.test_request_context():
+            _dbmod.init_db()
         row = self._query(A, "SELECT status FROM status_items WHERE name='SvcA'")
         assert row is not None and row["status"] == "degraded"
 
     def test_unseeded_item_in_db_preserved(self, A):
         """Item added to DB is preserved across init_db() calls."""
-        with A.app.test_request_context():
-            db = A.get_db()
+        with app_obj.app.test_request_context():
+            db = _dbmod.get_connection()
             db.execute("INSERT OR IGNORE INTO status_items (name, status, position) VALUES ('ExtraSvc', 'green', 99)")
             db.commit()
-            A.init_db()
+            _dbmod.init_db()
         row = self._query(A, "SELECT id FROM status_items WHERE name='ExtraSvc'")
         assert row is not None
 
 
 class Test_D2_NotesRestore:
     def _query(self, A, sql, params=()):
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             c.row_factory = sqlite3.Row
             return c.execute(sql, params).fetchone()
 
     def _set_db_notes(self, A, name, notes):
         """Directly set DB notes for test setup."""
-        with A.app.test_request_context():
-            row = A.get_db().execute("SELECT id FROM status_items WHERE name=?", (name,)).fetchone()
+        with app_obj.app.test_request_context():
+            row = _dbmod.get_connection().execute("SELECT id FROM status_items WHERE name=?", (name,)).fetchone()
             if row:
-                A.get_db().execute("UPDATE status_items SET notes=? WHERE id=?", (notes, row["id"]))
-                A.get_db().commit()
+                _dbmod.get_connection().execute("UPDATE status_items SET notes=? WHERE id=?", (notes, row["id"]))
+                _dbmod.get_connection().commit()
 
     def test_db_maintains_notes_across_init_db(self, A):
         """Notes in DB are preserved across init_db() calls without relying on YAML runtime."""
         self._set_db_notes(A, "SvcA", "Maintenance planned")
 
-        with A.app.test_request_context():
-            A.init_db()
+        with app_obj.app.test_request_context():
+            _dbmod.init_db()
         row = self._query(A, "SELECT notes FROM status_items WHERE name='SvcA'")
         assert row is not None and row["notes"] == "Maintenance planned"
 
@@ -105,7 +110,7 @@ class Test_D3_SecurityGuard:
     def __rate_limit(self, client):
         import app as m
         ip = client.environ_base['REMOTE_ADDR']
-        m._mutation_rates[ip] = [dt.datetime.now(dt.timezone.utc).timestamp()] * (m.MUTATION_MAX + 1)
+        _auth._mutation_rates[ip] = [dt.datetime.now(dt.timezone.utc).timestamp()] * (_consts.MUTATION_MAX + 1)
 
     # ── Baseline: one request succeeds (checked on toggle only — all share the gate) ───
     def test_baseline_all_ok__success(self, admin, token, A):
@@ -113,8 +118,8 @@ class Test_D3_SecurityGuard:
         # Resolve a real item id (id 1 is not guaranteed across test order —
         # other tests delete items). A missing item is now 404, so the
         # happy-path guard check must exercise an id that exists.
-        with A.app.test_request_context():
-            item_id = A.get_db().execute(
+        with app_obj.app.test_request_context():
+            item_id = _dbmod.get_connection().execute(
                 "SELECT id FROM status_items LIMIT 1"
             ).fetchone()
         assert item_id is not None, "need at least one seeded item"
@@ -261,8 +266,8 @@ class Test_D6_CsrfInternalGuard:
     def _reset_state(self, admin):
         import app as m
         ip = admin.environ_base.get("REMOTE_ADDR", "127.0.0.1")
-        m._csrf_failures.pop(ip, None)
-        m._mutation_rates.pop(ip, None)
+        _auth._csrf_failures.pop(ip, None)
+        _auth._mutation_rates.pop(ip, None)
 
     def test_C1_no_session_token__fails(self, admin):
         """C1=True (no expected token in session) → CSRF reject, C2 not evaluated."""
@@ -275,7 +280,7 @@ class Test_D6_CsrfInternalGuard:
 
         import app as m
         ip = admin.environ_base.get("REMOTE_ADDR", "127.0.0.1")
-        failures_before = m._csrf_failures.get(ip, 0)
+        failures_before = _auth._csrf_failures.get(ip, 0)
 
         r = admin.post(
             "/api/toggle/1",
@@ -284,7 +289,7 @@ class Test_D6_CsrfInternalGuard:
         )
         assert r.status_code == 403
 
-        failures_after = m._csrf_failures.get(ip, 0)
+        failures_after = _auth._csrf_failures.get(ip, 0)
         assert failures_after > failures_before, \
             f"C1=True should increment failure counter: {failures_before} → {failures_after}"
 
@@ -298,7 +303,7 @@ class Test_D6_CsrfInternalGuard:
         import app as m
 
         ip = admin.environ_base.get("REMOTE_ADDR", "127.0.0.1")
-        failures_before = m._csrf_failures.get(ip, 0)
+        failures_before = _auth._csrf_failures.get(ip, 0)
 
         r = admin.post(
             "/api/toggle/1",
@@ -307,7 +312,7 @@ class Test_D6_CsrfInternalGuard:
         )
         assert r.status_code == 403
 
-        failures_after = m._csrf_failures.get(ip, 0)
+        failures_after = _auth._csrf_failures.get(ip, 0)
         assert failures_after > failures_before, \
             f"C2=True should increment failure counter: {failures_before} → {failures_after}"
 
@@ -324,7 +329,7 @@ class Test_D6_CsrfInternalGuard:
         # Use a live item id — earlier tests in the session may have deleted
         # item 1, and toggle on a missing id now correctly 404s.
         import sqlite3 as _sq
-        with _sq.connect(str(m.DB_PATH)) as c:
+        with _sq.connect(str(_cfg.get_db_path())) as c:
             c.row_factory = _sq.Row
             row = c.execute(
                 "SELECT id FROM status_items ORDER BY id LIMIT 1").fetchone()
@@ -337,7 +342,7 @@ class Test_D6_CsrfInternalGuard:
             content_type="application/json", data=b'{}',
         )
         assert r.status_code == 200
-        assert m._csrf_failures.get(ip, 0) == 0, \
+        assert _auth._csrf_failures.get(ip, 0) == 0, \
             f"Success should wipe failure counter for {ip}"
 
     def test_session_wipe_after_max_failures(self, admin):
@@ -349,7 +354,7 @@ class Test_D6_CsrfInternalGuard:
         """
         import app as m
 
-        for _ in range(m.MAX_CSRF_FAILURES):
+        for _ in range(_consts.MAX_CSRF_FAILURES):
             r = admin.post(
                 "/api/toggle/1",
                 headers={"X-CSRF-Token": "bad"},
@@ -361,7 +366,7 @@ class Test_D6_CsrfInternalGuard:
         check = admin.get("/auth-check")
         body = check.get_json()
         assert body.get("admin") is False or body.get("admin") == "", \
-            f"Session should be wiped after {m.MAX_CSRF_FAILURES} failures. Got: {body}"
+            f"Session should be wiped after {_consts.MAX_CSRF_FAILURES} failures. Got: {body}"
 
 
 # D7 (L798): if "items" in rt and name in rt["items"]: prune from runtime list
@@ -375,7 +380,7 @@ class Test_D7_DeleteCleanupGate:
 
     @staticmethod
     def _svcA_id(A):
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             c.row_factory = sqlite3.Row
             row = c.execute("SELECT id FROM status_items WHERE name='SvcA'").fetchone()
             return row["id"] if row else None
@@ -384,8 +389,8 @@ class Test_D7_DeleteCleanupGate:
         """Deleting an item removes it from DB."""
         sid = self._svcA_id(A)
         if sid is None:
-            with A.app.test_request_context():
-                db = A.get_db()
+            with app_obj.app.test_request_context():
+                db = _dbmod.get_connection()
                 db.execute("INSERT OR IGNORE INTO status_items (name, status, position) VALUES ('SvcA', 'green', 1)")
                 db.commit()
             sid = self._svcA_id(A)
@@ -398,7 +403,7 @@ class Test_D7_DeleteCleanupGate:
         )
         assert r.status_code == 200
 
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             row = c.execute("SELECT id FROM status_items WHERE id=?", (sid,)).fetchone()
             assert row is None
 
@@ -475,7 +480,7 @@ class Test_D9_CsrfMethodGate:
     def test_C1_True_C2_True_valid_token__succeeds(self, admin, token, A):
         """Baseline: POST + require_csrf + valid token -> mutation succeeds."""
         import sqlite3 as _sq
-        with _sq.connect(str(A.DB_PATH)) as c:
+        with _sq.connect(str(_cfg.get_db_path())) as c:
             row = c.execute(
                 "SELECT id FROM status_items ORDER BY id LIMIT 1").fetchone()
         assert row, "need a seeded item"

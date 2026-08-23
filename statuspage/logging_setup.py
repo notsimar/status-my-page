@@ -60,16 +60,30 @@ def init_logging() -> None:
 
 # ── Request info extraction ─────────────────────────────────────────
 
-def client_ip() -> str:
-    """Best-effort client IP: honours X-Forwarded-For behind a proxy.
+def _trust_proxy() -> bool:
+    """Whether X-Forwarded-For may be trusted for client-IP resolution.
 
-    Takes the LEFTMOST forwarded entry (the original client). Only trust
-    this if a reverse proxy sets the header; direct connections use
-    remote_addr which cannot be spoofed.
+    Off by default: without a reverse proxy, clients can spoof XFF and
+    poison access logs / dodge per-IP rate limits. Enable ONLY behind a
+    proxy that overwrites (not appends to) the header:
+      STATUS_TRUST_PROXY=1  in .env / environment
     """
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    import os
+    return os.environ.get("STATUS_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+
+
+def client_ip() -> str:
+    """Best-effort client IP.
+
+    Honours X-Forwarded-For only when STATUS_TRUST_PROXY is enabled (i.e.
+    the app sits behind a reverse proxy that sets the header). Takes the
+    LEFTMOST forwarded entry (the original client). Otherwise uses
+    remote_addr, which cannot be spoofed.
+    """
+    if _trust_proxy():
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     return request.remote_addr or "-"
 
 

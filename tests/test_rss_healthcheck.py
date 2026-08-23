@@ -27,6 +27,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import yaml
+import statuspage.config as _cfg
+import constants as _consts
+import healthcheck as _hc
+import statuspage.config as _lc
+import statuspage.config as _gbd
+import statuspage.config as _gdp
+import statuspage.config as _gcp
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -132,17 +139,17 @@ class TestRssFeedCheckRuntime:
     """Real HTTP server, real curl subprocess, real XML parse."""
 
     def test_clean_feed_green(self, A, feed_server):
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert (result, code) == ("green", 200)
 
     def test_outage_feed_red(self, A, feed_server):
         _set_feed(feed_server.server, FEED_RED)
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert (result, code) == ("red", 200)
 
     def test_degraded_feed(self, A, feed_server):
         _set_feed(feed_server.server, FEED_DEGRADED)
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert (result, code) == ("degraded", 200)
 
     def test_red_takes_precedence_over_degraded(self, A, feed_server):
@@ -153,31 +160,31 @@ class TestRssFeedCheckRuntime:
             "<description/>"
             "</item></channel></rss>",
         )
-        result, _ = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, _ = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert result == "red", "red keywords must beat degraded keywords"
 
     def test_atom_entry_fallback(self, A, feed_server):
         _set_feed(feed_server.server, ATOM_DEGRADED)
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert (result, code) == ("degraded", 200)
 
     def test_case_insensitive_match(self, A, feed_server):
         _set_feed(feed_server.server, FEED_RED)  # "Major Outage" (mixed case)
-        result, _ = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, _ = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert result == "red"
 
     def test_http_404_is_none(self, A, feed_server):
-        result, code = A._run_rss_feed_check(feed_server.url + "/missing", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/missing", 5, WORDSET)
         assert (result, code) == (None, 404)
 
     def test_malformed_xml_is_none(self, A, feed_server):
         _set_feed(feed_server.server, "this is not xml <<<")
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert (result, code) == (None, 200)
 
     def test_connection_refused_is_none(self, A):
         port = _free_port()  # nothing listening
-        result, code = A._run_rss_feed_check(f"http://127.0.0.1:{port}/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(f"http://127.0.0.1:{port}/feed", 5, WORDSET)
         assert result is None
 
     def test_subprocess_timeout(self, A, monkeypatch):
@@ -185,7 +192,7 @@ class TestRssFeedCheckRuntime:
             raise subprocess.TimeoutExpired(cmd="curl", timeout=5)
 
         monkeypatch.setattr(subprocess, "run", boom)
-        result, code = A._run_rss_feed_check("http://127.0.0.1:1/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check("http://127.0.0.1:1/feed", 5, WORDSET)
         assert (result, code) == (None, None)
 
     def test_missing_curl_binary(self, A, monkeypatch):
@@ -193,12 +200,12 @@ class TestRssFeedCheckRuntime:
             raise FileNotFoundError("curl missing")
 
         monkeypatch.setattr(subprocess, "run", boom)
-        result, code = A._run_rss_feed_check("http://127.0.0.1:1/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check("http://127.0.0.1:1/feed", 5, WORDSET)
         assert (result, code) == (None, None)
 
     def test_no_keywords_clean_fetch_is_green(self, A, feed_server):
         _set_feed(feed_server.server, FEED_RED)
-        result, code = A._run_rss_feed_check(
+        result, code = _hc._run_rss_feed_check(
             feed_server.url + "/feed", 5, {"red": [], "degraded": []}
         )
         assert (result, code) == ("green", 200)
@@ -225,7 +232,7 @@ class TestRssFeedCheckEdgeCases:
         failure — the fetch succeeded, there is simply no signal.
         """
         _set_feed(feed_server.server, self.EMPTY_FEED)
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert (result, code) == ("green", 200), \
             f"empty feed should be green/200, got {result!r}/{code!r}"
 
@@ -243,7 +250,7 @@ class TestRssFeedCheckEdgeCases:
         # Control: red within the cap -> red (confirms the probe works).
         within = "<rss><channel>" + clean + self.RED_ENTRY + "</channel></rss>"
         _set_feed(feed_server.server, within)
-        assert A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)[0] == "red"
+        assert _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)[0] == "red"
 
         # Same red entry pushed to position cap+1 -> must be ignored (green).
         beyond = (
@@ -253,7 +260,7 @@ class TestRssFeedCheckEdgeCases:
             + "</channel></rss>"
         )
         _set_feed(feed_server.server, beyond)
-        result = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)[0]
+        result = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)[0]
         assert result == "green", (
             f"entry #{cap+1} past RSS_MAX_ITEMS must not be scanned, got {result!r}"
         )
@@ -273,7 +280,7 @@ class TestRssFeedCheckEdgeCases:
         )
         assert len(oversized.encode()) > hc.RSS_MAX_BYTES
         _set_feed(feed_server.server, oversized)
-        result, code = A._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
+        result, code = _hc._run_rss_feed_check(feed_server.url + "/feed", 5, WORDSET)
         assert result is None, (
             f"oversized (> {hc.RSS_MAX_BYTES} B) feed must be a fetch failure, "
             f"got {result!r}"
@@ -287,7 +294,7 @@ class TestRssFeedOneShot:
 
     def test_one_shot_result_shape(self, A, feed_server, admin, token, clean_hc, monkeypatch):
         monkeypatch.setattr("statuspage.healthcheck._MODULE_CONFIGURED", True)
-        monkeypatch.setattr("healthcheck._DB_PATH", A.DB_PATH)
+        monkeypatch.setattr("healthcheck._DB_PATH", _cfg.get_db_path())
         """One-shot run serializes rss results and never writes the DB.
 
         No status item needs to exist: run_healthchecks_once() is a pure
@@ -304,9 +311,9 @@ class TestRssFeedOneShot:
         }
         _save_healthchecks(before)
         import healthcheck as hc
-        hc.configure_healthcheck(A.get_base_dir(), A.get_db_path(),
-                                 A.get_config_path(), A.load_config,
-                                 A.MAX_HISTORY_PER_ITEM)
+        hc.configure_healthcheck(_gbd.get_base_dir(), _gdp.get_db_path(),
+                                 _gcp.get_config_path(), _lc.load_config,
+                                 _consts.MAX_HISTORY_PER_ITEM)
         try:
             r = admin.post("/api/healthcheck/run",
                            headers={"X-CSRF-Token": token})
@@ -318,7 +325,7 @@ class TestRssFeedOneShot:
             assert body[name]["status_code"] == 200
 
             # One-shot is a dry run: no item rows nor status history created
-            conn = sqlite3.connect(str(A.DB_PATH))
+            conn = sqlite3.connect(str(_cfg.get_db_path()))
             items = conn.execute(
                 "SELECT COUNT(*) FROM status_items WHERE name = ?", [name]
             ).fetchone()[0]
@@ -515,9 +522,9 @@ class TestRssFeedWorkerE2E:
                                   config_path=config_path)
         finally:
             # Restore the worker module to the shared session environment
-            hc.configure_healthcheck(A.get_base_dir(), A.get_db_path(),
-                                     A.get_config_path(), A.load_config,
-                                     A.MAX_HISTORY_PER_ITEM)
+            hc.configure_healthcheck(_gbd.get_base_dir(), _gdp.get_db_path(),
+                                     _gcp.get_config_path(), _lc.load_config,
+                                     _consts.MAX_HISTORY_PER_ITEM)
 
     def test_feed_changes_flip_status_and_back(self, feed_server, e2e_env):
         import healthcheck as hc

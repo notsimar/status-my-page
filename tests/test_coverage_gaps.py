@@ -12,6 +12,8 @@ import json
 import sqlite3
 
 import pytest
+import statuspage.config as _cfg
+import app as app_obj
 
 
 def _csrf(admin):
@@ -31,7 +33,7 @@ class TestStaticExport:
     def test_export_renders_badge_for_all_green(self, admin, A, monkeypatch):
         from statuspage import config as cfg_mod
         from statuspage.routes import generate_static_html
-        with A.app.test_request_context():
+        with app_obj.app.test_request_context():
             html = generate_static_html()
         assert "All Systems Operational" in html
 
@@ -41,7 +43,7 @@ class TestStaticExport:
                        content_type="application/json", data=b"{}")
         assert r.status_code == 200
         from statuspage.routes import generate_static_html
-        with A.app.test_request_context():
+        with app_obj.app.test_request_context():
             html = generate_static_html()
         assert "Degraded Performance" in html
 
@@ -49,11 +51,11 @@ class TestStaticExport:
         """A service named <script> must appear escaped in the export."""
         from statuspage.routes import generate_static_html
         import sqlite3
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             c.execute("INSERT INTO status_items (name, status, position) "
                       "VALUES ('<script>alert(1)</script>', 'green', 99)")
             c.commit()
-        with A.app.test_request_context():
+        with app_obj.app.test_request_context():
             html = generate_static_html()
         assert "<script>alert(1)</script>" not in html
         assert "&lt;script&gt;" in html
@@ -98,7 +100,7 @@ class TestReorderValidation:
         """Renaming to the identical name hits the 'No change' branch."""
         from statuspage.services import rename_item
         import sqlite3
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             row = c.execute(
                 "SELECT id, name FROM status_items LIMIT 1").fetchone()
         ok, msg = rename_item(row[0], row[1])
@@ -216,7 +218,7 @@ class TestDbEdgePaths:
     def test_rename_no_change_branch(self, A):
         from statuspage.services import rename_item
         import sqlite3
-        with sqlite3.connect(str(A.DB_PATH)) as c:
+        with sqlite3.connect(str(_cfg.get_db_path())) as c:
             row = c.execute(
                 "SELECT id, name FROM status_items LIMIT 1").fetchone()
         ok, msg = rename_item(row[0], row[1])
