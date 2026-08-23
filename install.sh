@@ -1,60 +1,115 @@
 #!/usr/bin/env bash
-# install.sh — Deploy status page as an unprivileged user (non-root by default)
-# Run as the target user (no sudo required):
-#   cd status-page && ./install.sh [INSTALL_DIR]
+# install.sh — Deploy status-my-page as an unprivileged user (non-root by default)
+#
+# Usage:
+#   ./install.sh [OPTIONS] [INSTALL_DIR]
+#
+# Modes:
+#   Interactive (default)   — prompts for admin credentials
+#   Non-interactive         — pass --admin-user/--admin-pass (or env vars) for
+#                             CI/automation; nothing prompts
+#   Upgrade                 — re-running against an existing install dir keeps
+#                             its .env.local and DB untouched by default
+#
+# Options:
+#   --admin-user USER       Admin username           (env: SP_ADMIN_USER)
+#   --admin-pass PASS       Admin password          (env: SP_ADMIN_PASS)
+#   --port N                Listen port             (env: STATUS_PORT, default 8920)
+#   --host ADDR             Bind address            (env: STATUS_BIND, default 0.0.0.0)
+#   --workers N             Gunicorn workers        (default 2)
+#   --force-env             Overwrite existing .env.local with supplied creds
+#                           (env: SP_INSTALL_OVERRIDE_ENV=1)
+#   -h | --help             Show this help
+#
 # Default INSTALL_DIR = $HOME/.local/share/status-page
 set -euo pipefail
 
-# Determine the project root directory (where this script lives)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Allow override via environment variable for testing/flexibility
 ROOT_DIR="${STATUS_MY_PAGE_ROOT:-$ROOT_DIR}"
 
-# Shared error-reporting helpers (die/warn/step/ok/run_step/require_cmd)
+# shellcheck source=lib.sh
 source "$ROOT_DIR/lib.sh"
 
-INSTALL_DIR="${1:-$HOME/.local/share/status-page}"
+usage() {
+    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+}
+
+# ── Argument parsing ─────────────────────────────────────────────────
+INSTALL_DIR=""
+ADMIN_USER="${SP_ADMIN_USER:-}"
+ADMIN_PASS="${SP_ADMIN_PASS:-}"
+STATUS_PORT="${STATUS_PORT:-8920}"
+BIND_HOST="${STATUS_BIND:-0.0.0.0}"
+GUNICORN_WORKERS=2
+FORCE_ENV="${SP_INSTALL_OVERRIDE_ENV:-0}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --admin-user)  ADMIN_USER="$2"; shift 2 ;;
+        --admin-pass)  ADMIN_PASS="$2"; shift 2 ;;
+        --port)        STATUS_PORT="$2"; shift 2 ;;
+        --host)        BIND_HOST="$2"; shift 2 ;;
+        --workers)     GUNICORN_WORKERS="$2"; shift 2 ;;
+        --force-env)   FORCE_ENV=1; shift ;;
+        -h|--help)     usage ;;
+        -*)            die "Unknown option: $1" "Run ./install.sh --help" ;;
+        *)             INSTALL_DIR="$1"; shift ;;
+    esac
+done
+
 SERVICE_USER="$(whoami)"
 SYSTEMD_NAME="status-page.service"
+NONINTERACTIVE=0
+if [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ]; then
+    NONINTERACTIVE=1
+fi
 
 step "Validating installation path"
 case "$INSTALL_DIR" in
+    "") INSTALL_DIR="$HOME/.local/share/status-page" ;;
     /*) : ;;
-    *) die "Install path must be absolute: $INSTALL_DIR" \
+    *)  die "Install path must be absolute: $INSTALL_DIR" \
            "Pass a full path, e.g. $HOME/.local/share/status-page" ;;
 esac
-if echo "$INSTALL_DIR" | grep -q '\.\./'; then
-    die "Invalid install path (traversal not allowed): $INSTALL_DIR" \
-        "Remove any '..' segments from the path."
-fi
+case "$INSTALL_DIR" in
+    *..*) die "Invalid install path (traversal not allowed): $INSTALL_DIR" \
+          "Remove any '..' segments from the path." ;;
+esac
 INSTALL_DIR=$(realpath -m "$INSTALL_DIR")
 export INSTALL_DIR
 ok "Install directory: $INSTALL_DIR"
-echo "Service user: $SERVICE_USER"
 
 step "Preflight checks"
 require_cmd python3 "Install python3 + python3-venv first (e.g. sudo dnf install python3)."
 PYTHON_VER=$(python3 --version | awk '{print $2}' | cut -d. -f1,2)
+PYTHON_MAJOR=$(python3 --version | awk '{print $2}' | cut -d. -f1)
+PYTHON_MINOR=$(python3 --version | awk '{print $2}' | cut -d. -f2)
+if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]; }; then
+    die "Python >= 3.10 required, found $PYTHON_VER." \
+        "Install a newer Python 3 and re-run."
+fi
 ok "Python version: $PYTHON_VER"
 
-if ! command -v realpath &>/dev/null; then
-    die "Required command 'realpath' not found." \
-        "It is part of coreutils; update your system packages."
-fi
-
-# Non-root: skip system package installs
+require_cmd realpath "It is part of coreutils; update your system packages."
 if [ "$(id -u)" -eq 0 ]; then
     warn "Running as root. Will attempt system installs and ownership changes."
-    ROOT=1
+    ROOTMODE=1
 else
     ok "Running as non-root user $SERVICE_USER. Skipping system packages, user creation, systemd."
-    ROOT=0
+    ROOTMODE=0
+fi
+
+UPGRADE=0
+if [ -f "$INSTALL_DIR/config.yaml" ] && [ -d "$INSTALL_DIR/.venv" ]; then
+    UPGRADE=1
+    step "Existing installation detected"
+    ok "Upgrade mode — app files will be refreshed; .env.local and instance/ are preserved."
 fi
 
 step "Creating directories"
 run_step "create instance/logs/archives dirs" \
-    mkdir -p "$INSTALL_DIR"/{instance,logs,archives}
+    mkdir -p "$INSTALL_DIR"/{instance,logs,archives,static/logos}
 chmod 0750 "$INSTALL_DIR/archives" 2>/dev/null || true
 
 step "Deploying files"
@@ -73,8 +128,9 @@ if [ -d "$ROOT_DIR/logos" ] && [ -n "$(ls -A "$ROOT_DIR/logos" 2>/dev/null)" ]; 
     echo "Copied customer logos from $ROOT_DIR/logos -> static/logos"
 fi
 
-if [ "$ROOT" -eq 1 ]; then
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"/{instance,logs,archives,config.yaml} 2>/dev/null || true
+if [ "$ROOTMODE" -eq 1 ]; then
+    chown -R "$SERVICE_USER":"$SERVICE_USER" \
+        "$INSTALL_DIR"/{instance,logs,archives,config.yaml} 2>/dev/null || true
 else
     chmod -R u+rwX "$INSTALL_DIR"
 fi
@@ -84,57 +140,88 @@ VENV_DIR="$INSTALL_DIR/.venv"
 PY="$VENV_DIR/bin/python3"
 PIP="$VENV_DIR/bin/pip"
 
-if [ ! -d "$VENV_DIR" ]; then
+if [ ! -x "$PY" ]; then
+    if [ -d "$VENV_DIR" ]; then
+        warn "Existing venv is broken (no python binary) — recreating."
+        rm -rf "$VENV_DIR"
+    fi
     run_step "create virtualenv" python3 -m venv "$VENV_DIR"
 fi
 run_step "upgrade pip" "$PIP" install --upgrade pip --quiet
-if ! run_step "install requirements.txt" "$PIP" install -r "$INSTALL_DIR/requirements.txt" --quiet; then
-    : # run_step already reported; unreachable due to exit, kept for clarity
-fi
+run_step "install requirements.txt" "$PIP" install -r "$INSTALL_DIR/requirements.txt" --quiet
 "$PY" -c "import flask, gunicorn, werkzeug, yaml" 2>/dev/null \
     || die "Dependency verification failed." \
            "The venv exists but key packages are missing. Delete '$VENV_DIR' and re-run."
-if [ "$ROOT" -eq 0 ]; then
+if [ "$ROOTMODE" -eq 0 ]; then
     chmod -R u+rwX "$VENV_DIR" 2>/dev/null || true
 fi
 
+# ── Validate numeric options before use ──────────────────────────
+case "$STATUS_PORT" in
+    ''|*[!0-9]*) die "Invalid port: $STATUS_PORT" "Port must be an integer 1-65535." ;;
+esac
+if [ "$STATUS_PORT" -lt 1 ] || [ "$STATUS_PORT" -gt 65535 ]; then
+    die "Port out of range: $STATUS_PORT" "Port must be 1-65535."
+fi
+case "$GUNICORN_WORKERS" in
+    ''|*[!0-9]*) die "Invalid worker count: $GUNICORN_WORKERS" "Workers must be a positive integer." ;;
+esac
+[ "$GUNICORN_WORKERS" -ge 1 ] || die "Worker count must be >= 1."
+
 # ── Admin credentials ────────────────────────────────────────────
-# Prompted FIRST: init_db() seeds the DB via the app, which requires
-# STATUS_ADMIN_PASS_HASH to be set — seeding before the env file exists
-# would abort the install (set -e) before the user is ever asked.
-step "Admin credentials"
-read -rp "Admin username [admin]: " ADMIN_USER_INPUT
-ADMIN_USER="${ADMIN_USER_INPUT:-admin}"
-read -rsp "Admin password: " ADMIN_PASS_INPUT
-echo ""
-if [ -z "$ADMIN_PASS_INPUT" ]; then
-    die "Admin password must not be empty." "Re-run and enter a password."
-fi
-if [ ${#ADMIN_PASS_INPUT} -lt 8 ]; then
-    warn "Password is shorter than 8 characters — consider a stronger one."
-fi
-if [ -t 1 ] && printf '%s' "$ADMIN_PASS_INPUT" | grep -q $'\t'; then
-    die "Password contains a tab character (terminal echo artefact)." \
-        "Re-run the install."
+ENV_FILE="$INSTALL_DIR/.env.local"
+
+creds_exist() { [ -f "$ENV_FILE" ] && grep -q '^STATUS_ADMIN_PASS_HASH=..*' "$ENV_FILE"; }
+
+if [ "$UPGRADE" -eq 1 ] && creds_exist && [ "$FORCE_ENV" != "1" ]; then
+    step "Admin credentials"
+    ok "Existing $ENV_FILE kept (upgrade mode). Pass --force-env to replace."
+    ADMIN_USER=$("$PY" - << 'PYEOF'
+import yaml, os
+cfg = yaml.safe_load(open(os.environ['INSTALL_DIR'] + '/config.yaml')) or {}
+print((cfg.get('admin') or {}).get('user') or 'admin')
+PYEOF
+    ) || ADMIN_USER="admin"
+elif [ "$NONINTERACTIVE" -eq 1 ]; then
+    step "Admin credentials (non-interactive)"
+    [ -n "$ADMIN_USER" ] || die "--admin-user is required in non-interactive mode." \
+        "Pass --admin-user and --admin-pass (or set SP_ADMIN_USER / SP_ADMIN_PASS)."
+    if [ ${#ADMIN_PASS} -lt 8 ]; then
+        warn "Password is shorter than 8 characters — consider a stronger one."
+    fi
+    case "$ADMIN_PASS" in
+        *$'\n'*|*$'\t'*) die "Password contains newline/tab characters." \
+                         "Supply the password via SP_ADMIN_PASS without control chars." ;;
+    esac
+else
+    step "Admin credentials"
+    # Prompted FIRST: init_db() seeds the DB via the app, which requires
+    # STATUS_ADMIN_PASS_HASH to be set — seeding before the env file exists
+    # would abort the install (set -e) before the user is ever asked.
+    read -rp "Admin username [$ADMIN_USER]: " ADMIN_USER_INPUT
+    ADMIN_USER="${ADMIN_USER_INPUT:-$ADMIN_USER}"
+    read -rsp "Admin password: " ADMIN_PASS_INPUT
+    echo ""
+    if [ -z "$ADMIN_PASS_INPUT" ]; then
+        die "Admin password must not be empty." "Re-run and enter a password."
+    fi
+    if [ ${#ADMIN_PASS_INPUT} -lt 8 ]; then
+        warn "Password is shorter than 8 characters — consider a stronger one."
+    fi
+    if printf '%s' "$ADMIN_PASS_INPUT" | grep -q $'\t'; then
+        die "Password contains a tab character (terminal echo artefact)." \
+            "Re-run the install."
+    fi
+    ADMIN_PASS="$ADMIN_PASS_INPUT"
 fi
 
 step "Hashing credentials"
-PASS_HASH="$("$PY" -c "from werkzeug.security import generate_password_hash; import sys; pwd=sys.stdin.read(); print(generate_password_hash(pwd.rstrip('\n')))" <<< "$ADMIN_PASS_INPUT")" \
+PASS_HASH="$("$PY" -c "from werkzeug.security import generate_password_hash; import sys; pwd=sys.stdin.read(); print(generate_password_hash(pwd.rstrip('\n')))" <<< "$ADMIN_PASS")" \
     || die "Could not hash the password (werkzeug import failed?)." \
            "Check that requirements.txt installed cleanly: $PIP install -r $INSTALL_DIR/requirements.txt"
 [ -n "$PASS_HASH" ] || die "Password hashing produced an empty result."
 
 SECRET_KEY="$("$PY" -c "import secrets; print(secrets.token_hex(32))")"
-ENV_FILE="$INSTALL_DIR/.env.local"
-mkdir -p "$(dirname "$ENV_FILE")"
-
-write_env_file() {
-    {
-        printf "%s='%s'\n" "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
-        printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY"
-        printf 'PYTHONUNBUFFERED=1\n'
-    } > "$ENV_FILE"
-}
 
 sync_admin_user_to_config() {
     export _SP_INSTALL_USER="$ADMIN_USER"
@@ -148,73 +235,73 @@ open(p, 'w').write(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
 PYEOF
 }
 
-if [ -f "$ENV_FILE" ]; then
+write_env_file() {
+    {
+        printf "%s='%s'\n" "STATUS_ADMIN_PASS_HASH" "$PASS_HASH"
+        printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY"
+        printf 'PYTHONUNBUFFERED=1\n'
+    } > "$ENV_FILE.tmp"
+    mv "$ENV_FILE.tmp" "$ENV_FILE"
+}
+
+step "Environment file"
+mkdir -p "$(dirname "$ENV_FILE")"
+
+if [ "$UPGRADE" -eq 1 ] && creds_exist && [ "$FORCE_ENV" != "1" ]; then
+    : # already handled above — keep existing file byte-for-byte
+elif [ -f "$ENV_FILE" ] && [ "$FORCE_ENV" != "1" ]; then
     # Existing credentials in the install dir: keep them, but tell the user —
-    # the prompted values above are NOT applied unless override is explicit.
+    # the supplied values above are NOT applied unless override is explicit.
     warn "$ENV_FILE already exists — keeping existing credentials."
-    echo "    The prompted password was ignored. Remove $ENV_FILE to re-create it,"
-    echo "    or re-run with SP_INSTALL_OVERRIDE_ENV=1 to force the new credentials."
-    if [ "${SP_INSTALL_OVERRIDE_ENV:-0}" = "1" ]; then
-        echo "    Override active — replacing $ENV_FILE with prompted credentials."
-        write_env_file
-        sync_admin_user_to_config
-        echo "    Credentials set: user=$ADMIN_USER (new password)"
-    else
-        echo "    Keeping existing $ENV_FILE untouched."
-    fi
-elif [ -f "$ROOT_DIR/.env.local" ]; then
+    echo "    The supplied password was ignored. Remove $ENV_FILE to re-create it,"
+    echo "    or re-run with --force-env to force the new credentials."
+    sync_admin_user_to_config
+elif [ -f "$ROOT_DIR/.env.local" ] && [ "$FORCE_ENV" != "1" ] \
+     && grep -q '^STATUS_ADMIN_PASS_HASH=..*' "$ROOT_DIR/.env.local" 2>/dev/null; then
     # Project env (e.g. a dev-only password / healthchecks-disabled flag) would
-    # silently override the credentials just prompted — only reuse when the
+    # silently override the credentials just supplied — only reuse when the
     # source env actually exports a real admin hash.
-    if grep -q '^STATUS_ADMIN_PASS_HASH=..*' "$ROOT_DIR/.env.local" 2>/dev/null; then
-        warn "Reusing STATUS_ADMIN_PASS_HASH from $ROOT_DIR/.env.local —"
-        echo "    the prompted password is NOT used. The new secret key is applied."
-        { grep -v '^STATUS_SECRET_KEY=' "$ROOT_DIR/.env.local" || true; } > "$ENV_FILE.tmp"
-        printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY" >> "$ENV_FILE.tmp"
-        if ! grep -q '^PYTHONUNBUFFERED=' "$ENV_FILE.tmp"; then
-            printf 'PYTHONUNBUFFERED=1\n' >> "$ENV_FILE.tmp"
-        fi
-        mv "$ENV_FILE.tmp" "$ENV_FILE"
-        # Keep the admin username in sync with the prompt
-        sync_admin_user_to_config
-        echo "Credentials set: user=$ADMIN_USER (password from $ROOT_DIR/.env.local)"
-    else
-        # Source env has no usable hash — fall through to fresh creation.
-        echo "Source $ROOT_DIR/.env.local has no STATUS_ADMIN_PASS_HASH — creating a fresh env file."
-        write_env_file
-        echo "Credentials set: user=$ADMIN_USER (new password)"
+    warn "Reusing STATUS_ADMIN_PASS_HASH from $ROOT_DIR/.env.local —"
+    echo "    the supplied password is NOT used. The new secret key is applied."
+    { grep -v '^STATUS_SECRET_KEY=' "$ROOT_DIR/.env.local" || true; } > "$ENV_FILE.tmp"
+    printf "%s='%s'\n" "STATUS_SECRET_KEY" "$SECRET_KEY" >> "$ENV_FILE.tmp"
+    if ! grep -q '^PYTHONUNBUFFERED=' "$ENV_FILE.tmp"; then
+        printf 'PYTHONUNBUFFERED=1\n' >> "$ENV_FILE.tmp"
     fi
+    mv "$ENV_FILE.tmp" "$ENV_FILE"
+    sync_admin_user_to_config
+    echo "Credentials set: user=$ADMIN_USER (password from $ROOT_DIR/.env.local)"
 else
-    # Fresh install: write prompted credentials
     sync_admin_user_to_config
     write_env_file
     echo "Credentials set: user=$ADMIN_USER (new password)"
 fi
 chmod 0600 "$ENV_FILE"
-ok "Env file created at $ENV_FILE"
+ok "Env file ready at $ENV_FILE"
 
-# Sanity check: source the file and confirm the vars resolve to real values.
-if ! bash -c "set -a; source '$ENV_FILE'; set +a; [[ -n \${STATUS_ADMIN_PASS_HASH:-} && \$STATUS_ADMIN_PASS_HASH == *'*'* ]] && false" 2>/dev/null; then
-    : # quoting style differs; do a functional check instead:
-    if ! bash -c "set -a; source '$ENV_FILE'; set +a; \"\$INSTALL_VENV_PY\" -c pass" 2>/dev/null; then :; fi
-fi
-bash -c "
-set -a
-source '$ENV_FILE'
-set +a
-[ -n \"\${STATUS_ADMIN_PASS_HASH:-}\" ] || { echo 'STATUS_ADMIN_PASS_HASH empty after source' >&2; exit 1; }
-case \"\$STATUS_ADMIN_PASS_HASH\" in
-    *'$'*) ;;   # contains at least one dollar → full scrypt hash survived
-    *) echo 'WARNING: hash appears truncated (no \$ separators) after sourcing.' >&2; exit 1 ;;
-esac
-" || die ".env file failed the post-write sanity check." \
-         "This means the hash would be truncated at runtime. Report this bug."
+# Post-write sanity check (authoritative): parse the file via dotenv exactly
+# like app.py does, and confirm the scrypt hash survived intact ($ separators
+# present). Catches any quoting corruption before it breaks logins.
+export INSTALL_DIR
+"$PY" - << 'PYEOF' || die ".env file failed the post-write sanity check." \
+    "This means the hash would be truncated at runtime. Report this bug."
+import os
+from dotenv import dotenv_values
+vals = dotenv_values(os.environ["INSTALL_DIR"] + "/.env.local")
+h = vals.get("STATUS_ADMIN_PASS_HASH", "")
+assert h, "STATUS_ADMIN_PASS_HASH missing/empty after dotenv parse"
+assert "$" in h, "hash appears truncated (no $ separators)"
+PYEOF
 
 step "Initialize database"
 cd "$INSTALL_DIR"
-run_step "seed database (init_db)" "$PY" -c "import sys; sys.path.insert(0, '$INSTALL_DIR'); from app import init_db; init_db()"
+if ! run_step "seed database (init_db)" \
+    env STATUS_ADMIN_PASS_HASH="$PASS_HASH" STATUS_NO_ARCHIVE="${UPGRADE:+1}" \
+    "$PY" -c "import sys; sys.path.insert(0, '$INSTALL_DIR'); from app import init_db; init_db()"; then
+    : # unreachable under set -e; kept for clarity
+fi
 
-if [ "$ROOT" -eq 1 ]; then
+if [ "$ROOTMODE" -eq 1 ]; then
     step "Installing systemd service"
     cat > "/etc/systemd/system/$SYSTEMD_NAME" << SVCEOF
 [Unit]
@@ -228,9 +315,16 @@ Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$ENV_FILE
 Environment="PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin"
-ExecStart=$VENV_DIR/bin/gunicorn --bind 0.0.0.0:8920 --workers 2 --timeout 30 app:app
+ExecStart=$VENV_DIR/bin/gunicorn --bind $BIND_HOST:$STATUS_PORT --workers $GUNICORN_WORKERS --timeout 30 app:app
 Restart=on-failure
 RestartSec=5
+
+# Hardening: the app only needs its own directories.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=$INSTALL_DIR/instance $INSTALL_DIR/logs $INSTALL_DIR/archives $INSTALL_DIR/static
 
 [Install]
 WantedBy=multi-user.target
@@ -238,25 +332,32 @@ SVCEOF
     run_step "systemd daemon-reload" systemctl daemon-reload
     run_step "enable service" systemctl enable "$SYSTEMD_NAME"
     if run_step "start service" systemctl start "$SYSTEMD_NAME"; then
-        # Give it a moment, then verify it actually serves.
+        # Give it a moment, then verify it actually serves on the configured port.
         sleep 2
-        if ! curl -fsS -o /dev/null "http://127.0.0.1:${STATUS_PORT:-8920}/" 2>/dev/null; then
-            warn "Service started but http://127.0.0.1:8920/ did not respond within 2s."
-            echo "    Check: journalctl -u $SYSTEMD_NAME -n 50"
+        if curl -fsS -o /dev/null "http://127.0.0.1:${STATUS_PORT}/" 2>/dev/null; then
+            ok "Service is up and serving on port $STATUS_PORT."
         else
-            ok "Service is up and serving on port ${STATUS_PORT:-8920}."
+            warn "Service started but http://127.0.0.1:$STATUS_PORT/ did not respond within 2s."
+            echo "    Check: journalctl -u $SYSTEMD_NAME -n 50"
         fi
     fi
 else
+    # Keep start.sh's bind target in sync so manual starts match this install.
+    if ! grep -q -- "--bind $BIND_HOST:$STATUS_PORT" "$INSTALL_DIR/start.sh" 2>/dev/null; then
+        sed -i "s|gunicorn --bind [^ ]*|gunicorn --bind $BIND_HOST:$STATUS_PORT|" \
+            "$INSTALL_DIR/start.sh" 2>/dev/null || true
+    fi
     echo ""
     echo "Non-root install complete. Start manually:"
     echo "  cd $INSTALL_DIR && ./start.sh"
+    echo "Serving on http://$BIND_HOST:$STATUS_PORT"
 fi
 echo ""
 
 echo "========================================"
 echo "  Deployment complete!"
 echo "  Install dir: $INSTALL_DIR"
-echo "  Admin user: $ADMIN_USER"
+echo "  Admin user:  $ADMIN_USER"
+echo "  Address:     http://$BIND_HOST:$STATUS_PORT"
 echo "  Logo (optional): ./scripts/install_logo.sh /path/to/logo.png $INSTALL_DIR"
 echo "========================================"

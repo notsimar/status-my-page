@@ -57,3 +57,24 @@ run_step() {
 
 # Global trap: on any unhandled error, show where it happened.
 trap 'rc=$?; [ $rc -ne 0 ] && printf "\n✖ Install aborted at %s line %d (exit %d)\n" "${BASH_SOURCE[1]:-unknown}" ${BASH_LINENO[0]:-0} $rc >&2' ERR
+
+# dotenv_key <file> <name> — print a value from a .env-style file WITHOUT
+# sourcing it (safe: no code execution, handles single-quoted values).
+dotenv_key() {
+    local file="$1" name="$2" line val
+    [ -f "$file" ] || return 1
+    line=$(grep -m1 "^${name}=" "$file") || return 1
+    val="${line#${name}=}"
+    # Strip one layer of matching single or double quotes if present.
+    case "$val" in
+        \'*\') val="${val#\'}"; val="${val%\'}" ;;
+        \"*\") val="${val#\"}"; val="${val%\"}" ;;
+    esac
+    printf '%s' "$val"
+}
+
+# creds_in_env — true when $ENV_FILE holds a real STATUS_ADMIN_PASS_HASH.
+# Callers must set ENV_FILE before sourcing lib.sh usage of this helper.
+creds_in_env() {
+    [ -f "${ENV_FILE:-}" ] && grep -q '^STATUS_ADMIN_PASS_HASH=..*' "$ENV_FILE"
+}
