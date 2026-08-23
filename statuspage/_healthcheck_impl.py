@@ -8,6 +8,7 @@ Supports automated background and on-demand health checking via:
     drives the item state (e.g. a vendor status page's "outage"/"degraded"
     keywords flip the item red/degraded; clean feed flips it green)
 """
+from __future__ import annotations
 
 import datetime as dt
 import ipaddress

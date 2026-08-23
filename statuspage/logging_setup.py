@@ -12,6 +12,7 @@ gunicorn's stderr.
 Log files live in the instance/logs directory and rotate at 5 MB
 (3 backups) so a busy page can't fill the disk.
 """
+from __future__ import annotations
 
 import logging
 import logging.handlers

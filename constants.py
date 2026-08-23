@@ -2,6 +2,7 @@
 
 All magic numbers, limits, and configuration defaults live here.
 """
+from __future__ import annotations
 
 # ── Config backup rotation ──────────────────────────────────────────
 NUM_CONFIG_BACKUPS = 5  # How many old versions of config.yaml to keep

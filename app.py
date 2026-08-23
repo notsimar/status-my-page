@@ -3,6 +3,7 @@
 
 Modular entry point that wires together all components.
 """
+from __future__ import annotations
 
 import os
 import sys

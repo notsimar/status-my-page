@@ -2,6 +2,7 @@
 
 Handles schema creation, migrations, seeding, queries, and archival.
 """
+from __future__ import annotations
 
 import datetime as dt
 import json

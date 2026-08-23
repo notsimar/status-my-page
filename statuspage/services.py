@@ -2,6 +2,7 @@
 
 Contains the core service layer operations that are independent of HTTP.
 """
+from __future__ import annotations
 
 from statuspage.db import (
     get_connection,

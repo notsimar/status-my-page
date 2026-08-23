@@ -5,6 +5,7 @@ Also re-exports the full implementation surface from the root-level
 ``healthcheck`` alias module so ``statuspage.healthcheck.X`` and
 ``healthcheck.X`` resolve to the same objects.
 """
+from __future__ import annotations
 
 import threading
 

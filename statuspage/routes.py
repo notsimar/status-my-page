@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """HTTP routes for status-my-page."""
+from __future__ import annotations
 import sqlite3
 from flask import jsonify, render_template, session, request, abort
 

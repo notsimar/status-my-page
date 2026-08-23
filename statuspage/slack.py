@@ -17,6 +17,7 @@ Config lives in config.yaml under ``slack:``::
 (config.yaml wins if both are set). Delivery is strictly best-effort: a Slack
 outage must never take down the status page or the logout route.
 """
+from __future__ import annotations
 
 import datetime as dt
 import json

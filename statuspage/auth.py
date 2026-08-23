@@ -2,6 +2,7 @@
 
 Handles login, session management, CSRF protection, and rate limiting.
 """
+from __future__ import annotations
 
 import hashlib
 import hmac

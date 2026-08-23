@@ -8,6 +8,7 @@ monkeypatch ``healthcheck._BASE_DIR`` (and friends) therefore patch the very
 globals the implementation reads, and ``import healthcheck`` keeps working
 everywhere. New code may equally use ``statuspage.healthcheck``.
 """
+from __future__ import annotations
 
 import importlib.util
 import sys

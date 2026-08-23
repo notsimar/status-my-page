@@ -10,6 +10,7 @@ the newest ``<item>`` advance the instant a status changes.
 Only status-change events are surfaced (note edits and renames are filtered
 out) so readers get a clean Operational / Degraded / Outage timeline.
 """
+from __future__ import annotations
 
 import datetime as dt
 import xml.etree.ElementTree as ET

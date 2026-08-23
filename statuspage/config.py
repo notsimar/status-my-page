@@ -2,6 +2,7 @@
 
 Handles loading, saving, and backup rotation of config.yaml.
 """
+from __future__ import annotations
 
 import os
 import shutil

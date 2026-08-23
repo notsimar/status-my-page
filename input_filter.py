@@ -14,6 +14,7 @@ Usage:
     name = validate_name(raw_data.get("name", ""))   # raises InputRejected on bad input
     notes = validate_notes(raw_data.get("notes", ""))
 """
+from __future__ import annotations
 
 import re
 from enum import Enum, auto
