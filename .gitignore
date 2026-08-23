@@ -13,6 +13,8 @@ archives/
 .server.pid
 .env
 .env.local
+wheels/
+scripts/_download_vendor.py
 
 # Test stubs (leave untracked to avoid cluttering working directory)
 test_fixes.*

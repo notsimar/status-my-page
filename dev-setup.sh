@@ -101,8 +101,15 @@ if [ ! -x "$VENV_DIR/bin/pip" ]; then
 fi
 
 run_step "upgrade pip" "$PY" -m pip install --upgrade pip --quiet
-run_step "install requirements" "$PY" -m pip \
-    install -r "$ROOT_DIR/requirements.txt" --quiet
+
+# Install dependencies (first try local vendor/ wheels if present, then fall back to PyPI)
+if [ -d "$ROOT_DIR/vendor" ] && [ -n "$(ls -A "$ROOT_DIR/vendor"/*.whl 2>/dev/null)" ]; then
+    run_step "install requirements (vendor wheels + PyPI fallback)" \
+        "$PY" -m pip install --find-links "$ROOT_DIR/vendor" -r "$ROOT_DIR/requirements.txt" --quiet
+else
+    run_step "install requirements" "$PY" -m pip \
+        install -r "$ROOT_DIR/requirements.txt" --quiet
+fi
 ok "Dependencies installed"
 
 # ── 2. Configuration ────────────────────────────────────────────────

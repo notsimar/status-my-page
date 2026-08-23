@@ -116,6 +116,9 @@ run_step "copy application files" cp -r \
       app.py healthcheck.py input_filter.py constants.py config.yaml requirements.txt \
       statuspage/ templates/ static/ tests/ docs/ start.sh stop.sh restart.sh rebuild.sh cleanup.sh install.sh README.md scripts/ lib.sh \
       "$INSTALL_DIR/"
+if [ -d "$ROOT_DIR/vendor" ]; then
+    cp -r "$ROOT_DIR/vendor" "$INSTALL_DIR/" 2>/dev/null || true
+fi
 chmod +x "$INSTALL_DIR"/*.sh "$INSTALL_DIR"/scripts/*.sh 2>/dev/null || true
 
 # ── Customer logos (optional) ────────────────────────────────────
@@ -155,7 +158,13 @@ if [ ! -x "$PIP" ]; then
 fi
 
 run_step "upgrade pip" "$PY" -m pip install --upgrade pip --quiet
-run_step "install requirements.txt" "$PY" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet
+
+if [ -d "$INSTALL_DIR/vendor" ] && [ -n "$(ls -A "$INSTALL_DIR/vendor"/*.whl 2>/dev/null)" ]; then
+    run_step "install requirements.txt (vendor wheels + PyPI fallback)" \
+        "$PY" -m pip install --find-links "$INSTALL_DIR/vendor" -r "$INSTALL_DIR/requirements.txt" --quiet
+else
+    run_step "install requirements.txt" "$PY" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet
+fi
 "$PY" -c "import flask, gunicorn, werkzeug, yaml" 2>/dev/null \
     || die "Dependency verification failed." \
            "The venv exists but key packages are missing. Delete '$VENV_DIR' and re-run."
