@@ -92,8 +92,16 @@ if [ ! -x "$PY" ]; then
     fi
     run_step "create virtualenv" python3 -m venv "$VENV_DIR"
 fi
-run_step "upgrade pip" "$VENV_DIR/bin/pip" install --upgrade pip --quiet
-run_step "install requirements" "$VENV_DIR/bin/pip" \
+
+# Ensure pip is available inside the venv (handles macOS/Linux distros where venv lacks pip)
+if [ ! -x "$VENV_DIR/bin/pip" ]; then
+    if "$PY" -m ensurepip --upgrade >/dev/null 2>&1; then
+        ok "pip installed via ensurepip"
+    fi
+fi
+
+run_step "upgrade pip" "$PY" -m pip install --upgrade pip --quiet
+run_step "install requirements" "$PY" -m pip \
     install -r "$ROOT_DIR/requirements.txt" --quiet
 ok "Dependencies installed"
 
@@ -188,8 +196,8 @@ step "Environment file"
 if [ "$NEED_ENV" -eq 1 ]; then
     if ! "$PY" -c "import werkzeug.security" 2>/dev/null; then
         warn "werkzeug not found in $VENV_DIR — installing requirements..."
-        "$VENV_DIR/bin/pip" install -r "$ROOT_DIR/requirements.txt" --quiet 2>/dev/null || \
-        "$VENV_DIR/bin/pip" install werkzeug --quiet 2>/dev/null || true
+        "$PY" -m pip install -r "$ROOT_DIR/requirements.txt" --quiet 2>/dev/null || \
+        "$PY" -m pip install werkzeug --quiet 2>/dev/null || true
     fi
 
     export _SP_PASS="$ADMIN_PASS"
