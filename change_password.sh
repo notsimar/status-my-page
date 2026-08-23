@@ -56,16 +56,22 @@ done
 # Generate werkzeug hash
 export _SP_PASS="$PASS1"
 NEW_HASH="$("$PYTHON_BIN" - << 'PYEOF'
-import os, sys
+import os, sys, hashlib, secrets
 pwd = os.environ.get('_SP_PASS', '')
 try:
     from werkzeug.security import generate_password_hash
     print(generate_password_hash(pwd))
 except Exception:
-    import hashlib, secrets
     salt = secrets.token_hex(16)
-    h = hashlib.scrypt(pwd.encode("utf-8"), salt=salt.encode("utf-8"), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
-    print('scrypt:32768:8:1$' + salt + '$' + h)
+    if hasattr(hashlib, 'scrypt'):
+        try:
+            h = hashlib.scrypt(pwd.encode('utf-8'), salt=salt.encode('utf-8'), n=32768, r=8, p=1, maxmem=64*1024*1024).hex()
+            print('scrypt:32768:8:1$' + salt + '$' + h)
+            sys.exit(0)
+        except Exception:
+            pass
+    h = hashlib.pbkdf2_hmac('sha256', pwd.encode('utf-8'), salt.encode('utf-8'), 1000000).hex()
+    print('pbkdf2:sha256:1000000$' + salt + '$' + h)
 PYEOF
 )"
 unset _SP_PASS
