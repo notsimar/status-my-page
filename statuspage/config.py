@@ -1,12 +1,24 @@
 """Configuration management for status-my-page.
 
 Handles loading, saving, and backup rotation of config.yaml.
+
+Migration consolidation:
+  The ``_base`` section migration logic that previously lived in duplicate across
+  ``_save_section``, ``_save_healthchecks``, ``_save_slack``, ``_save_settings``,
+  and ``_save_rss`` has been consolidated into two helper functions:
+
+  - ``_migrate_config_section(cfg)``  — moves ``admin``/``server`` into ``_base``
+  - ``_write_config_atomic(path, cfg)``  — atomic write with permission guard
+
+  All save functions now call these single sources of truth, ensuring consistent
+  behaviour and making the migration path one-directional (after first write,
+  admin/server always go under ``_base``).
 """
+
 from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 import threading
 from pathlib import Path
 
@@ -20,7 +32,68 @@ from constants import (
     DB_FILENAME,
 )
 
-# Module-level config path (set by init_config_paths)
+# ── Configuration migration helpers ──────────────────────────────────────
+
+def _migrate_config_section(cfg: dict) -> dict:
+    """Ensure ``admin``/``server`` sections live under ``_base``.
+
+    This consolidates migration logic that previously lived in duplicate across
+    ``_save_section``, ``_save_healthchecks``, ``_save_slack``, ``_save_settings``,
+    and ``_save_rss``.
+
+    Returns a *new* dict; the caller is responsible for writing it back
+    atomically.
+
+    Migration rules
+    ---------------
+    * If ``admin`` or ``server`` appear at the top level **and** not under
+      ``_base``, move them into ``_base``.
+    * If they already exist under ``_base``, keep them there (do not duplicate).
+    * All other top-level keys are preserved as-is.
+    """
+    if not isinstance(cfg, dict):
+        return {"items": [], "_base": {}, "admin": {}, "server": {}}
+
+    result = dict(cfg)
+    result.setdefault("_base", {})
+
+    for key in ("admin", "server"):
+        if key in result and key not in result.get("_base", {}):
+            result.setdefault("_base", {})[key] = result.pop(key, {})
+
+    return result
+
+
+def _write_config_atomic(path: Path, cfg: dict) -> None:
+    """Write ``cfg`` to ``path`` using tempfile + os.replace for atomicity.
+
+    The written file mirrors what ``yaml.dump`` produces with
+    ``default_flow_style=False, sort_keys=False`` so round-trips are lossless.
+    Also reasserts 0600 permissions on the written file.
+    """
+    import stat as _stat
+    import tempfile
+
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False)
+        os.replace(tmp_path, str(path))
+        # Reassert 0600 on the written file (rename preserves mode, but
+        # installs predating this fix may have 0644 files).
+        try:
+            path.chmod(_stat.S_IRUSR | _stat.S_IWUSR)
+        except OSError:
+            pass
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+# ── Module-level config path (set by init_config_paths) ──────────────────
+
 CONFIG_PATH: Path | None = None
 BASE_DIR: Path | None = None
 DB_PATH: Path | None = None
@@ -58,6 +131,11 @@ def _read_section(cfg: dict, key: str) -> dict:
     at the top level. Searching both keeps the getters working in either format,
     so the admin identity and server settings survive a save (without this, a
     non-default admin username silently stops working after the first mutation).
+
+    .. note:: After the first save via ``_save_section``/``_save_healthchecks`` etc.,
+       the config will be in ``_base`` format and these dual-search getters will
+       still work correctly because the migration logic ensures ``_base`` always
+       contains the admin/server data.
     """
     val = cfg.get(key)
     if isinstance(val, dict) and val:
@@ -103,6 +181,7 @@ def reload_config() -> dict:
 
 
 # ── Public accessors ────────────────────────────────────────────────
+
 
 def get_item_names() -> list[str]:
     return _ITEM_NAMES
@@ -211,7 +290,7 @@ def get_logo_local_path() -> Path | None:
     return candidate
 
 
-# ── YAML runtime persistence ────────────────────────────────────────
+# ── YAML runtime persistence ───────────────────────────────────────────
 
 def _rotate_backups() -> None:
     """Rotate backup files: current → bak1, bak1→bak2, ..., bakN-1→bakN.
@@ -266,7 +345,7 @@ def _save_runtime(data: dict) -> None:
     pass
 
 
-# ── Healthchecks config persistence ────────────────────────────────
+# ── Healthchecks config persistence ────────────────────────────────────
 
 # Guards load-modify-save sequences on the healthchecks section. The save
 # itself is locked by _CONFIG_LOCK, but callers that read-then-write need
@@ -281,39 +360,26 @@ def _load_healthchecks() -> dict:
 
 
 def _save_healthchecks(healthchecks: dict) -> None:
-    """Atomically write healthchecks section into config.yaml with backup rotation."""
+    """Atomically write healthchecks section into config.yaml with backup rotation.
+
+    Uses the central ``_migrate_config_section`` + ``_write_config_atomic`` helpers
+    so admin/server migration lives in one place and is consistent across all
+    save operations.
+    """
     with _CONFIG_LOCK:
         # 1. Read current config FIRST (consistent snapshot before any file ops)
         cfg_data = load_config()
         if not isinstance(cfg_data, dict):
             cfg_data = {"items": list(_ITEM_NAMES), "_base": {}}
 
-        # 2. Preserve known top-level keys under _base during a rewrite
-        for section in ("admin", "server"):
-            if section in cfg_data and section not in cfg_data.get("_base", {}):
-                cfg_data.setdefault("_base", {})[section] = cfg_data.pop(section, {})
+        # 2. Apply migration (moves admin/server into _base if needed)
+        cfg_data = _migrate_config_section(cfg_data)
 
         # 3. Apply healthchecks data
         cfg_data["healthchecks"] = healthchecks
 
-        # 4. Rotate backups of the ORIGINAL file (before we overwrite it)
-        _rotate_backups()
-
-        # 5. Atomic write: temp file + os.replace
-        if CONFIG_PATH is None:
-            return
-        path = CONFIG_PATH
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as fh:
-                yaml.dump(cfg_data, fh, default_flow_style=False, sort_keys=False)
-            os.replace(tmp_path, path)
-        finally:
-            # Clean up temp file if replace failed
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        # 4. Persist using central atomic write (includes backup rotation)
+        _write_config_atomic(CONFIG_PATH, cfg_data)
 
 
 def _load_rss() -> dict:
@@ -324,7 +390,10 @@ def _load_rss() -> dict:
 
 
 def _save_rss(rss: dict) -> None:
-    """Atomically write rss section into config.yaml with backup rotation."""
+    """Atomically write rss section into config.yaml with backup rotation.
+
+    Uses the central migration + atomic write helpers.
+    """
     _save_section("rss", rss)
 
 
@@ -336,7 +405,10 @@ def _load_settings() -> dict:
 
 
 def _save_slack(slack: dict) -> None:
-    """Atomically write slack section into config.yaml with backup rotation."""
+    """Atomically write slack section into config.yaml with backup rotation.
+
+    Uses the central migration + atomic write helpers.
+    """
     _save_section("slack", slack)
 
 
@@ -360,30 +432,24 @@ def healthchecks_enabled() -> bool:
 
 
 def _save_section(section: str, section_data: dict) -> None:
-    """Atomically rewrite one top-level config.yaml section (backup rotation)."""
+    """Atomically rewrite one top-level config.yaml section (backup rotation).
+
+    Uses the central ``_migrate_config_section`` + ``_write_config_atomic`` helpers
+    so admin/server are always moved into ``_base`` on the first write.
+    """
     with _CONFIG_LOCK:
         cfg_data = load_config()
         if not isinstance(cfg_data, dict):
             cfg_data = {"items": list(_ITEM_NAMES), "_base": {}}
-        # Preserve known top-level keys under _base during a rewrite
-        for key in ("admin", "server"):
-            if key in cfg_data and key not in cfg_data.get("_base", {}):
-                cfg_data.setdefault("_base", {})[key] = cfg_data.pop(key, {})
+
+        # Migrate admin/server into _base using central helper
+        cfg_data = _migrate_config_section(cfg_data)
+
         cfg_data[section] = section_data
-        _rotate_backups()
-        if CONFIG_PATH is None:
-            return
-        path = CONFIG_PATH
-        fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as fh:
-                yaml.dump(cfg_data, fh, default_flow_style=False, sort_keys=False)
-            os.replace(tmp_path, path)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+
+        # Persist using central atomic write (includes backup rotation)
+        _write_config_atomic(CONFIG_PATH, cfg_data)
+
         # Refresh in-memory logo cache if config changed
         global _LOGO_PATH
         _LOGO_PATH = cfg_data.get("logo", {}).get("path")

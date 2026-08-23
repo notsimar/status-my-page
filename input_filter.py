@@ -224,7 +224,39 @@ def validate_name(raw: str, field: str = "name",
     """Validate a service/display name.
 
     Enforces: whitelist characters, max length, no injection patterns.
+
     Does NOT HTML-escape (Jinja/Jackson handles that at render time).
+
+    Args:
+        raw: The raw name string to validate.
+        field: The field name for error messages (default "name").
+        charset: Character whitelist to enforce. Use
+            NameChars.STRICT for alphanumeric + space/hyphen/underscore only,
+            or NameChars.RELAXED (the default) for additional allowances
+            including . / @ ( ) ' — useful when service names may contain
+            dots, version segments, or email-like identifiers.
+
+    Returns:
+        The stripped, validated name string.
+
+    Raises:
+        InputRejected: If the name is empty, too long, contains invalid
+            characters, or matches SQL injection patterns.
+
+    Note on SQLi checking:
+        The SQLi check uses check_sqli_compound which only matches
+        compound attack constructs (e.g. UNION SELECT, OR 1=1,
+        DROP TABLE).  Single-token indicators like bare --,
+        ; word, or 0x hex are **intentionally excluded** because
+        they are legitimate in operational status prose and all SQL in this
+        app uses parameterized queries — the aggressive tier would reject
+        real notes for no security gain.
+
+    Character whitelist details:
+        - STRICT: ^[a-zA-Z0-9 _\-]+$ — letters, digits, space,
+          hyphen, underscore only.
+        - RELAXED: ^[a-zA-Z0-9 _\-../@()]+$ — above, plus
+          dot, slash, parentheses, at-sign.
     """
     if not isinstance(raw, str):
         raise InputRejected(f"expected string, got {type(raw).__name__}", field)
