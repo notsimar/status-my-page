@@ -283,6 +283,7 @@ if (addItemForm) {
 
 // ── Drag-and-drop reorder (admin only) ───────────────────────────
 let dragSourceRow = null;
+let didReorder = false;  // set by the drop handler; dragend persists the order
 
 list && list.addEventListener('dragstart', e => {
     if (!document.body.classList.contains('admin')) return;
@@ -290,22 +291,30 @@ list && list.addEventListener('dragstart', e => {
     const row = e.target.closest('.status-row');
     if (!row || !handle) return; // only allow drag from handle
 
+    // A previous interrupted drag may have left a stale .dragging class.
+    list.querySelectorAll('.status-row.dragging').forEach(r => {
+        if (r !== row) r.classList.remove('dragging');
+    });
+
     dragSourceRow = row;
     setTimeout(() => { dragSourceRow.classList.add('dragging'); }, 0);
     e.dataTransfer.effectAllowed = 'move';
 });
 
 list && list.addEventListener('dragend', e => {
-    if (!dragSourceRow) return;
-    dragSourceRow.classList.remove('dragging');
+    const row = dragSourceRow;  // capture before clearing
+    dragSourceRow = null;
+    if (row) row.classList.remove('dragging');
     // Clear all drop indicators
     list.querySelectorAll('.status-row').forEach(r => {
         r.classList.remove('drag-over-top', 'drag-over-bottom');
     });
-    dragSourceRow = null;
 
     // Persist new order if rows moved
-    sendReorder();
+    if (didReorder) {
+        didReorder = false;
+        sendReorder();
+    }
 });
 
 list && list.addEventListener('dragover', e => {
@@ -352,7 +361,8 @@ list && list.addEventListener('drop', e => {
         list.insertBefore(dragSourceRow, targetRow.nextSibling);
     }
 
-    dragSourceRow = null;
+    didReorder = true;  // dragend persists — do NOT null dragSourceRow here,
+                        // or its `if (!dragSourceRow) return` guard would skip saving
 });
 
 // ── Helpers ───────────────────────────────────────────────

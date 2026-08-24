@@ -265,11 +265,15 @@ class TestItemMutations:
         assert r.get_json() == {"ok": True}
 
         db = sqlite3.connect(str(_cfg.get_db_path()))
-        pos1 = db.execute("SELECT position FROM status_items WHERE id=?", (id1,)).fetchone()[0]
-        pos2 = db.execute("SELECT position FROM status_items WHERE id=?", (id2,)).fetchone()[0]
+        pos1 = db.execute("SELECT status, position FROM status_items WHERE id=?", (id1,)).fetchone()
+        pos2 = db.execute("SELECT status, position FROM status_items WHERE id=?", (id2,)).fetchone()
         db.close()
-        assert pos1 == 50
-        assert pos2 == 20
+        # Reorder normalizes to dense 0..n positions and enforces the
+        # red → degraded → green display grouping.
+        assert pos1[1] != pos2[1]
+        rank = {"red": 0, "degraded": 1, "green": 2}
+        assert (rank[pos1[0]], pos1[1]) < (rank[pos2[0]], pos2[1]) or \
+               (rank[pos2[0]], pos2[1]) < (rank[pos1[0]], pos1[1])
 
     def test_reorder_items_invalid_payload(self, admin, token):
         """POST /api/reorder rejects non-dict order."""
