@@ -507,7 +507,9 @@ let historyModalItemId = null;  // service whose timeline the modal currently sh
 
 // Shared action: wipe a service's timeline, refresh the modal if it's open
 async function clearHistoryData(id, btn) {
-    const name = (btn.closest('.status-row')?.querySelector('.status-name')?.textContent) || ('#' + id);
+    const name = btn
+        ? (btn.closest('.status-row')?.querySelector('.status-name')?.textContent || ('#' + id))
+        : ((historyTitle?.textContent || '').replace(' \u2014 History', '') || ('#' + id));
     const confirmed = await uxConfirm(
         'Clear all history for \u201C' + name + '\u201D? This cannot be undone.',
         { okLabel: 'Clear history', danger: true });

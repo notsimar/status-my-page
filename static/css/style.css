@@ -417,6 +417,7 @@ body.admin .btn-delete { display: flex; }
 }
 
 .modal.hidden { display: none; }
+.hidden { display: none !important; }
 
 .modal-content {
     background: var(--card-bg);
