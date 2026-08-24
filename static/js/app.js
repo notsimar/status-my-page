@@ -397,47 +397,50 @@ list && list.addEventListener('dragover', e => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
 
-    const targetRow = e.target.closest('.status-row');
-    if (!targetRow || targetRow === dragSourceRow) return;
+    const overRow = e.target.closest('.status-row');
+    if (!overRow || overRow === dragSourceRow) return;
 
-    // Clear previous indicators
-    list.querySelectorAll('.status-row').forEach(r => {
-        r.classList.remove('drag-over-top', 'drag-over-bottom');
-    });
-
-    const rect = targetRow.getBoundingClientRect();
+    // Remember where the displaced row was before the move (for the slide animation).
+    const firstTop = overRow.getBoundingClientRect().top;
+    const rect = overRow.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
+
+    // Live displacement: as the dragged row passes another row's midpoint,
+    // that row slides into the vacated slot immediately — the user sees the
+    // displaced item move in real time rather than waiting for the drop.
+    if (e.clientY < midY && overRow.previousElementSibling === dragSourceRow) {
+        return; // already directly above the dragged row — nothing to displace
+    }
+    if (e.clientY >= midY && overRow.nextElementSibling === dragSourceRow) {
+        return; // already directly below the dragged row — nothing to displace
+    }
+
     if (e.clientY < midY) {
-        targetRow.classList.add('drag-over-top');
+        list.insertBefore(dragSourceRow, overRow);             // moved up: push target down
     } else {
-        targetRow.classList.add('drag-over-bottom');
+        list.insertBefore(dragSourceRow, overRow.nextSibling); // moved down: pull target up
+    }
+    didReorder = true;
+
+    // FLIP animation: the displaced row slides smoothly into its new slot
+    // while the dragged row follows the cursor.
+    const dy = firstTop - overRow.getBoundingClientRect().top;
+    if (dy) {
+        overRow.style.transition = 'none';
+        overRow.style.transform = 'translateY(' + dy + 'px)';
+        requestAnimationFrame(() => {
+            overRow.style.transition = 'transform 150ms ease';
+            overRow.style.transform = '';
+            setTimeout(() => { overRow.style.transition = ''; }, 200);
+        });
     }
 });
 
 list && list.addEventListener('drop', e => {
     if (!dragSourceRow || !document.body.classList.contains('admin')) return;
     e.preventDefault();
-
-    const targetRow = e.target.closest('.status-row');
-    if (!targetRow || targetRow === dragSourceRow) return;
-
-    // Clear indicators
-    list.querySelectorAll('.status-row').forEach(r => {
-        r.classList.remove('drag-over-top', 'drag-over-bottom');
-    });
-
-    const rect = targetRow.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    if (e.clientY < midY) {
-        // Insert before target
-        list.insertBefore(dragSourceRow, targetRow);
-    } else {
-        // Insert after target
-        list.insertBefore(dragSourceRow, targetRow.nextSibling);
-    }
-
-    didReorder = true;  // dragend persists — do NOT null dragSourceRow here,
-                        // or its `if (!dragSourceRow) return` guard would skip saving
+    // Rows are already in final position thanks to live dragover displacement;
+    // dragend handles indicator cleanup + persistence.
 });
 
 // ── Helpers ───────────────────────────────────────────────
