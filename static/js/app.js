@@ -331,7 +331,6 @@ if (addItemForm) {
             const row = document.createElement('div');
             row.className = 'status-row';
             row.dataset.id = item.id;
-            row.draggable = true;
 
             // Build row via DOM to avoid any double-encoding risk from escHtml
             row.innerHTML = `
