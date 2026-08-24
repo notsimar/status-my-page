@@ -57,6 +57,65 @@ function moveRow(row, dir) {
     scheduleKeyboardPersist();
 }
 
+// ── Animated re-sort after a status change (admin only) ──────────
+// Server policy: red items first, then degraded, then green; position
+// within each group otherwise. After a dot click moves an item between
+// groups, slide it to its new spot so users see it push others around.
+const STATUS_RANK = { red: 0, degraded: 1, green: 2 };
+
+function resortRowsAnimated(movedRow) {
+    if (!list || !document.body.classList.contains('admin')) return;
+    const rows = [...list.querySelectorAll('.status-row')];
+    // Renumber positions by current DOM order so ties stay stable.
+    rows.forEach((r, i) => { r.dataset.serverPos = i; });
+    // A status change moves the item to the EDGE of its new group:
+    // red/degraded -> front of that group; green -> end of the greens.
+    // This mirrors the server-side toggle repositioning.
+    const movedStatus = movedRow
+        ? (STATUS_CYCLE.find(s => movedRow.querySelector('.status-dot').classList.contains(s)) || 'green')
+        : null;
+    const key = (row) => {
+        const status = STATUS_CYCLE.find(s => row.querySelector('.status-dot').classList.contains(s)) || 'green';
+        let rank = STATUS_RANK[status];
+        let pos = parseInt(row.dataset.serverPos, 10) || 0;
+        if (movedRow && row === movedRow && movedStatus === 'green') {
+            pos = Number.MAX_SAFE_INTEGER;   // recovering: bottom of the greens
+        }
+        return [rank, pos];
+    };
+    const sorted = [...rows].sort((a, b) => {
+        const ka = key(a), kb = key(b);
+        return ka[0] - kb[0] || ka[1] - kb[1];
+    });
+    if (movedRow && movedStatus && movedStatus !== 'green') {
+        // incident: place the moved row at the FRONT of its new group
+        const group = sorted.filter(r => key(r)[0] === STATUS_RANK[movedStatus]);
+        const idx = sorted.indexOf(movedRow);
+        const firstOfGroup = sorted.indexOf(group[0]);
+        if (idx !== -1 && firstOfGroup !== -1 && idx !== firstOfGroup) {
+            sorted.splice(idx, 1);
+            sorted.splice(firstOfGroup, 0, movedRow);
+        }
+    }
+    if (sorted.every((r, i) => r === rows[i])) return;  // order unchanged
+
+    // FLIP animation: measure first positions, reorder DOM, then play transforms.
+    const first = new Map(rows.map(r => [r, r.getBoundingClientRect().top]));
+    rows.forEach(r => r.parentNode.appendChild(r));  // detach-free baseline reset
+    sorted.forEach(r => list.appendChild(r));
+    sorted.forEach(r => {
+        const dy = (first.get(r) || 0) - r.getBoundingClientRect().top;
+        if (!dy) return;
+        r.style.transition = 'none';
+        r.style.transform = 'translateY(' + dy + 'px)';
+        requestAnimationFrame(() => {
+            r.style.transition = 'transform 300ms ease';
+            r.style.transform = '';
+            setTimeout(() => { r.style.transition = ''; }, 350);
+        });
+    });
+}
+
 let kbTimer = null;
 function scheduleKeyboardPersist() {
     clearTimeout(kbTimer);
@@ -112,6 +171,11 @@ list && list.addEventListener('click', async e => {
             label.textContent = STATUS_LABELS[current];
             row.classList.remove('show-notes', next !== 'green');
             showToggleNotice(row, 'Too many changes too fast — wait a moment and retry.');
+        } else {
+            // Status group changed: slide the row to its new position so the
+            // user sees it push other rows up/down (server policy: red →
+            // degraded → green, then drag order within each group).
+            resortRowsAnimated(row);
         }
     } catch (err) {
         location.reload();
