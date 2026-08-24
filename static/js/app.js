@@ -171,6 +171,17 @@ list && list.addEventListener('click', async e => {
             label.textContent = STATUS_LABELS[current];
             row.classList.remove('show-notes', next !== 'green');
             showToggleNotice(row, 'Too many changes too fast — wait a moment and retry.');
+        } else if (next === 'green') {
+            // Recovered: drop any stale incident note so it never resurfaces
+            // when the item degrades again. The notes field is hidden for
+            // green rows, so the admin would have no way to clear it.
+            const notesTa = row.querySelector('.notes-input');
+            if (notesTa) notesTa.value = '';
+            csrfFetch('/api/notes/' + id, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes: '' })
+            }).catch(() => {});
         } else {
             // Status group changed: slide the row to its new position so the
             // user sees it push other rows up/down (server policy: red →
