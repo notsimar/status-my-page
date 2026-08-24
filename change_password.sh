@@ -2,6 +2,16 @@
 # change_password.sh — Change admin password for status-my-page
 # Generates werkzeug password hash and updates .env.local / .env file
 
+# ── Help ───────────────────────────────────────
+usage() {
+    sed -n '2,5p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+}
+
+case "${1:-}" in
+    -h|--help) usage ;;
+esac
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

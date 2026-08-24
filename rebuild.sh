@@ -3,6 +3,16 @@
 set -e
 cd "$(dirname "$0")"
 
+# ── Help ───────────────────────────────────────
+usage() {
+    sed -n '2,5p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+}
+
+case "${1:-}" in
+    -h|--help) usage ;;
+esac
+
 echo "=== Installing Python dependencies ==="
 .venv/bin/pip install -r requirements.txt --quiet 2>&1 | grep -v "notice\|WARN" || true
 

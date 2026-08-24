@@ -3,6 +3,16 @@
 set -e
 cd "$(dirname "$0")"
 
+# ── Help ───────────────────────────────────────
+usage() {
+    sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+}
+
+case "${1:-}" in
+    -h|--help) usage ;;
+esac
+
 PID_FILE=".server.pid"
 
 if [ ! -f "$PID_FILE" ]; then

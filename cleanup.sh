@@ -79,7 +79,7 @@ for i in d['items']:
 
 # ── prune ───────────────────────────────────────
 do_prune() {
-    local keep="$KEEP_DEFAULT"
+    local keep="${KEEP_DEFAULT:-2}"
     while [ $# -gt 0 ]; do
         case "$1" in
             --keep) keep="${2:-$KEEP_DEFAULT}"; shift 2 ;;
@@ -96,7 +96,9 @@ do_prune() {
     fi
 
     echo "Pruning: $total total, keeping newest $keep, deleting $to_delete…"
-    ls -1t "$ARCHIVES_DIR"/*.json | tail -n +"$((keep + 1))" | while read -r f; do
+    # Sort by filename (which contains timestamps like YYYYMMDD_HHMMSS),
+    # not by mtime, so we keep the chronologically newest archives.
+    ls -1 "$ARCHIVES_DIR"/*.json | sort | tail -n +"$((keep + 1))" | while read -r f; do
         rm -f "$f"
         echo "  Removed: $(basename "$f")"
     done

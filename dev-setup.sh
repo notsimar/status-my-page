@@ -122,13 +122,12 @@ DEFAULT_USER="admin"
 DEFAULT_PORT="8920"
 LOGO_PREV=""
 if [ -f "$ENV_FILE" ] && [ "$NONINTERACTIVE" -eq 0 ]; then
-    # Values are single-quoted where they may contain specials; source only
-    # the known-good DEV_* keys we wrote ourselves.
-    # shellcheck disable=SC1090
-    source <(grep -E '^(DEV_ADMIN_USER|DEV_PORT|DEV_DISABLE_HC|DEV_LOGO_PATH)=' "$ENV_FILE" 2>/dev/null || true) || true
-    [ -n "${DEV_ADMIN_USER:-}" ] && DEFAULT_USER="$DEV_ADMIN_USER"
-    [ -n "${DEV_PORT:-}" ] && DEFAULT_PORT="$DEV_PORT"
-    LOGO_PREV="${DEV_LOGO_PATH:-}"
+    # Values are single-quoted where they may contain specials; use dotenv_key
+    # (which strips quotes safely without code execution via source) instead of
+    # sourcing raw grep output, which can truncate values at $ or other chars.
+    DEFAULT_USER="$(dotenv_key "$ENV_FILE" DEV_ADMIN_USER)"
+    DEFAULT_PORT="$(dotenv_key "$ENV_FILE" DEV_PORT)"
+    LOGO_PREV="$(dotenv_key "$ENV_FILE" DEV_LOGO_PATH)"
 fi
 
 if [ "$NONINTERACTIVE" -eq 1 ]; then
