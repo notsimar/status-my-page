@@ -356,92 +356,85 @@ if (addItemForm) {
     });
 }
 
-// ── Drag-and-drop reorder (admin only) ───────────────────────────
-let dragSourceRow = null;
-let didReorder = false;  // set by the drop handler; dragend persists the order
+// ── Drag-to-reorder (admin only, pointer events) ─────────────────
+// Uses pointer events instead of HTML5 drag-and-drop: HTML5 DnD is
+// unreliable (doesn't initiate on some touchpads/browsers/touchscreens
+// and can't be driven reliably). Pointer-based dragging behaves the same
+// everywhere and lets us displace rows live while dragging.
+let dragRow = null;        // row being dragged
+let dragStartY = 0;        // pointer Y at grab
+let didReorder = false;
 
-list && list.addEventListener('dragstart', e => {
+function pointerReorderAt(clientY) {
+    // Find the row under the pointer and swap positions when its midpoint
+    // is crossed. The displaced row slides via CSS transition.
+    const rows = [...list.querySelectorAll('.status-row')];
+    for (const other of rows) {
+        if (other === dragRow) continue;
+        const rect = other.getBoundingClientRect();
+        if (clientY >= rect.top && clientY <= rect.bottom) {
+            const before = other.getBoundingClientRect().top;
+            if (clientY < rect.top + rect.height / 2) {
+                list.insertBefore(dragRow, other);             // push target down
+            } else {
+                list.insertBefore(dragRow, other.nextSibling); // pull target up
+            }
+            if (other.previousElementSibling === dragRow || other.nextElementSibling === dragRow) {
+                didReorder = true;
+            }
+            const dy = before - other.getBoundingClientRect().top;
+            if (dy) {
+                other.style.transition = 'none';
+                other.style.transform = 'translateY(' + dy + 'px)';
+                requestAnimationFrame(() => {
+                    other.style.transition = 'transform 150ms ease';
+                    other.style.transform = '';
+                    setTimeout(() => { other.style.transition = ''; }, 200);
+                });
+            }
+            break;
+        }
+    }
+}
+
+list && list.addEventListener('pointerdown', e => {
     if (!document.body.classList.contains('admin')) return;
+    if (!e.isPrimary) return;
     const handle = e.target.closest('.drag-handle');
     const row = e.target.closest('.status-row');
-    if (!row || !handle) return; // only allow drag from handle
+    if (!row || !handle) return;
 
     // A previous interrupted drag may have left a stale .dragging class.
     list.querySelectorAll('.status-row.dragging').forEach(r => {
         if (r !== row) r.classList.remove('dragging');
     });
 
-    dragSourceRow = row;
-    setTimeout(() => { dragSourceRow.classList.add('dragging'); }, 0);
-    e.dataTransfer.effectAllowed = 'move';
+    dragRow = row;
+    dragStartY = e.clientY;
+    didReorder = false;
+    handle.setPointerCapture(e.pointerId);
 });
 
-list && list.addEventListener('dragend', e => {
-    const row = dragSourceRow;  // capture before clearing
-    dragSourceRow = null;
-    if (row) row.classList.remove('dragging');
-    // Clear all drop indicators
-    list.querySelectorAll('.status-row').forEach(r => {
-        r.classList.remove('drag-over-top', 'drag-over-bottom');
-    });
-
-    // Persist new order if rows moved
-    if (didReorder) {
-        didReorder = false;
-        sendReorder();
+list && list.addEventListener('pointermove', e => {
+    if (!dragRow) return;
+    // Small threshold so a plain click doesn't count as a drag.
+    if (!dragRow.classList.contains('dragging')) {
+        if (Math.abs(e.clientY - dragStartY) < 4) return;
+        dragRow.classList.add('dragging');
     }
+    pointerReorderAt(e.clientY);
 });
 
-list && list.addEventListener('dragover', e => {
-    if (!dragSourceRow || !document.body.classList.contains('admin')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-
-    const overRow = e.target.closest('.status-row');
-    if (!overRow || overRow === dragSourceRow) return;
-
-    // Remember where the displaced row was before the move (for the slide animation).
-    const firstTop = overRow.getBoundingClientRect().top;
-    const rect = overRow.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-
-    // Live displacement: as the dragged row passes another row's midpoint,
-    // that row slides into the vacated slot immediately — the user sees the
-    // displaced item move in real time rather than waiting for the drop.
-    if (e.clientY < midY && overRow.previousElementSibling === dragSourceRow) {
-        return; // already directly above the dragged row — nothing to displace
-    }
-    if (e.clientY >= midY && overRow.nextElementSibling === dragSourceRow) {
-        return; // already directly below the dragged row — nothing to displace
-    }
-
-    if (e.clientY < midY) {
-        list.insertBefore(dragSourceRow, overRow);             // moved up: push target down
-    } else {
-        list.insertBefore(dragSourceRow, overRow.nextSibling); // moved down: pull target up
-    }
-    didReorder = true;
-
-    // FLIP animation: the displaced row slides smoothly into its new slot
-    // while the dragged row follows the cursor.
-    const dy = firstTop - overRow.getBoundingClientRect().top;
-    if (dy) {
-        overRow.style.transition = 'none';
-        overRow.style.transform = 'translateY(' + dy + 'px)';
-        requestAnimationFrame(() => {
-            overRow.style.transition = 'transform 150ms ease';
-            overRow.style.transform = '';
-            setTimeout(() => { overRow.style.transition = ''; }, 200);
-        });
-    }
-});
-
-list && list.addEventListener('drop', e => {
-    if (!dragSourceRow || !document.body.classList.contains('admin')) return;
-    e.preventDefault();
-    // Rows are already in final position thanks to live dragover displacement;
-    // dragend handles indicator cleanup + persistence.
-});
+function endPointerDrag(e) {
+    if (!dragRow) return;
+    dragRow.classList.remove('dragging');
+    list.querySelectorAll('.status-row').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+    if (didReorder) sendReorder();
+    dragRow = null;
+    didReorder = false;
+}
+list && list.addEventListener('pointerup', endPointerDrag);
+list && list.addEventListener('pointercancel', endPointerDrag);
 
 // ── Helpers ───────────────────────────────────────────────
 // CSRF token + csrfFetch live in static/js/csrf.js (shared + disambiguated)

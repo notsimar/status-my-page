@@ -263,6 +263,7 @@ body.admin .status-main:hover { background: rgba(251, 191, 36, 0.05); }
     font-size: 1.2rem;
     cursor: grab;
     user-select: none;
+    touch-action: none;   /* pointer-based drag: don't let touch scroll steal the gesture */
     opacity: 0.4;
     transition: opacity 0.2s;
 }
