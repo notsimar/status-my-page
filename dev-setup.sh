@@ -254,6 +254,28 @@ if [ -z "$SECRET_KEY" ]; then
     SECRET_KEY="$("$PY" -c 'import secrets; print(secrets.token_hex(32))')"
 fi
 
+# Sync the admin username into config.yaml (same behavior as install.sh:
+# `STATUS_ADMIN_USER`/prompt value must win over the file at login time).
+# Blank keeps whatever config.yaml already has.
+"$PY" - "$ROOT_DIR/config.yaml" "$ADMIN_USER" << 'PYEOF' || :
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+user = (sys.argv[2] or "").strip()
+if not user or not p.exists():
+    sys.exit(0)
+import yaml
+cfg = yaml.safe_load(p.read_text()) or {}
+base = cfg.setdefault("_base", {})
+sec = base.setdefault("admin", {})
+# Legacy top-level form (pre-migration): update it instead of duplicating.
+if "admin" in cfg and "user" in cfg["admin"] and "user" not in sec:
+    sec = cfg["admin"]
+if sec.get("user") != user:
+    sec["user"] = user
+    p.write_text(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+PYEOF
+ok "Admin username synced to config.yaml: $ADMIN_USER"
+
 {
     printf 'STATUS_DISABLE_HEALTHCHECKS=%s\n' "$DEV_DISABLE_HC"
     printf "STATUS_ADMIN_PASS_HASH='%s'\n" "$PASS_HASH"

@@ -162,7 +162,11 @@ def _load_config_uncached() -> dict:
     _ITEM_NAMES = _cfg_cache.get("items", [])
     admin_sec = _read_section(_cfg_cache, "admin")
     server_sec = _read_section(_cfg_cache, "server")
-    _CFG_ADMIN_USER = admin_sec.get("user", "admin")
+    # STATUS_ADMIN_USER env var overrides the config value (documented
+    # deployment hook; a non-default username would have no runtime
+    # override otherwise). Blank/unset falls back to config.
+    env_admin_user = os.environ.get("STATUS_ADMIN_USER", "").strip()
+    _CFG_ADMIN_USER = env_admin_user or str(admin_sec.get("user", "admin")).strip() or "admin"
     _SERVER_HOST = server_sec.get("host", "0.0.0.0")
     _SERVER_PORT = server_sec.get("port", 8920)
     _SECRET_KEY_ENV = server_sec.get("secret_key_env", "STATUS_SECRET_KEY")
