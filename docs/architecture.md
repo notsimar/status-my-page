@@ -40,10 +40,10 @@
 │  ┌────────────────────────▼────────────────────────┐    │
 │  │      Request Validation Layer (statuspage/auth) │    │
 │  │  • CSRF token verification (timing-safe)        │    │
-│  │  • Authentication check (_not_admin)            │    │
-│  │  • Rate-limiting (_check_mutation_rate)         │    │
+│  │  • Authentication check (session admin flag)    │    │
+│  │  • Rate-limiting (check_mutation_rate)          │    │
 │  │  • Login lockout (failed-attempt window)        │    │
-│  └────────────────────────┬────────────────────────┘    │
+│  └────────────────────┬────────────────────────────┘    │
 │                           │                             │
 │  ┌────────────────────────▼────────────────────────┐    │
 │  │     Business Logic Layer (statuspage/services)  │    │
@@ -79,9 +79,9 @@
 |------------------------|---------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
 | **Presentation**       | `templates/index.html` + `static/css/style.css` + `static/js/app.js`, `healthchecks.js`, `rss.js` | Client-side rendering, DOM manipulation, event binding, drag-drop reorder, healthcheck admin UI |
 | **Web Server**         | Flask app with gunicorn or werkzeug dev server                                                    | HTTP routing, session management, response generation                                           |
-| **Validation Gate**    | `_not_admin()`, `_check_csrf()`, `_check_mutation_rate()` (in `statuspage/auth.py`)               | Security guards applied before any mutation                                                     |
-| **Domain Logic**       | `toggle_item()`, `set_notes()`, `reorder_items()` etc. (in `statuspage/services.py`)              | Core business operations, state transitions                                                     |
-| **Background Workers** | `healthcheck.py` worker thread                                                                    | Polling of healthcheck endpoints (curl/ping/tcp/soap/rss) and automatic status transitions      |
+| **Validation Gate**    | `require_admin()` guard chain (in `statuspage/auth.py`: session check, `check_csrf`, `check_mutation_rate`) | Security guards applied before any mutation; uniform 403 + `X-Auth-Error` header |
+| **Domain Logic**       | `toggle_item()`, `set_notes()`, `reorder_items()` etc. (in `statuspage/services.py`)              | Core business operations, state transitions             |
+| **Background Workers** | healthcheck worker thread (`statuspage/_healthcheck_impl.py`, facade in `statuspage/healthcheck.py`) | Polling of healthcheck endpoints (curl/ping/tcp/soap/rss) and automatic status transitions      |
 | **Public Feed**        | `statuspage/rss.py` (`build_feed_xml`)                                                            | RSS 2.0 feed of status-change history for external consumption                                  |
 | **Persistence**        | SQLite (WAL), YAML config, JSON archive snapshots                                                 | Data storage and backup                                                                         |
 
@@ -93,7 +93,8 @@
 4. **Config-driven seed data** — Service names in `config.yaml` act as read-only provisioning input; new items are inserted into SQLite on startup.
 5. **Database as Single Source of Truth** — Runtime mutations (status, notes, reorder, items, history) are maintained directly in SQLite.
 6. **Polling-free UI, RSS feed for consumers** — A prior SSE broadcast layer was removed; the client updates the DOM in response to each successful mutation (no long-lived connections holding gunicorn prefork slots). External consumers (uptime monitors, IFTTT, other dashboards) subscribe to the public `/feed.xml` RSS 2.0 status-change feed instead.
-7. **Package layout (`app.py` + `statuspage/`)** — `app.py` is a thin composition root (Flask app factory, route registration, security headers, bootstrap); each concern lives in `statuspage/`: `config.py` (parsing + runtime state), `db.py` (schema + history), `services.py` (domain ops), `routes.py` (HTTP handlers), `auth.py` (session/CSRF/rate-limit/lockout), `statuspage/healthcheck.py` (integration facade; implementation in `statuspage/_healthcheck_impl.py`, exposed compatibly as top-level `healthcheck`), `rss.py` (public feed builder). `constants.py` holds shared tunables.
+7. **Package layout (`app.py` + `statuspage/`)** — `app.py` is a thin composition root (Flask app factory, route registration, security headers, bootstrap); each concern lives in `statuspage/`: `config.py` (parsing + migration + runtime state), `db.py` (schema + history), `services.py` (domain ops), `routes.py` (HTTP handlers), `auth.py` (session/CSRF/rate-limit/lockout), `healthcheck.py` (integration facade; implementation in `statuspage/_healthcheck_impl.py`), `slack.py` (notification outbox), `rss.py` (public feed builder), `logging_setup.py` (structured logs). `constants.py` holds shared tunables. The repo-root `healthcheck.py` is a compatibility alias so `import healthcheck` keeps working for tests and tooling.
+   - *WIP:* `routes_public.py` (public route handlers) and `_healthcheck_parsing/probing/worker.py` are unfinished modular splits that nothing imports yet (`ROUTES_REFACTOR_APPROACH.md` tracks this); they must be finished and re-exported — or deleted — before any doc treats them as live components.
 8. **RSS healthchecks are explicit-only** — `type: rss` must be stated; a bare `url` never auto-detects as rss (it stays `curl`). Feeds are fetched via a curl subprocess (redirect policy, max-filesize, max-redirs capped) and parsed with stdlib ElementTree — no third-party RSS library.
 
 ---
@@ -128,7 +129,7 @@ GET /
 ```
 GET /feed.xml   (alias: GET /rss)
   → rss.py build_feed_xml(db, base_url)
-  → SELECT history rows (status_toggle/note events, most recent first)
+  → SELECT history rows (event_type "status"/"notes" events, most recent first)
   → Emit RSS 2.0 <rss> document:
       <channel>  — title from config, link = host_url + "/"
       <item>     — per change: title "Name: Old → New", description
@@ -142,11 +143,11 @@ GET /feed.xml   (alias: GET /rss)
 ```
 POST /api/toggle/<id> / POST /api/rename/<id> / etc.
   │
-  ├── _not_admin() — is user authenticated? → 401 if not
-  │
-  ├── _check_csrf() — does X-CSRF-Token match session token? → 403 if mismatch (3 strikes = session wipe)
-  │
-  ├── _check_mutation_rate(ip) — has this IP exceeded 5 mutates in 60s? → 429 if rate-limited
+  ├── require_admin() guard chain (statuspage/auth.py), all failures → 403:
+  │     • not admin → 403 + X-Auth-Error: not-logged-in
+  │     • X-CSRF-Token mismatch → 403 + X-Auth-Error: csrf
+  │     •   (3 failed CSRFs = full session wipe)
+  │     • mutation rate limit (60 mutations/IP/60s) → 403 + X-Auth-Error: rate-limited
   │
   └── Domain function (toggle_item / set_notes / rename_item / delete_item / reorder_items)
        │
@@ -155,8 +156,8 @@ POST /api/toggle/<id> / POST /api/rename/<id> / etc.
        ├── Execute single SQL statement within a transaction
        │
        └── Record history entry → status_history table
-             (event_type, item_id, old_value, new_value, occurred UTC)
-           + per-item history prune (keeps last N rows, outer item_id filter)
+             (event_type "status" or "notes", old_value, new_value,
+              occurred UTC, per-item prune to last 100 rows)
 ```
 
 #### Healthcheck Admin Requests
@@ -198,17 +199,22 @@ All state transitions and service entries are committed directly to SQLite (`ins
 app.py                      # composition root: app factory, route table, headers, bootstrap
 ├── flask                    # HTTP routing, sessions, Jinja2 templates
 ├── pyyaml (PyYAML)          # YAML config parsing + runtime persistence
+├── python-dotenv            # .env.local / .env auto-loading at startup
 ├── werkzeug.security        # scrypt password hashing, secure cookie handling
 │   └── flask                # indirect, via werkzeug
-├── statuspage/              # application package
-│   ├── config.py            # config loading, healthcheck entry parsing
-│   ├── db.py                # schema, seeding, history, pruning
-│   ├── services.py          # domain operations
-│   ├── routes.py            # HTTP handlers (status CRUD, healthcheck CRUD, feed)
-│   ├── auth.py              # session, CSRF, rate limit, lockout, idle expiry
-│   ├── healthcheck.py       # integration facade + re-exports; implementation in _healthcheck_impl.py (worker, bounded probe pool, curl/ping/tcp/soap/rss dispatch)
-│   └── rss.py               # public RSS 2.0 feed builder
+└── statuspage/              # application package
+    ├── config.py            # config loading/migration, path getters, settings/slack/rss loaders
+    ├── db.py                # schema, seeding, history, archive prune
+    ├── services.py          # domain operations (toggle/notes/rename/add/delete/reorder)
+    ├── routes.py            # HTTP handlers (status CRUD, healthcheck CRUD, feed, export)
+    ├── auth.py              # session, CSRF, rate limit, login lockout, idle expiry
+    ├── healthcheck.py       # integration facade; loads implementation from _healthcheck_impl.py
+    ├── _healthcheck_impl.py # worker thread, bounded probe pool, curl/ping/tcp/soap/rss dispatch
+    ├── slack.py             # persistent Slack outbox + digest flush on logout
+    ├── rss.py               # public RSS 2.0 feed builder
+    └── logging_setup.py     # structured access.log / app.log (5 MB x 3 rotation)
 constants.py                 # shared tunables (timeouts, caps, ports)
+(healthcheck.py at repo root = top-level compatibility alias for statuspage.healthcheck)
 ```
 
 ---
@@ -222,15 +228,17 @@ Client                          Server
   │                               │
   │ POST /login {user, pass}      │
   │──────────────────────────────>│
-  │                               │ _check_mutation_rate(ip) ✓
+  │                               │ is_locked(ip)? (5 fail within 30s window)
+  │                               │   yes → 429 + retry_after
   │                               │ werkzeug.security check_password_hash()
-  │                               │ Failed? → increment _failed_logins[ip]
-  │                               │     Check: len(_failed_logins[ip]) >= 5?
-  │                               │           → _lockout_ips[ip] = now
-  │                               │     Success? → _failed_logins.pop(ip, None)
-  │                               │ Set Flask session cookie (signed, HttpOnly, SameSite)
-  │ <─────────────────────────────│ Session: {admin_user: True, last_csrf_token: ...}
-  │ Set-Cookie                    │
+  │                               │   (timed against stored scrypt hash;
+  │                               │    username compared timing-safely —
+  │                               │    no user enumeration)
+  │                               │ Failed? → record_attempt(ip) + 401
+  │                               │ Success? → regenerate session (fixation
+  │                               │   defense), start 5-min sliding idle
+  │                               │   expiry clock, clear IP's fail list
+  │ <─────────────────────────────│ {ok:true} + Set-Cookie
 ```
 
 ### 4.2 CSRF Token Lifecycle
@@ -240,41 +248,41 @@ Login Success ─────────────────► First Page 
        │                            │                                    │
        ├─ Generate new token         ├─ Inject into <meta> tag            ├─ Extract from header X-CSRF-Token
        ├─ Store in session           └─ Client reads:                     ├─ hmac.compare_digest() (timing-safe)
-    Session: {                      document.querySelector(...)           └─ On mismatch → strike counter++ → 3 strikes = full session wipe
-         last_csrf_token: "...",    .value
-         csrf_strikes: 0
+    Session: {                      document.querySelector(...)           ├─ On mismatch → per-IP failure counter++
+         _csrf: "..."}                    .value                            3 failures = full session wipe
+                                                          └─ On success → token rotated, failure counter cleared
 ```
 
 ### 4.3 Mutation Endpoint Guard Chain
 
-Every mutation endpoint (`/api/toggle/*`, `/api/rename/*`, `/api/delete/*`, `/api/add`, `/api/notes/*`, `/api/reorder`, healthcheck CRUD, feed toggle) applies a three-layer guard before executing the domain function:
+Every mutation endpoint (`/api/toggle/*`, `/api/rename/*`, `/api/delete/*`, `/api/add`, `/api/notes/*`, `/api/reorder`, healthcheck CRUD, feed toggle) applies the `require_admin()` guard chain before executing the domain function. All three failure modes return **403** with an `X-Auth-Error` header so the client can tell them apart without the server leaking which guard tripped:
 
 ```
 Incoming POST/PUT/DELETE /api/*
         │
-  ┌─────▼──────────┐   False  ┌──────────────────┐
-  │ _not_admin()   ├─────────>│ 401 Unauthorized │
-  └──────┬─────────┘          └──────────────────┘
+  ┌─────▼──────────────┐  not logged in  ┌────────────────────────────┐
+  │ session[admin]?    ├────────────────>│ 403 X-Auth-Error:          │
+  └──────┬─────────────┘                 │      not-logged-in         │
          │ True
-  ┌──────▼──────────┐   Mismatch ┌───────────────┐
-  │ _check_csrf()   ├───────────>│ 403 Forbidden │ (+ strike++)
-  └──────┬──────────┘            └───────────────┘
-         │ Match
-  ┌──────▼──────────────────────┐ True (rate exceeded)  ┌─────────────┐
-  │ _check_mutation_rate(ip)    ├──────────────────────>│ 429 Too Many│
-  │ Within rate limit?          │                       │  Requests   │
-  └──────┬──────────────────────┘                       └─────────────┘
-         │ Pass
+  ┌──────▼──────────┐  mismatch ┌────────────────────────────┐
+  │ check_csrf()    ├──────────>│ 403 X-Auth-Error: csrf     │
+  └──────┬──────────┘           │ (3 fails = session wipe)   │
+         │ Match                └────────────────────────────┘
+  ┌──────▼───────────────────────────┐ rate exceeded (60/60s)  ┌─────────────┐
+  │ check_mutation_rate(ip)          ├────────────────────────>│ 403         │
+  │ Within rate limit?               │                         │ X-Auth-Error:│
+  └──────┬───────────────────────────┘                         │ rate-limited│
+         │ Pass                                                └─────────────┘
   ┌──────▼──────────────────────┐
   │ Execute Domain Function     │
   │ toggle_item / set_notes etc │
   └──────┬──────────────────────┘
          │ Success
   ┌──────▼──────────────────────┐
-  │ record_mutation()           │  INSERT INTO status_history
-  │ (event_type, item_id,       │  + per-item prune (outer item_id filter)
-  │  old_value, new_value,      │  + _save_runtime() YAML write
-  │  occurred UTC)              │
+  │ record_history()            │  INSERT INTO status_history
+  │ (event_type "status"/       │  + per-item prune (outer item_id filter,
+  │  "notes", old_value,        │      keeps last 100 rows per item)
+  │  new_value, occurred UTC)   │  + Slack outbox enqueue (best-effort)
   └──────┬──────────────────────┘
          │ DB Committed
   ┌──────▼──────────────────────┐
@@ -308,10 +316,17 @@ worker loop (one thread, fcntl-locked to a single instance)
                            clean          → green
   │
   └── on change → db.set_status + history row (per-item prune)
-     healthy→unhealthy and unhealthy→healthy both recorded (event_type=status_toggle)
+     healthy→unhealthy and unhealthy→healthy both recorded (event_type="status")
 ```
 
-**Safety caps** (constants.py): `HEALTHCHECK_INTERVAL_DEFAULT` 60s, timeout default 10s, 3 retries max before degraded, feed body 512 KB, 20 entries scanned, redirect depth 5, curl max-time = timeout + 5.
+**Safety caps** (constants.py / implementation): `HEALTHCHECK_INTERVAL_DEFAULT` 60s, `HEALTHCHECK_TIMEOUT_DEFAULT` 10s, `HEALTHCHECK_RETRIES_DEFAULT` 2 (retries are clamped to a minimum of 1 at parse time — see the retry ladder above). Feed body 512 KB, 20 entries scanned, redirect depth 5, curl max-time = timeout + 5.
+
+> **WIP note:** `statuspage/_healthcheck_parsing.py`, `_healthcheck_probing.py`,
+> and `_healthcheck_worker.py` are an unfinished modular split — import
+> nowhere in the app or test suite (test docstrings reference the historical
+> function names only). The running app uses `statuspage/_healthcheck_impl.py`
+> (loaded as top-level `healthcheck`). Treat `_impl.py` as the source of truth
+> until the split lands or the stubs are deleted.
 
 **Restart semantics:** `PUT /api/healthchecks/<name>` (or delete/create) re-parses config and hot-restarts the worker thread in place — no process restart needed. The per-item history prune carries an outer `item_id = ?` filter so one item flipping can never wipe another item's history (regression-tested).
 
@@ -323,12 +338,12 @@ worker loop (one thread, fcntl-locked to a single instance)
 
 | Attack Vector                     | Mitigation                                                                                                                          | Location in Codea                                   |
 |-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------|
-| Brute-force credential guessing   | `LOCKOUT_SECONDS × 2` lockout (60s) after 5 failed attempts per IP; random wait added for timing                                    | `auth.py` (lockout helpers) + login route           |
+| Brute-force credential guessing   | 5 failed attempts per IP within a 30s sliding window → IP locked for 30s (`LOCKOUT_SECONDS`); lockout state persisted to DB so worker restarts can't reset it; timing-safe username check prevents account enumeration                        | `auth.py` (lockout helpers) + login route           |
 | Session hijacking                 | Signed session cookies with `secure`, `httponly`, `samesite` flags; auto-rotated CSRF token; 5-min idle expiry                      | `auth.py`, `app.py` session-cookie config           |
 | Session fixation                  | Session regenerated on login                                                                                                        | `auth.py` `login` route                             |
-| Cross-Site Request Forgery (CSRF) | Per-request secret token in hidden form field + header; 3-strike policy wipes entire session on mismatch                            | `auth.py` `_check_csrf()`;                          |
-|                                   |                                                                                                                                     |  token injected via `<meta>` tag for CSP compliance |
-| Query-string CSRF bypass          | Token read from `form` or `request.body`, NOT from `request.args`                                                                   | all mutation routes                                 |
+| Cross-Site Request Forgery (CSRF) | Per-session secret token accepted ONLY via the `X-CSRF-Token` header (never query/form — query strings are logged); token rotated after every successful mutation; 3 failures (per IP) wipe the entire session | `auth.py` `check_csrf()`;                             |
+|                                   |                                                                                                                                         |  token injected into the page via `<meta>` tag for CSP compliance |
+| Query-string CSRF bypass          | Token read ONLY from the request header, never from `request.args` (query strings are logged)                                             | `auth.py` `check_csrf()`                             |
 | XSS                               | Zero `innerHTML` of user data; all sensitive content via `textContent`; DOM built with `createElement()`                            | `static/js/*.js`                                    |
 | SQL Injection                     | Parameterized queries (`?` placeholders); no string interpolation into SQL                                                          | `statuspage/db.py`, `services.py`                   |
 | Plaintext password disclosure     | Only scrypt hashes in `.env` / config; never logged or returned                                                                     | `auth.py`, `config.py` `_base` filtering            |
@@ -352,9 +367,9 @@ Layer 2: Transport Level (Flask Headers)
    └── Permissions-Policy
 
 Layer 3: Application Level (Auth + CSRF + Rate Limit)
-   ├── Request authentication (_not_admin)
-   ├── CSRF validation (_check_csrf) with timing-safe comparison
-   ├── Mutation rate limiting (_check_mutation_rate per IP)
+   ├── Request authentication (require_admin guard)
+   ├── CSRF validation (check_csrf) with timing-safe comparison
+   ├── Mutation rate limiting (check_mutation_rate: 60 muts/IP/60s)
    └── Login lockout (failed-attempt sliding window per IP)
 
 Layer 4: Data Level (SQL Parameterization)
@@ -366,20 +381,36 @@ Layer 5: Persistence Level (Cryptographic Hashes)
 
 ### 6.3 Lockout Mechanism Details (MC/DC D6)
 
-The lockout uses a **timestamp-based sliding window** per IP:
+The lockout uses a **timestamp sliding window** per IP: each failed login
+appends a timestamp; on the next login attempt, entries older than
+`LOCKOUT_SECONDS` (30s) are pruned, and the IP is locked while ≥
+`MAX_LOGIN_ATTEMPTS` (5) fresh failures remain. The lockout expiry is tracked
+in `_lockout_until` so the API can return a real `retry_after` count.
 
 ```python
-if not ts or time.time() - max(ts) >= LOCKOUT_SECONDS * 2:
-    # Clear the list — all timestamps are expired → remove stale entries
-    _failed_logins.pop(ip, None)
-else:
-    # At least one entry is within the lockout window → reject
-    return True
+def is_locked(ip: str) -> bool:
+    now = time.time()
+    ts = _failed_logins.get(ip, [])
+    if not ts:
+        return False
+    ts = [t for t in ts if now - t < LOCKOUT_SECONDS]   # prune stale entries
+    if ts:
+        _failed_logins[ip] = ts
+    else:
+        _failed_logins.pop(ip, None)
+    if len(ts) >= MAX_LOGIN_ATTEMPTS:                    # 5 fresh failures
+        _lockout_until[ip] = max(_lockout_until.get(ip, 0), ts[-1] + LOCKOUT_SECONDS)
+        return True
+    return False
 ```
 
-**Key insight**: The condition `not ts` handles the case where `_failed_logins[ip]` exists but is an empty list (all entries were manually cleared). This prevents a KeyError while correctly treating an empty list as "no active lockouts."
+**Key insight**: the pruning step is what makes the lockout always expire —
+including lockouts rehydrated from the persisted rate-limits table after a gunicorn
+worker restart (stale persisted entries must never re-lock an IP permanently).
+The `not ts` guard handles the edge case where an IP has a (now-empty) list
+record without raising.
 
 ---
 
-*Document version: 2.2 | Last updated: 2026-08-18 | Author: Simar Sahni*
+*Document version: 2.3 | Last updated: 2026-08-27 | Author: Simar Sahni*
 

@@ -18,10 +18,10 @@
 
 | OS | Version(s) Tested | Notes |
 |----|-------------------|-------|
-| Ubuntu/Debian | 20.04 LTS, 22.04 LTS | apt package manager (default for install.sh) |
-| Fedora/RHEL/CentOS | 38+ | dnf/yum package manager support in install.sh |
+| Ubuntu/Debian | 20.04 LTS, 22.04 LTS | Works; systemd service installed in root mode |
+| Fedora/RHEL/CentOS | 38+ | dnf/yum |
 | Arch Linux | Rolling | Manual installation only (install.sh does not auto-detect pacman) |
-| macOS | 12+ (Monterey) | Development only; not recommended for production |
+| macOS | 12+ (Monterey) | Development only (dev-setup.sh); not recommended for production |
 
 **Hardware minimum requirements:**
 - CPU: 1 core (any architecture x86_64 or aarch64)
@@ -32,11 +32,27 @@
 
 ## 2. One-Command Installation (Recommended)
 
-The `install.sh` wizard handles everything automatically on fresh Linux servers.
+The `install.sh` wizard handles everything. **It can run as root or as a
+normal user** — behavior adapts to how you invoke it, and the service always
+runs as the **invoking user**:
+
+- **Root (`sudo ./install.sh`)** — deploys to the install path owned by root
+  and installs a hardened systemd `status-page.service` (NoNewPrivileges /
+  ProtectSystem / PrivateTmp) running as that user.
+- **Non-root (`./install.sh`)** — installs into the invoking user's space
+  and finishes with "start with `./start.sh`" (no systemd).
+
+> **Prerequisites are installed by you, not by the wizard:** `python3` (3.9+)
+> and `python3-venv` must already exist (the script fails fast with install
+> hints otherwise). The wizard manages the venv, app files, DB, credentials,
+> and (root mode) the systemd unit — it does not install system packages,
+> create a `statuspage` user, or write to `/etc/status-page`.
 
 ### Prerequisites
-- Root or sudo access
-- Working internet connection for package installation
+- `python3` (3.9+) and `python3-venv` installed
+- `curl` + `ping` (IP utils) if you plan to use healthchecks — the probe
+  worker shells out to the CLI binaries
+- `pip` reachable (PyPI or the bundled `vendor/` wheels for air-gapped)
 - Server reachable at the target network interface
 
 ### Installation Steps
@@ -46,63 +62,107 @@ The `install.sh` wizard handles everything automatically on fresh Linux servers.
 git clone https://github.com/notsimar/status-my-page.git ~/status-my-page
 cd ~/status-my-page
 
-# Run the installer (as root or with sudo)
+# Root (systemd-managed, runs as root):
 sudo ./install.sh
+
+# OR non-root (user-managed, start with ./start.sh):
+./install.sh
 ```
 
-Choose a custom install path if desired:
+**Choose a custom install path (must be absolute):**
 ```bash
 sudo ./install.sh /srv/status-dashboard
+#   or
+./install.sh ~/my-status
 ```
+
+**Non-interactive / CI** — pass both credentials and it prompts nothing:
+```bash
+./install.sh --admin-user ops --admin-pass "s3cret" --port 8920
+#   (env equivalents: SP_ADMIN_USER, SP_ADMIN_PASS, STATUS_PORT, STATUS_BIND, SP_INSTALL_OVERRIDE_ENV)
+```
+
+**Upgrade in place** — re-run; it keeps the existing `.env.local` and DB by
+default, and just refreshes the app files. Pass `--force-env` to replace
+credentials.
+
+### Options
+
+| Flag | Env | Default | Purpose |
+|------|-----|---------|---------|
+| `--admin-user USER` | `SP_ADMIN_USER` | `admin` | Admin username |
+| `--admin-pass PASS` | `SP_ADMIN_PASS` | prompted | Admin password (min 8 chars recommended) |
+| `--port N` | `STATUS_PORT` | `8920` | Listen port (1–65535) |
+| `--host ADDR` | `STATUS_BIND` | `0.0.0.0` | Bind address |
+| `--workers N` | — | `2` | Gunicorn worker count |
+| `--force-env` | `SP_INSTALL_OVERRIDE_ENV=1` | off | Overwrite existing `.env.local` even on upgrade |
 
 ### What the Wizard Does
 
-1. Installs system packages (`python3`, `python3-venv`, `gunicorn`) via apt/dnf/yum auto-detect
-2. Creates a dedicated `statuspage` system user (no shell, no home directory)
-3. Deploys application files to `<install_path>/status-my-page` (default: `/opt/status-my-page`)
-4. Creates Python virtual environment and installs dependencies (`flask`, `pyyaml`), plus `curl` and `iputils-ping` for the healthcheck worker
-5. Seeds the SQLite database from `config.yaml` service names
-6. Prompts for admin credentials interactively (username + password, hashed as scrypt)
-7. Writes credentials to `/etc/status-page/env` with mode `0640` (owner read/write only)
-8. Creates and installs systemd unit file at `/etc/systemd/system/status-page.service`
-9. Starts Gunicorn on `0.0.0.0:8920` behind systemd service manager
-10. Verifies health endpoint returns HTTP 200 before declaring success
+1. **Preflight** — confirms `python3` (3.9+) is present and normalizes the
+   install path. Non-root: explicitly skips system packages / systemd.
+2. **Deploy files** — copies the app to `<install_path>/` (default
+   `~/.local/share/status-page`; any absolute path may be passed; creates
+   `instance/`, `logs/`, `archives/`, `static/logos/`).
+3. **Python venv** — creates `.venv` and installs `requirements.txt`
+   (`flask`, `gunicorn`, `pyyaml`, `python-dotenv`) from PyPI or the bundled
+   `vendor/` wheels.
+4. **Admin credentials** — prompts for username + password. The password is
+   hashed as scrypt (via `generate_password_hash`, with a PBKDF2-SHA256
+   fallback for builds without OpenSSL scrypt). The chosen username is synced
+   into `config.yaml` so `_base.admin.user` matches. Credentials are written
+   to `<install_path>/.env.local` (mode `0600`) — never `/etc/status-page`.
+5. **DB seed** — runs `init_db()`; takes an archive snapshot of any existing
+   DB first so previous admin changes survive.
+6. **Systemd (root only)** — writes a hardened `status-page.service`
+   (gunicorn, `EnvironmentFile=<install_path>/.env.local`, `User=<invoking
+   user>`) and enables + starts it. Non-root: skips systemd.
+7. **Verification** — in root mode, waits ~2s and curls
+   `http://127.0.0.1:<port>/` and reports. In non-root mode, prints the
+   `./start.sh` command.
 
 ### Interactive Prompts During Installation
 
 ```
-=== Setting admin credentials ===
+=== Admin credentials ===
 Admin username [admin]: <enter or type your desired username>
 Admin password: <type silently — will be hashed as scrypt, not stored as plaintext>
 
-Credentials set: user=<your_username>
+Credentials set: user=<your_username> (new password)
 
-=== Installing systemd service (status-page.service) ===
+=== Installing systemd service (status-page.service) ===   [root mode only]
 Service enabled. Starting…
+Service is up and serving on port 8920.
 
-=== Verification ===
-✅ status-page.service is active and running
-✅ Status page responding (HTTP 200)
-
-Deployment complete!
-URL: http://<server-ip>:8920/
+========================================
+  Deployment complete!
+  Install dir: /opt/status-page
+  Admin user:  <your_username>
+  Address:     http://0.0.0.0:8920
+========================================
 ```
+
+> **Non-root output** ends with `Non-root install complete. Start manually:
+> cd <install_dir> && ./start.sh  — Serving on http://0.0.0.0:8920` instead of
+> the systemd block.
 
 ### Post-Installation Commands
 
 ```bash
-# Check service status
+# Root / systemd:
 systemctl status status-page
-
-# View live logs
 sudo journalctl -u status-page -f
-
-# Restart after config changes (e.g., editing config.yaml)
 sudo systemctl restart status-page
 
-# Run post-deploy health check
+# Non-root (or manual):
+cd <install_dir> && ./start.sh          # start
+./stop.sh                                # stop
+./restart.sh                             # restart
+
+# Verify it serves:
 curl -s http://localhost:8920/ | head -20
 ```
+
 
 ---
 
@@ -134,13 +194,16 @@ sudo chown -R statuspage:statuspage /opt/status-my-page/.app/{instance,logs} 2>/
 
 ### Step 4 — Write credentials to a secure env file
 ```bash
+# Generate the hash first:
+#   python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
 sudo mkdir -p /etc/status-page
-sudo tee /etc/status-page/env > /dev/null <<EOF
-STATUS_ADMIN_PASS_HASH=scrypt\$72816\$...   # Your generated hash here
+sudo tee /etc/status-page/env > /dev/null <<'EOF'
+STATUS_ADMIN_PASS_HASH=scrypt:32768:8:1$<salt>$<hash>
 STATUS_ADMIN_USER=admin
-STATUS_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+STATUS_SECRET_KEY=__SECRETSUBSTITUTED__
 PYTHONUNBUFFERED=1
 EOF
+# (replace __SECRETSUBSTITUTED__ with: python3 -c "import secrets; print(secrets.token_hex(32))")
 sudo chmod 0640 /etc/status-page/env
 ```
 
@@ -168,11 +231,11 @@ Restart=on-failure
 RestartSec=5
 EnvironmentFile=/etc/status-page/env
 
-# Security hardening
+# Security hardening (full, not strict: the admin API writes config.yaml backups)
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/opt/status-my-page/.app/instance /opt/status-my-page/.app/logs /opt/status-my-page/.app/archives
+ProtectSystem=full
 PrivateTmp=true
+ReadWritePaths=/opt/status-my-page/.app/instance /opt/status-my-page/.app/logs /opt/status-my-page/.app/archives
 
 [Install]
 WantedBy=multi-user.target
@@ -264,26 +327,39 @@ Caddy will automatically obtain and renew Let's Encrypt SSL certificates for `st
 
 ## 5. Docker Deployment
 
-Not yet officially supported, but the application is compatible with Docker containerization. Here is a basic `Dockerfile`:
+A production-ready `Dockerfile` is included in the repo root (Python 3.14-slim,
+`curl` + `iputils-ping` for healthcheck support, dedicated non-root
+`statuspage` user, `.dockerignore` excludes instance data and logs). If you
+maintain your own, mirror these requirements — in particular the image needs
+`curl` and the `ping` binary or the healthcheck worker will fail.
 
 ```dockerfile
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 statuspage
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends nginx && \
-    rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+RUN pip install --no-cache-dir -r requirements.txt python-dotenv
 
-COPY . .
+COPY --chown=statuspage:statuspage . .
 
-# Expose port for reverse proxy (HTTPS terminated externally)
+RUN mkdir -p instance logs archives && \
+    chown -R statuspage:statuspage /app
+
+USER statuspage
 EXPOSE 8920
 
-USER nobody
-CMD ["gunicorn", "--bind", "0.0.0.0:8920", "--workers", "2", "--timeout", "30", "app:app"]
+ENV PYTHONUNBUFFERED=1 \
+    STATUS_PORT=8920
+
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8920", "--workers", "2", "--threads", "4"]
 ```
 
 Build and run:
@@ -293,10 +369,18 @@ docker run -d --name status-page \
   -p 127.0.0.1:8920:8920 \
   -v /var/status-data:/app/instance \
   -v ./logs:/app/logs \
-  -e STATUS_ADMIN_PASS_HASH=scrypt\$72816\$... \
-  -e STATUS_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))") \
+  -e STATUS_ADMIN_PASS_HASH='scrypt:32768:8:1$<salt>$<hash>' \
   status-my-page
 ```
+
+Notes:
+
+- Don't bother passing `STATUS_SECRET_KEY`: the app now persists its own
+  key in `instance/.secret_key` (mode 0600, created once and shared by all
+  gunicorn workers), so sessions survive restarts as long as the
+  `instance` volume is persistent — which it is in the example above.
+- Healthchecks probe real network targets; a container without network
+  access to your targets will flap red.
 
 ---
 
@@ -338,7 +422,9 @@ admin logout. See [configuration.md](./configuration.md#slack-notifications-opti
 
 ### Monitoring with Prometheus/Grafana
 
-A basic scrape target exists at `/` — the full HTML response can be wrapped to extract metrics. For production monitoring:
+For scrape-based monitoring, point at the JSON endpoint `GET /api/status`
+(lightweight, no auth, returns each service's `id`/`name`/`status`/`notes`)
+rather than the HTML `/` page. There is no `/metrics` exporter.
 
 ```yaml
 # prometheus.yml
@@ -346,18 +432,24 @@ scrape_configs:
   - job_name: 'status-page'
     static_configs:
       - targets: ['localhost:8920']
-    metrics_path: /  # Health check endpoint (HTML status page, use only for HTTP response time)
+    # Up/down + response-time probing; derive status metrics from
+    # GET /api/status responses in a recording rule or textfile collector.
+    metrics_path: /api/status
     scrape_interval: 30s
 ```
 
 ### Log Rotation
 
-Using systemd's built-in journal rotation:
-```bash
-# Check log size
-journalctl --disk-usage -u status-page
+The app writes its own rotating file logs via `logging_setup.py`:
+`logs/server.log` and `logs/error.log`, **5 MB per file × 3 backups**
+(`RotatingFileHandler(maxBytes=5*1024*1024, backupCount=3)`). No restart or
+manual rotation is needed — the handler rotates automatically when a file
+exceeds 5 MB.
 
-# Rotate logs if growing too large (default is 10% of /dev/shm or 64MB)
+Under systemd the journal covers gunicorn's own stderr; check sizing with:
+```bash
+journalctl --disk-usage -u status-page
+# Rotate the app's file logs manually if you need to
 sudo systemctl restart status-page
 ```
 
@@ -462,4 +554,4 @@ sudo systemctl start status-page
 
 ---
 
-*Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*
+*Document version: 1.3 | Last updated: 2026-08-27 | Author: Simar Sahni*

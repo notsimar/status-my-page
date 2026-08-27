@@ -27,19 +27,35 @@ Renders the full status page with service list, current states, and embedded CSR
 - Service list with status icons (green/yellow/red)
 ```
 
+### GET `/api/status` — Lightweight Public Status List
+
+Public read of current statuses for auto-refresh polling. Returns
+`id`/`name`/`status`/`notes` only — no history, no admin detail. Notes are
+included so open note panes stay in sync for visitors.
+
+**Response Body:**
+```json
+[
+  { "id": 1, "name": "Primary Internet", "status": "green", "notes": "" },
+  { "id": 2, "name": "Primary NAS",      "status": "yellow", "notes": "Investigating latency" }
+]
+```
+
+**Status Codes:** `200 OK`
+
 ### GET `/api/csrf-token` — Fetch CSRF Token
 
-Returns a fresh per-request CSRF token. Required for all mutation endpoints after login.
+Returns the per-session CSRF token. Required for all mutation endpoints after login.
 
 **Request:** None
 **Response Body:**
 ```json
 {
-  "csrf_token": "a1b2c3d4e5f6..."
+  "token": "a1b2c3d4e5f6..."
 }
 ```
 
-**Status Codes:** `200 OK` | `401 Unauthorized` (must be logged in)
+**Status Codes:** `200 OK` | `403 Forbidden` (`X-Auth-Error: not-logged-in` — must be logged in)
 
 ### GET `/api/history/<item_id>` — View Change Timeline
 
@@ -53,26 +69,28 @@ Returns the complete mutation history for a specific service, ordered newest-fir
 **Response Body:**
 ```json
 {
-  "history": [
+  "service": "Primary NAS",
+  "entries": [
     {
-      "event_type": "status_toggle",
-      "item_id": 3,
+      "event_type": "status",
       "old_value": "green",
       "new_value": "yellow",
-      "occurred": "2026-08-13T14:30:22Z"
+      "occurred": "2026-08-13T14:30:22.123456Z"
     },
     {
-      "event_type": "note_update",
-      "item_id": 3,
+      "event_type": "notes",
       "old_value": "",
       "new_value": "Investigating latency spikes on us-east",
-      "occurred": "2026-08-13T14:25:10Z"
+      "occurred": "2026-08-13T14:25:10.987654Z"
     }
   ]
 }
 ```
 
-**event_type values:** `status_toggle` | `note_update` | `name_change` | `item_added` | `item_deleted`
+**event_type values:** `status` | `notes` — status changes (admin toggles *and*
+healthcheck flips) and note updates only; renames/adds/deletes are not recorded.
+`occurred` is ISO-8601 UTC with microseconds. Each item keeps at most 100 rows
+(`MAX_HISTORY_PER_ITEM`).
 
 **Status Codes:** `200 OK` | `404 Not Found` (history disabled, or item_id doesn't exist)
 
@@ -119,23 +137,25 @@ Public read. Returns an RSS 2.0 feed of status changes, generated **on demand** 
 
 ### GET `/api/healthchecks` — List Configured Healthchecks
 
-Public read. Returns all configured background healthchecks keyed by service name. No auth required so the dashboard can show per-service probe settings.
+Public read, but **redacted** for non-admins: probe targets (url, host, port,
+soap_action) and keyword lists reveal internal network topology, so visitors
+see only `name`, `type`, `interval`, `timeout`, `retries`, and optional
+`service`/`healthy_codes`. Logged-in admins get the full configuration.
 
 **Request:** None
-**Response Body:**
+**Response Body (non-admin):**
 ```json
 {
   "Google workspace": {
     "type": "rss",
-    "url": "https://www.google.com/appsstatus/dashboard/en/feed.atom",
-    "keywords": { "red": ["major issue"], "degraded": ["partial"] },
     "interval": 60,
-    "timeout": 10,
+    "timeout": 30,
     "retries": 2
   }
 }
 ```
-**Status Codes:** `200 OK`
+
+**Status Codes:** `200 OK` (empty object `{}` when healthchecks are disabled via `STATUS_DISABLE_HEALTHCHECKS`)
 
 ### GET `/api/rss` — Feed Metadata
 
@@ -181,12 +201,23 @@ or:
 
 ## Authenticated Endpoints (Admin + CSRF Required)
 
-All mutation endpoints enforce a **three-layer security gate**:
-1. _not_admin() — Must be authenticated as admin
-2. _check_csrf() — Valid X-CSRF-Token header matching session
-3. _check_mutation_rate(ip) — Max 5 mutations per IP in 60-second window
+All mutation endpoints enforce a **three-layer security gate** (applied by the
+`require_admin()` decorator in `statuspage/auth.py`):
+1. `session.get("admin")` — Must be authenticated as admin
+2. `check_csrf()` — Valid X-CSRF-Token header matching session token
+3. `check_mutation_rate(ip)` — Max **60** mutations per IP in a 60-second window (`MUTATION_MAX`/`MUTATION_WINDOW`)
 
-Failure at any layer returns `403 Forbidden`. Exceeding rate limits returns `429 Too Many Requests`.
+All three failure modes return **`403 Forbidden`** — deliberately uniform so the
+server never reveals which guard tripped. The failed guard is distinguished for
+the frontend via the **`X-Auth-Error` response header**:
+
+| `X-Auth-Error` | Meaning | Recommended client behavior |
+|---|---|---|
+| `not-logged-in` | Session expired/missing | Log out + reload the page |
+| `csrf` | Token mismatch or malformed | Show inline error; refetch the page for a fresh token |
+| `rate-limited` | Mutation rate limit exceeded | Back off and retry |
+
+(3 failed CSRF attempts also wipe the entire session.)
 
 ### POST `/login` — Authenticate User
 
@@ -196,18 +227,20 @@ Establishes a signed Flask session cookie on successful authentication.
 ```json
 {
   "user": "admin",
-  "pass": "your-hashed-password-value"
+  "pass": "your-plaintext-password"
 }
 ```
 
-> **Important:** The `pass` field must contain the werkzeug scrypt hash (not plaintext). Generate it with:
-> ```bash
-> python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('my-secure-pw'))"
-> ```
+> **Note:** Send the **plaintext password** — the server verifies it against the
+> stored scrypt hash with `werkzeug.security.check_password_hash()`. The hash
+> itself lives only in `.env.local` / the env file (`STATUS_ADMIN_PASS_HASH`);
+> it is never sent by the client. Username check is timing-safe (no user
+> enumeration).
 
-**Response on Success:** Session cookie set in `Set-Cookie` header. No response body guaranteed.
+**Response on Success:** `{ "ok": true }` + session cookie in `Set-Cookie` header
+(session is regenerated clean; a 5-minute sliding idle clock starts).
 
-**Status Codes:** `200 OK` (session created) | `401 Unauthorized` (bad credentials) | `403 Forbidden` (rate-limited)
+**Status Codes:** `200 OK` (session created) | `401 Unauthorized` (bad credentials) | `429 Too Many Requests` (login rate-limited, includes `retry_after` seconds)
 
 ### POST `/logout` — Clear Session
 
@@ -236,7 +269,7 @@ Cycles a service's status: green → yellow → red → green on each call.
 
 Where status values: `green` | `yellow` | `red`
 
-**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests`
+**Status Codes:** `200 OK` | `403 Forbidden` (uniform for all guard failures — see [Error Responses](#error-responses)) | `429 Too Many Requests`
 
 ### POST `/api/notes/<item_id>` — Update Notes Text
 
@@ -259,7 +292,7 @@ Saves or updates freeform note text for a specific service. The change is record
 }
 ```
 
-**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests`
+**Status Codes:** `200 OK` | `403 Forbidden` (uniform for all guard failures — see [Error Responses](#error-responses)) | `429 Too Many Requests`
 
 ### POST `/api/add` — Create New Service Item
 
@@ -287,7 +320,7 @@ Adds a new service to the dashboard.
 
 The new item is inserted at the next available position and history entry recorded.
 
-**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests` | `400 Bad Request` (missing name)
+**Status Codes:** `200 OK` | `403 Forbidden` (uniform for all guard failures — see [Error Responses](#error-responses)) | `429 Too Many Requests` | `400 Bad Request` (missing name)
 
 ### POST `/api/delete/<item_id>` — Remove Service Item
 
@@ -305,7 +338,7 @@ Permanently deletes a service item and its associated history entries. Compacts 
 }
 ```
 
-**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests` | `404 Not Found`
+**Status Codes:** `200 OK` | `403 Forbidden` (uniform for all guard failures — see [Error Responses](#error-responses)) | `429 Too Many Requests` | `404 Not Found`
 
 ### POST `/api/rename/<item_id>` — Update Service Name
 
@@ -328,7 +361,7 @@ Renames an existing service item in the database and records the event in status
 }
 ```
 
-**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests` | `400 Bad Request` (missing name)
+**Status Codes:** `200 OK` | `403 Forbidden` (uniform for all guard failures — see [Error Responses](#error-responses)) | `429 Too Many Requests` | `400 Bad Request` (missing name)
 
 ### POST `/api/reorder` — Apply Drag-Drop Position Map
 
@@ -354,7 +387,7 @@ Where keys are item IDs (strings) and values are zero-based integer positions.
 }
 ```
 
-**Status Codes:** `200 OK` | `401 Unauthorized` | `403 Forbidden` | `429 Too Many Requests`
+**Status Codes:** `200 OK` | `403 Forbidden` (uniform for all guard failures — see [Error Responses](#error-responses)) | `429 Too Many Requests`
 
 ### POST `/api/healthchecks` — Create Healthcheck
 
@@ -381,7 +414,7 @@ Other types: `curl`/`soap` take `url` (+ `soap_action`/`body`/`expected_string`/
 ```json
 { "ok": true, "name": "Google workspace", "config": { "...": "full stored config" } }
 ```
-**Status Codes:** `200 OK` | `400 Bad Request` (invalid type/url/host/keywords/empty target) | `409 Conflict` (name already exists) | `401`/`403`/`429`
+**Status Codes:** `200 OK` | `400 Bad Request` (invalid type/url/host/keywords/empty target) | `409 Conflict` (name already exists) | `403`/`429`
 
 ### PUT `/api/healthchecks/<name>` — Update Healthcheck
 
@@ -389,11 +422,11 @@ Partial-field merge by service name. **A `type` change is a full-replace** — o
 
 **Request Body:** any subset of create fields (e.g. `{"keywords": {...}}`, `{"timeout": 20}`).
 **Response Body:** `{ "ok": true, "name": "...", "config": { "...": "merged config" } }`
-**Status Codes:** `200 OK` | `400 Bad Request` | `404 Not Found` (name unknown) | `401`/`403`/`429`
+**Status Codes:** `200 OK` | `400 Bad Request` | `404 Not Found` (name unknown) | `403`/`429`
 
 ### DELETE `/api/healthchecks/<name>` — Remove Healthcheck
 **Response Body:** `{ "ok": true }`
-**Status Codes:** `200 OK` | `404 Not Found` | `401`/`403`/`429`
+**Status Codes:** `200 OK` | `404 Not Found` | `403`/`429`
 
 ### POST `/api/healthcheck/run` — One-Shot Healthcheck Run
 
@@ -412,7 +445,7 @@ Runs every configured check **once** immediately (no worker, no persistence side
   }
 }
 ```
-**Status Codes:** `200 OK` | `401`/`403`/`429`
+**Status Codes:** `200 OK` | `403`/`429`
 
 ### POST `/api/rss` — Toggle Status Feed
 
@@ -420,7 +453,7 @@ Enables/disables the public `/feed.xml` status feed. Persists to `config.yaml` `
 
 **Request Body:** `{ "enabled": true }`
 **Response Body:** `{ "ok": true, "enabled": true }`
-**Status Codes:** `200 OK` | `400 Bad Request` (missing/non-bool `enabled`) | `401`/`403`/`429`
+**Status Codes:** `200 OK` | `400 Bad Request` (missing/non-bool `enabled`) | `403`/`429`
 
 ### GET `/api/export/static` — Export Standalone Static Page
 
@@ -430,7 +463,7 @@ Generates and downloads a self-contained static HTML file with inlined styles an
 - `download` (optional, default `true`): If `true`, adds `Content-Disposition: attachment; filename="status.html"`.
 
 **Response Body:** Full standalone HTML document (`text/html; charset=utf-8`).
-**Status Codes:** `200 OK` | `401 Unauthorized` / `403 Forbidden`
+**Status Codes:** `200 OK` | `403 Forbidden` (admin gate; `X-Auth-Error` distinguishes `not-logged-in` from CSRF)
 
 ---
 
@@ -446,11 +479,12 @@ All error responses return JSON:
 
 | Status Code             | Meaning                    | Typical Cause                              |
 |-------------------------|----------------------------|--------------------------------------------|
-| `400 Bad Request`       | Malformed incoming request | Missing required field, bad JSON           |
-| `401 Unauthorized`      | Not authenticated          | No valid session cookie                    |
-| `403 Forbidden`         | Authenticated but denied   | Wrong CSRF token, insufficient permissions |
-| `429 Too Many Requests` | Rate limit exceeded        | More than 5 mutations per IP in 60 seconds |
-| `404 Not Found`         | Resource does not exist    | Invalid item_id                            |
+| `400 Bad Request`       | Malformed incoming request | Missing required field, bad JSON, rejected by input validation (`input_filter`) |
+| `401 Unauthorized`      | Not authenticated          | Bad credentials on `POST /login` |
+| `403 Forbidden`         | Authenticated but denied / admin gate failed | Admin + CSRF mutations: `X-Auth-Error` header says which guard (`not-logged-in` / `csrf` / `rate-limited`) |
+| `404 Not Found`         | Resource does not exist    | Invalid item_id, history disabled, endpoint disabled |
+| `409 Conflict`          | Duplicate resource         | Healthcheck name already exists |
+| `429 Too Many Requests` | Rate limit exceeded        | Login lockout (5 failed logins in 30s window) |
 
 ---
 
@@ -463,13 +497,13 @@ curl http://localhost:8920/ | head -50
 
 ### Login and Toggle Service
 ```bash
-# 1. Login to get session cookie
+# 1. Login to get session cookie (send the plain password — the server checks it against the stored hash)
 curl -c cookies.txt -b cookies.txt -s -X POST http://localhost:8920/login \
   -H "Content-Type: application/json" \
-  -d '{"user":"admin","pass":"scrypt$72816$..."}'
+  -d '{"user":"admin","pass":"your-plaintext-password"}'
 
-# 2. Get CSRF token from the session cookie or /api/csrf-token
-TOKEN=$(curl -c cookies.txt -b cookies.txt http://localhost:8920/api/csrf-token | python3 -c "import sys,json; print(json.load(sys.stdin)['csrf_token'])")
+# 2. Get CSRF token from /api/csrf-token (note the field is "token")
+TOKEN=$(curl -c cookies.txt -b cookies.txt -s http://localhost:8920/api/csrf-token | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
 # 3. Toggle service #1 with CSRF header
 curl -b cookies.txt -s -X POST http://localhost:8920/api/toggle/1 \
@@ -526,9 +560,6 @@ Public read of the current page-level settings.
 
 ---
 
-*Document version: 1.3 | Last updated: 2026-08-18 | Author: Simar Sahni*
-
-
 ## Slack Notifications
 
 ### `GET /api/slack` (admin only)
@@ -564,4 +595,8 @@ Response: same shape as GET plus `"ok": true`. Validation errors return
 **Delivery model:** status changes queue to a persistent outbox as they
 happen. When the admin logs out, ONE digest message posts via the
 incoming webhook. Failed deliveries keep the queue for the next logout.
+
+---
+
+*Document version: 1.4 | Last updated: 2026-08-27 | Author: Simar Sahni*
 

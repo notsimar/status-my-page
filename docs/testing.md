@@ -44,8 +44,9 @@ Prove that every guard condition in compound boolean expressions **independently
 | D11: LogoPathEmptyTraversalGate | statuspage/config.py | `not _LOGO_PATH` / whitespace / `..` parts | Test_D11_LogoPathEmptyTraversalGate (5 tests) | Full MC/DC |
 | D12: LogoLocalPathGate | statuspage/config.py | containment / is_file / size>0 | Test_D12_LogoLocalPathGate (5 tests) | Full MC/DC |
 | D13: LogoDualModeGate | scripts/install_logo.sh | `LOGO_DARK or LOGO_LIGHT` | Test_D13_LogoDualModeGate (3 tests) | Full MC/DC |
+| D_hc12: HealthchecksEnabledSwitch | statuspage/_healthcheck_impl.py L787 (worker loop) | `isinstance(sec, dict) and not sec.get("healthchecks_enabled", True)` | Test_Dhc12_HealthchecksEnabledSwitch (3 tests) | Full MC/DC |
 
-**Total: structural + healthcheck gates — 18 compound decisions, 100% decision coverage, all conditions MC/DC-proven (50 tests in test_healthcheck_mc_dc.py alone; D1–D7 in test_mc_dc.py / test_structural.py).**
+**Total: structural + healthcheck gates — 24 compound decisions, 100% decision coverage, all conditions MC/DC-proven (53 tests in test_healthcheck_mc_dc.py alone; D1–D7 in test_mc_dc.py / test_structural.py).**
 
 ### Functional — `tests/test_history.py` + `tests/test_routes_and_features.py`
 
@@ -69,7 +70,7 @@ Note: the module enables the (default-off) history feature via the `_history_on`
 
 ### Healthcheck — `tests/test_healthcheck.py` + `tests/test_healthcheck_mc_dc.py`
 
-**test_healthcheck.py (44 tests):**
+**test_healthcheck.py (102 tests):**
 - URL scheme validation (http/https only)
 - Host/IP validation for ping (rejects options, command injection)
 - Config parsing: defaults, custom intervals, healthy_codes, SOAP auto-detection
@@ -78,7 +79,7 @@ Note: the module enables the (default-off) history feature via the `_history_on`
 - Worker thread: no-op when unconfigured, _set_health_status DB mutations
 - **Exception paths (17 tests):** TimeoutExpired, FileNotFoundError, OSError for ping/curl/soap; empty stdout, no newline, non-digit status codes, out-of-range codes, non-whitelisted codes, expected_string missing/found
 
-**test_healthcheck_mc_dc.py (50 tests):**
+**test_healthcheck_mc_dc.py (53 tests):**
 - MC/DC for D_hc1 (health result gate) — 4 tests
 - MC/DC for D_hc2 (URL sanitisation) — 5 tests
 - MC/DC for D_hc3 (type auto-detection chain) — 6 tests
@@ -88,17 +89,43 @@ Note: the module enables the (default-off) history feature via the `_history_on`
 - MC/DC for D_hc9 (RSS keyword precedence red→degraded→green) — 6 tests
 - MC/DC for D_hc10 (RSS url parse guard, explicit `type: rss`) — 5 tests
 - MC/DC for D_hc11 (RSS item/entry tag filter scope) — 3 tests
+- MC/DC for D_hc12 (healthchecks_enabled worker-pause switch) — 3 tests
 - Worker file lock tests (fcntl) — 2 tests
 
 ### Smoke — `tests/test_health.sh`
 
-Quick shell-based health check: pings the root endpoint and asserts HTTP 200. Runs in under 1 second, suitable for CI pre-checks.
+Shell-based suite of 8 live-server checks (H0–H7: page render + status rows,
+overall badge, static assets, `/auth-check`, login, unauthenticated mutation
+→ 403, full green→degraded→red→green toggle cycle, notes API). Needs a
+running server plus `HEALTH_PASS` set (in the environment or `.env`).
 
 ### Healthcheck Admin CRUD + RSS Feed — `tests/test_healthcheck_admin.py` + `tests/test_rss_feed.py` + `tests/test_rss_healthcheck.py`
 
-- **test_healthcheck_admin.py**: Full admin CRUD for the healthchecks map — `POST /api/healthchecks` (create, all 5 types incl. `rss`), `GET /api/healthchecks` (list), `PUT /api/healthchecks/<name>` (update: partial field merge or full type migration incl. into/out of `rss`), `DELETE /api/healthchecks/<name>`; validation rejects (unknown type, missing/bad url, bad numeric fields, malformed `keywords`, duplicate name 409, 404 for missing name). Runs against a fully isolated temp app (temp DB, temp config.yaml, patched `CONFIG_PATH`/`DB_PATH`) so it never touches the live server.
-- **test_rss_feed.py**: The public status feed `GET /feed.xml` — XML well-formedness, `<lastBuildDate>`/`<pubDate>` advance on status change, only status events surfaced (notes/rename filtered), `rss: {enabled: false}` → 404, admin toggle `POST /api/rss`, title/max_items clamping, empty-history feed shape.
-- **test_rss_healthcheck.py**: The `rss` healthcheck type end-to-end — a real local HTTP server serves synthetic feeds; parse cases (RSS 2.0 `<item>`, Atom `<entry>` with default namespace, malformed XML → fetch failure); runtime keyword mapping (red beats degraded, case-insensitive, description+summary scanned, no-keyword feeds); feed-shape edge cases (empty feed → green, entries past the 20-entry cap not scanned, feed >512 KB → fetch failure); one-shot `run_healthchecks_once` result shape; and a full **E2E worker test** that points a live worker thread at a mutable local feed and asserts the DB item flips green→red→green with history rows recorded.
+- **test_healthcheck_admin.py (84 tests)**: Full admin CRUD for the healthchecks map — `POST /api/healthchecks` (create, all 5 types incl. `rss`), `GET /api/healthchecks` (list, redacted for non-admins), `PUT /api/healthchecks/<name>` (update: partial field merge or full type migration incl. into/out of `rss`), `DELETE /api/healthchecks/<name>`; validation rejects (unknown type, missing/bad url, bad numeric fields, malformed `keywords`, duplicate name 409, 404 for missing name). Runs against a fully isolated temp app (temp DB, temp config.yaml, patched `CONFIG_PATH`/`DB_PATH`) so it never touches the live server.
+- **test_rss_feed.py (26 tests)**: The public status feed `GET /feed.xml` — XML well-formedness, `<lastBuildDate>`/`<pubDate>` advance on status change, only status events surfaced (notes/rename filtered), `rss: {enabled: false}` → 404, admin toggle `POST /api/rss`, title/max_items clamping, empty-history feed shape.
+- **test_rss_healthcheck.py (20 tests)**: The `rss` healthcheck type end-to-end — a real local HTTP server serves synthetic feeds; parse cases (RSS 2.0 `<item>`, Atom `<entry>` with default namespace, malformed XML → fetch failure); runtime keyword mapping (red beats degraded, case-insensitive, description+summary scanned, no-keyword feeds); feed-shape edge cases (empty feed → green, entries past the 20-entry cap not scanned, feed >512 KB → fetch failure); one-shot `run_healthchecks_once` result shape; and a full **E2E worker test** that points a live worker thread at a mutable local feed and asserts the DB item flips green→red→green with history rows recorded.
+
+### Slack — `tests/test_slack.py` (24 tests)
+
+Slack config resolution (defaults, env fallback, malformed-section tolerance,
+public listing masks the webhook URL), outbox enqueue/count, queue pruned to
+`max_queue` (oldest dropped), queue clearing, and chronological digest
+building with status labels. Uses the shared `_FakeSlack` webhook from
+`conftest.py`; `scripts/fake_slack.py` is the same server standalone.
+
+### Observability & UX — `tests/test_logging.py` + `tests/test_ux_features.py` + `tests/test_env_shell_safety.py`
+
+- **test_logging.py (21 tests)**: request logging — client IP + user agent recorded, `X-Forwarded-For` honoured only with `STATUS_TRUST_PROXY`, status code/duration in log line
+- **test_ux_features.py (6 tests)**: public `/api/status` list shape (no admin detail leaked), reflects toggles, delete 404 JSON / compaction, `429` includes `retry_after`
+- **test_env_shell_safety.py (4 tests)**: env-file values containing spaces/quotes/$ survive `bash source` — install.sh and change_password.py must write single-quoted values
+
+### Install & Scripts — `tests/test_install_robustness.py` + `tests/test_install_logo.py` + `tests/test_scripts_productionized.py` + `tests/test_dev_setup.py` + `tests/test_dogfood_fixes.py`
+
+- **test_install_robustness.py (19 tests)**: install.sh shell helpers — die/warn/step/ok output routing, `require_cmd` hints, failure captured to err log, pass-hash with `$` chars accepted / truncated hash rejected
+- **test_install_logo.py (14 tests)**: `scripts/install_logo.sh` — copies logo + wires config, preserves other sections + non-png extensions, dark/light pair, missing-file and relative-install-dir failures
+- **test_scripts_productionized.py (13 tests)**: deploy-script productionization — dotenv key quoting, upgrade preserves / `--force-env` replaces credentials, `--help` exit 0, ci-mode env credentials, installed app boots and logs in
+- **test_dev_setup.py (8 tests)**: dev-setup.sh prompts — defaults on blank input, password-mismatch re-prompt, password kept when declined, hash single-quoted, `.env.local` 0600, values survive `bash source`
+- **test_dogfood_fixes.py (13 tests)**: regressions found by dogfooding — healthchecks-disabled endpoints return JSON (not 500/409-HTML), notes 2000-char limit enforced + constants agree, missing-id JSON errors, lockout messages carry real remaining time and client IP
 
 ### Restart Persistence — `tests/test_restart_persistence.py`
 
@@ -139,12 +166,14 @@ cd ~/Developer/status-my-page
 .venv/bin/pytest tests/test_structural.py -v                 # Additional MC/DC (D4, D5)
 .venv/bin/pytest tests/test_healthcheck.py -v                # Healthcheck functional + exception paths
 .venv/bin/pytest tests/test_healthcheck_mc_dc.py -v          # Healthcheck MC/DC + worker lock
+.venv/bin/pytest tests/test_slack.py -v                      # Slack outbox, digest, flush
 .venv/bin/pytest tests/test_history.py -v                    # Status history feature
 .venv/bin/pytest tests/test_routes_and_features.py -v        # Auth, mutations, headers
 .venv/bin/pytest tests/test_restart_persistence.py -v        # Restart simulation
 
-# With coverage report
-.venv/bin/pytest tests/ --cov=app --cov=healthcheck --cov=input_filter --cov-report=term-missing
+# With coverage report (pytest-cov is NOT in requirements.txt — install separately)
+.venv/bin/pip install pytest-cov
+.venv/bin/pytest tests/ --cov=app --cov=statuspage --cov=input_filter --cov=healthcheck --cov-report=term-missing
 ```
 
 ### Individual Test Class
@@ -268,9 +297,11 @@ python -m pytest tests/ -v
 
 The structural suite is deliberately **brittle** because it should fail if a guard's logic changes — the condition truth table will no longer match expected outputs. This is intentional: any regression in security guards or restoration logic must surface as a test failure.
 
-**Current coverage: 87% total** (453 tests, measured 2026-08-18)
+**Test suite size: 614 tests** (collected 2026-08-27). Per-module coverage
+table below was **measured 2026-08-18** (re-measure needs `pytest-cov`, which
+is not in `requirements.txt`):
 
-| Module | Coverage |
+| Module | Coverage (2026-08-18) |
 |--------|----------|
 | `input_filter.py` | 100% |
 | `statuspage/auth.py` | 97% |
@@ -281,8 +312,6 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 | `statuspage/config.py` | 88% |
 | `healthcheck.py` | 84% |
 | `app.py` | 74% |
-
-**Test suite size: 453 tests** (as of 2026-08-18).
 
 ---
 
@@ -316,4 +345,4 @@ The structural suite is deliberately **brittle** because it should fail if a gua
 
 ---
 
-*Document version: 2.3 | Last updated: 2026-08-18 | Author: Simar Sahni*
+*Document version: 2.4 | Last updated: 2026-08-27 | Author: Simar Sahni*

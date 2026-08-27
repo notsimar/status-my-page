@@ -8,6 +8,7 @@
 - [4. State Management & Persistence](#4-state-management--persistence)
 - [5. Backup Files](#5-backup-files)
 - [6. Config Migrations](#6-config-migrations)
+- [7. Slack Notifications](#7-slack-notifications-optional)
 
 ---
 
@@ -25,22 +26,29 @@ items:
   - ServiceNow
 
 # ── Admin credentials ─────────────────────────────────────────
-admin:
-  user: admin                # Admin username (overridable via STATUS_ADMIN_USER env)
-  # NOTE: Never store plaintext passwords here. 
-  # The STATUS_ADMIN_PASS_HASH environment variable is REQUIRED (no fallback).
-
-# ── Server settings ────────────────────────────────────────────
-server:
-  host: "0.0.0.0"            # Bind address (use "127.0.0.1" for localhost-only)
-  port: 8920                 # Listening port
-  secret_key_env: STATUS_SECRET_KEY  # Env var name containing Flask session signing key
+_base:
+  admin:
+    user: admin                # Admin username (overridable via STATUS_ADMIN_USER env)
+    # NOTE: Never store plaintext passwords here. 
+    # The STATUS_ADMIN_PASS_HASH environment variable is REQUIRED (no fallback).
+  server:
+    host: "0.0.0.0"            # Bind address (use "127.0.0.1" for localhost-only)
+    port: 8920                 # Listening port
+    secret_key_env: STATUS_SECRET_KEY  # Env var name containing Flask session signing key
 
 # ── Page settings ─────────────────────────────────────────────
 # Optional. History is OFF by default — opt in per-deployment.
 settings:
-  history_enabled: false   # Show per-service 🕙 history button + /api/history
+  history_enabled: false     # Show per-service 🕙 history button + /api/history
+  healthchecks_enabled: false # Run background healthchecks (code default is true; the repo's bundled config.yaml ships it disabled)
 ```
+
+> **About the `_base:` section.** Newer revisions of the file nest `admin`
+> and `server` under `_base` (as shown above); both shapes are equivalent.
+> The parser reads either (`statuspage/config.py::_read_section` searches top
+> level first, then `_base`), and every runtime write by the admin API migrates
+> the file to the `_base` form automatically. Do not duplicate the sections —
+> migration keeps them in `_base` only.
 
 ### Field Details
 
@@ -53,7 +61,7 @@ settings:
 #### `admin.user` (required)
 - **Type:** String
 - **Purpose:** Admin username for authentication
-- **Override:** Can be overridden at runtime via `STATUS_ADMIN_USER` environment variable
+- **Override:** Can be overridden at runtime via `STATUS_ADMIN_USER` environment variable (takes precedence over the config value)
 - **Default:** `"admin"`
 
 #### `server.host` (optional, default: `"0.0.0.0"`)
@@ -202,33 +210,36 @@ healthchecks:
 
 | Variable | Purpose | Required | Example | Notes |
 |----------|---------|----------|---------|-------|
-| `STATUS_ADMIN_USER` | Override admin username from config.yaml | No | `john` | Takes precedence over `admin.user` in config |
-| `STATUS_ADMIN_PASS_HASH` | Password hash for Flask auth (REQUIRED for production) | Yes | `scrypt$72816$salt...` | **Never** store plaintext passwords |
-| `STATUS_SECRET_KEY` | Flask session signing key | Recommended | `a1b2c3d4e5f6...` | Auto-generated if unset but doesn't survive restarts |
+| `STATUS_ADMIN_USER` | Override admin username from config.yaml (`_base.admin.user`) | No | `john` | Takes precedence over the config value; read at every config load |
+| `STATUS_ADMIN_PASS_HASH` | Password hash for Flask auth (REQUIRED — app refuses to start without it) | Yes | `scrypt:32768:8:1$<salt>$<hex>` | **Never** store plaintext passwords |
+| `STATUS_SECRET_KEY` | Flask session signing key | Recommended | `a1b2c3d4e5f6...` | If unset, one is auto-generated **persisted at `instance/.secret_key`** (mode 600), so multi-worker deployments share a key and sessions survive restarts |
 | `STATUS_NO_ARCHIVE=1` | Disable DB archival on server restart | No | (any value) | Use only for development/testing |
 | `STATUS_TRUST_PROXY=1` | Trust `X-Forwarded-For` header for client IP resolution | No | — | Enable **only** behind a reverse proxy that *overwrites* (not appends to) the header. Default off: direct clients cannot spoof IPs into access.log or dodge per-IP rate limits |
 | `STATUS_SECURE_COOKIES=1` | Set the `Secure` flag on session cookies | No | — | Enable on HTTPS deployments |
 | `STATUS_DISABLE_HEALTHCHECKS=1` | Don't start the background healthcheck worker | No | — | Development/testing only |
 | `STATUS_SLACK_WEBHOOK_URL` | Slack incoming webhook fallback | No | `https://hooks.slack.com/...` | Used when `slack.webhook_url` is unset in config.yaml (config wins if both set) |
 
-> **Behind a reverse proxy?** Add `STATUS_TRUST_PROXY=1` to `/etc/status-page/env`
-> so access logs and login-lockout rate limiting see real client IPs. Without it,
-> every visitor appears as the proxy's IP (`127.0.0.1`) and a single abusive
-> client could lock out all users sharing that address.
+> **Behind a reverse proxy?** Add `STATUS_TRUST_PROXY=1` to the env file
+> (`<install_dir>/.env.local` for install.sh deployments, or your systemd
+> `EnvironmentFile=`) so access logs and login-lockout rate limiting see real
+> client IPs. Without it, every visitor appears as the proxy's IP
+> (`127.0.0.1`) and a single abusive client could lock out all users sharing
+> that address.
 
 ### Archives retention
 
 Archive snapshots in `archives/` are pruned automatically: the oldest
-snapshots beyond **50** are deleted each time a new snapshot is written, so
-frequent restarts cannot grow the directory unboundedly. `./cleanup.sh prune`
-still works for manual control with a custom `--keep` count.
+snapshots beyond **50** (`MAX_ARCHIVES` in `statuspage/db.py`) are deleted
+each time a new snapshot is written, so frequent restarts cannot grow the
+directory unboundedly. `./cleanup.sh prune` still works for manual control
+with a custom `--keep` count.
 
 ### Generating Values
 
 **Password hash:**
 ```bash
 python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-secure-password'))"
-# Output: scrypt$72816$... (copy this entire string)
+# Output: scrypt:32768:8:1$<salt>$<hex-hash> (copy this entire string, including the $ characters)
 ```
 
 **Secret key:**
@@ -239,21 +250,25 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ### Setting Environment Variables
 
-For production deployments via `install.sh`, credentials are stored in `/etc/status-page/env`:
+For production deployments via `install.sh`, credentials are stored in
+`<install_dir>/.env.local` (mode `0600`), which the systemd unit references via
+`EnvironmentFile=`. It is created for you during install — a hand-written
+equivalent looks like:
 ```bash
-sudo tee /etc/status-page/env > /dev/null <<EOF
-STATUS_ADMIN_PASS_HASH=scrypt$72816$salt...
+cat > /path/to/install-dir/.env.local <<EOF
+STATUS_ADMIN_PASS_HASH=scrypt:32768:8:1\$<salt>\$<hex>
 STATUS_ADMIN_USER=admin
 STATUS_SECRET_KEY=a1b2c3d4e5f6...
 PYTHONUNBUFFERED=1
 EOF
-sudo chmod 0640 /etc/status-page/env
+chmod 0600 /path/to/install-dir/.env.local
 ```
 
-For manual systemd setups, reference this file in the service definition via `EnvironmentFile=`. For development, export directly:
+For manual systemd setups, write a similar env file and reference it in the
+service definition via `EnvironmentFile=`. For development, the app auto-loads
+`.env.local` / `.env` via python-dotenv — no export needed:
 ```bash
-export STATUS_ADMIN_PASS_HASH="scrypt$72816$salt..."
-export STATUS_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+./dev-setup.sh        # writes .env.local, or write it by hand
 ./start.sh
 ```
 
@@ -263,24 +278,33 @@ export STATUS_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(
 
 ### Password Storage Format
 
-Passwords are stored exclusively as werkzeug scrypt hashes:
+Passwords are stored exclusively as werkzeug password hashes (scrypt with the
+defaults of the current werkzeug in requirements.txt):
 ```
-scrypt:32768:8:<salt>:<hash>
+scrypt:32768:8:1$<salt>$<hex-hash>
 ```
 
-- **Algorithm:** scrypt (FIPS 140-2 compliant)
-- **Parameters:** Default CPU/work factor is set by werkzeug; adjust via `werkzeug.security.generate_password_hash(password)` parameters if needed
-- **Comparison:** Timing-safe comparison via `werkzeug.security.check_password_hash()` prevents side-channel attacks
+> On very old builds without OpenSSL scrypt (e.g. some LibreSSL environments),
+> `install.sh` falls back to a PBKDF2-SHA256 hash; `check_password_hash()`
+> accepts either format.
+
+- **Algorithm:** scrypt (default) — memory-hard KDF (RFC 7914), resistant to brute-force hardware
+- **Parameters:** werkzeug defaults (n=32768, r=8, p=1); adjust via `generate_password_hash(method='scrypt:32768:8:1', ...)` if needed
+- **Comparison:** `werkzeug.security.check_password_hash()` — constant-time verification against the stored salt
 
 ### Secret Key Requirements
 
 The Flask `SECRET_KEY` signs session cookies cryptographically. Requirements:
-- Minimum 32 bytes (256 bits) of entropy
-- Must be a hex string or base64-encoded raw bytes
+- Minimum 32 bytes (256 bits) of entropy when you generate one manually
 - Should **never** be hardcoded in config.yaml or committed to git
 - Use `python3 -c "import secrets; print(secrets.token_hex(32))"` to generate
 
-If the key is regenerated (e.g., after server restart and no persistent value), all existing sessions become invalid immediately.
+When `STATUS_SECRET_KEY` is unset, the app auto-generates a key **once** and
+persists it to `instance/.secret_key` (mode `600`, created with `O_EXCL` so
+concurrent gunicorn workers can't each generate a different one). Sessions
+therefore survive restarts and multi-worker deployments share a single key.
+If that file is ever deleted/regenerated, all existing sessions become invalid
+immediately.
 
 ---
 
@@ -338,46 +362,60 @@ Backup files are excluded from git via `.gitignore` to prevent credential/histor
 
 ### Adding a New Feature Flag
 
-When extending `config.yaml` with new top-level sections or feature toggles, update the `_parse_config()` function in `app.py` to:
-1. Validate the new section exists and is a dict/array (not None)
-2. Default to sensible fallbacks if missing
-3. Filter from runtime config data (if metadata-only)
+When extending `config.yaml` with new top-level sections or feature toggles, the
+load side lives in `statuspage/config.py`:
+1. `_load_config_uncached()` — read the section (respecting the `_base`
+   dual-search for `admin`/`server`-style sections) and cache runtime getters
+2. Provide a public accessor with a sensible fallback when the key is missing
+   (see `_load_settings()` / `history_enabled()` as the pattern)
+3. If the section must be editable at runtime, add a `_save_<section>()`
+   function that calls `_migrate_config_section()` +
+   `_write_config_atomic()` (backup rotation included), and wire it to an admin
+   API route in `statuspage/routes.py`.
+4. Filter secrets from any config data that is ever exposed publicly
+   (`_base.admin`, webhook URLs — see the redaction helpers in `routes.py`).
 
 ### Changing DB Schema
 
-SQLite migrations are handled automatically via `init_db()`:
+SQLite migrations are handled automatically via `init_db()` (in
+`statuspage/db.py`):
 ```python
 def init_db():
     with _db_lock:
         db = get_db()
-        db.execute('''CREATE TABLE IF NOT EXISTS status_items (...)''')
-        db.execute('''CREATE TABLE IF NOT EXISTS status_history (...)''')
+        db.execute("CREATE TABLE IF NOT EXISTS status_items (...)")
+        db.execute("CREATE TABLE IF NOT EXISTS status_history (...)")
         db.commit()
 ```
 
-No explicit migration scripts needed — `CREATE TABLE IF NOT EXISTS` is idempotent. For actual schema changes (column additions), use `ALTER TABLE column_name ADD COLUMN new_col TYPE` within the same function before first query execution.
+No explicit migration scripts needed — `CREATE TABLE IF NOT EXISTS` is
+idempotent. For actual schema changes (column additions), use
+`ALTER TABLE ... ADD COLUMN` within the same function before first query
+execution, and note that `init_db()` takes an automatic archive snapshot of the
+DB before seeding on fresh deploys.
 
 ### Breaking Changes Checklist
 
 Before modifying config.yaml structure:
 1. Run `pytest tests/ -v` to verify existing tests still pass
-2. Update `_parse_config()` validation logic if adding/changing top-level sections
+2. Update `statuspage/config.py` parsing/migration logic if adding/changing
+   top-level sections
 3. Document migration path in release notes
 4. Consider versioning the schema if backward compatibility is needed
+5. Remember legacy files with top-level `admin:`/`server:` sections: the
+   `_migrate_config_section()` one-directional migration must keep accepting
+   them
 
 ---
 
-*Document version: 1.2 | Last updated: 2026-08-18 | Author: Simar Sahni*
-
-
-### Slack notifications (optional)
+## 7. Slack notifications (optional)
 
 ```yaml
 slack:
   enabled: true
   webhook_url: "https://hooks.slack.com/services/T000/B000/XXXX"
   channel: "#ops"            # optional override; empty = webhook default channel
-  max_queue: 200             # oldest queued changes dropped beyond this (1–5000)
+  max_queue: 500             # outbox size cap (default 500; clamped 1–5000)
 ```
 
 | Key | Default | Purpose |
@@ -385,7 +423,7 @@ slack:
 | `enabled` | `false` | Master switch. When true, every status change is queued to the outbox |
 | `webhook_url` | *(empty)* | Slack incoming-webhook URL. Falls back to `STATUS_SLACK_WEBHOOK_URL` env var when unset in config |
 | `channel` | *(empty)* | Optional `#channel` or `@user` override sent with each message |
-| `max_queue` | `200` | Outbox size cap (clamped 1–5000) |
+| `max_queue` | `500` | Outbox size cap when the key is absent (clamped 1–5000 if set) |
 
 **How it works:** status changes are appended to a persistent SQLite outbox
 (`slack_outbox` table) as they happen — manual toggles via the admin panel and
@@ -397,4 +435,8 @@ only cleared after Slack confirms receipt.
 The admin panel (Slack Notifications section) can toggle the integration,
 set the webhook URL and channel, and show the queued count. The full webhook
 token is never returned to the browser — only a masked form.
+
+---
+
+*Document version: 1.3 | Last updated: 2026-08-27 | Author: Simar Sahni*
 

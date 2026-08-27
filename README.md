@@ -34,7 +34,7 @@ A dark-themed, mobile-responsive dashboard showing monitored services with color
 | Requirement        | Minimum Version     | Notes                                                  |
 |--------------------|---------------------|--------------------------------------------------------|
 | Python             | 3.9+                | Tested on 3.9–3.14 with CPython (incl. macOS default 3.9.6) |
-| pip                | Any recent version  | Used only for `requirements.txt` (flask, pyyaml)       |
+| pip                | Any recent version  | Used only for `requirements.txt` (flask, gunicorn, pyyaml, python-dotenv) |
 | SQLite             | Bundled with Python | Database lives in `instance/status.db` (WAL mode auto) |
 | Optional: gunicorn | 20+                 | Production WSGI server (used by `install.sh`)          |
 
@@ -64,11 +64,11 @@ defaults:
 
 | Prompt            | Default      | Written to                        |
 |-------------------|--------------|-----------------------------------|
-| Admin username    | `admin`      | `DEV_ADMIN_USER`                  |
+| Admin username    | `admin`      | `DEV_ADMIN_USER` + synced into `config.yaml` |
 | Admin password    | *(asked)*    | `STATUS_ADMIN_PASS_HASH` (scrypt) |
 | Dev server port   | `8920`       | `DEV_PORT`                        |
 | Disable healthchecks? | `Y`    | `STATUS_DISABLE_HEALTHCHECKS`     |
-| Logo file         | *(blank)*    | `DEV_LOGO_PATH`                   |
+| Logo file         | *(blank)*    | `DEV_LOGO_PATH` + `config.yaml` logo section |
 
 Re-runs offer your existing values as the defaults, so you just press Enter,
 and an existing password is kept unless you explicitly choose to reset it.
@@ -80,8 +80,12 @@ After setup, start the dev server with:
 
 ```bash
 source .venv/bin/activate
-flask --app app run --host 0.0.0.0 --port 8920
+flask --app app run --host 127.0.0.1 --port 8920
 ```
+
+> The dev server binds to `127.0.0.1` by default. Use `./start.sh` instead if
+> you want the gunicorn-based launcher (gunicorn, PID tracking, logs →
+> `logs/server.log`).
 
 <details>
 <summary>Manual equivalent (no prompts)</summary>
@@ -100,7 +104,7 @@ pip install --find-links ./vendor -r requirements.txt
 #    (NEVER store plaintext passwords in config.yaml or commit them to git)
 python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('my-secure-pw'))"
 
-# 📌 Copy the output — it looks like: scrypt$72816...
+# 📌 Copy the output — it looks like: scrypt:32768:8:1$<salt>$<hex-hash>
 ```
 
 </details>
@@ -120,13 +124,18 @@ items:
   - Slack
   # ... add all the services you want to monitor
 
-admin:
-  user: admin                        # ← or override via STATUS_ADMIN_USER env var
-
-server:
-  host: "0.0.0.0"
-  port: 8920
+_base:
+  admin:
+    user: admin                        # ← or override via STATUS_ADMIN_USER env var
+  server:
+    host: "0.0.0.0"
+    port: 8920
+    secret_key_env: STATUS_SECRET_KEY   # Flask session signing key
 ```
+
+> The top-level `admin:` / `server:` form (without `_base:`) also works — it is
+> auto-migrated into `_base` on the first runtime write. After any admin API
+> edit the file uses the `_base` form shown above.
 
 > **Note:** Do not put a plaintext password in `config.yaml`. The `STATUS_ADMIN_PASS_HASH` environment variable is **required** (no fallback). Generate one with the command below.
 
@@ -134,12 +143,12 @@ server:
 
 ```bash
 # Set your credentials via env vars, then run:
-export STATUS_ADMIN_PASS_HASH="scrypt$72816$..."   # from step 3 above
+export STATUS_ADMIN_PASS_HASH="scrypt:32768:8:1\$<salt>\$<hash>"   # from step 3 above
 
 ./start.sh
 ```
 
-The server launches on `http://localhost:8920`. Admin user is the value from `config.yaml` under `admin.user` (default: `admin`).
+The server launches on `http://localhost:8920`. Admin user is `config.yaml` → `_base.admin.user` (default: `admin`), overridable with the `STATUS_ADMIN_USER` env var.
 
 ### Option 2: One-command production install (`install.sh`)
 
@@ -150,43 +159,40 @@ For a fresh Linux server (Ubuntu, Debian, Fedora, RHEL), the wizard handles ever
 git clone https://github.com/notsimar/status-my-page.git ~/status-my-page
 cd ~/status-my-page
 
-# Run the install script as root — it will:
-#   • Install python3, venv, gunicorn system packages
-#   • Create a dedicated 'statuspage' system user
-#   • Deploy files to /opt/status-page (default)
-#   • Create Python venv + install dependencies
-#   • Seed the SQLite database from config.yaml
-#   • Prompt for admin credentials (stored in /etc/status-page/env, mode 0640)
-#   • Install & enable a systemd service (status-page.service)
-#   • Start Gunicorn on 0.0.0.0:8920 behind systemd
+# Run the install — root or normal user:
+#   • Requires python3 + python3-venv to be present (fail-fast with hints otherwise)
+#   • Runs as the invoking user (no separate system user is created)
+#   • Deploys files to $HOME/.local/share/status-page (default) — or any absolute path
+#   • Creates Python venv + installs dependencies (PyPI or bundled vendor/ wheels)
+#   • Prompts for admin credentials (stored in <install_dir>/.env.local, mode 0600)
+#   • Seeds the SQLite database from config.yaml
+#   • Installs & enables a systemd service (status-page.service) — root mode only
+#   • Root mode: Gunicorn bound to 0.0.0.0:8920 under systemd
+#   • Non-root mode: tells you to start with ./start.sh
 sudo ./install.sh
 ```
 
-**Choose a custom install path:**
+**Choose a custom install path (must be absolute):**
 
 ```bash
-sudo ./install.sh /srv/status-dashboard
+./install.sh /srv/status-dashboard
 ```
 
 **What the wizard asks during installation:**
 
 ```
-=== Setting admin credentials ===
-Admin username [admin]: ?
-Admin password: ?       ← typed silently, hashed as scrypt, stored in /etc/status-page/env
+=== status-my-page: installing ===
+... (system packages, venv, DB seed) ...
 
-Credentials set: user=?
+=== Admin credentials ===
+Admin username [admin]: ?
+Admin password: ?       ← typed silently, hashed (scrypt), stored in .env.local
+
+Credentials set: user=? (new password)
 
 === Installing systemd service (status-page.service) ===
 Service enabled. Starting…
-
-=== Verification ===
-✅ status-page.service is running
-✅ Status page responding (HTTP 200)
-
-=== Verification ===
-  Deployment complete!
-  URL: http://<server-ip>:8920/
+Service is up and serving on port 8920.
 ```
 
 **After-install management:**
@@ -219,7 +225,7 @@ sudo chown -R statuspage:statuspage /opt/status-page/{instance,logs,archives} 2>
 # Write credentials to env file
 mkdir -p /etc/status-page
 sudo tee /etc/status-page/env > /dev/null <<EOF
-STATUS_ADMIN_PASS_HASH=scrypt$72816$...   # your hash here
+STATUS_ADMIN_PASS_HASH=scrypt:32768:8:1$<salt>$<hash>   # your full hash here
 STATUS_ADMIN_USER=admin
 PYTHONUNBUFFERED=1
 EOF
@@ -327,14 +333,18 @@ items:
   - Slack
   # ... add all the services you want to monitor
 
-admin:
-  user: admin                        # ← or override via STATUS_ADMIN_USER env var
-
-server:
-  host: "0.0.0.0"
-  port: 8920
-  secret_key_env: STATUS_SECRET_KEY   # Flask session signing key
+_base:
+  admin:
+    user: admin                        # ← or override via STATUS_ADMIN_USER env var
+  server:
+    host: "0.0.0.0"
+    port: 8920
+    secret_key_env: STATUS_SECRET_KEY   # Flask session signing key
 ```
+
+> Legacy top-level `admin:` / `server:` keys are auto-migrated into `_base` on
+> the first runtime write. See [docs/configuration.md](docs/configuration.md)
+> for every section (`settings:`, `rss:`, `slack:`, `logo:`).
 
 ### Healthchecks (optional)
 
@@ -371,7 +381,7 @@ healthchecks:
     timeout: 15
   Google Workspace:
     type: rss
-    url: https://www.google.com/appsstatus/dashboard/
+    url: https://www.google.com/appsstatus/dashboard/en/feed.atom   # feed URL, not the dashboard page
     keywords:
       red: [outage, major issue]
       degraded: [degraded, minor, investigating]
@@ -434,19 +444,37 @@ DTD (`healthcheck.feed_treats_as_unfetchable`).
 
 | Variable                 | Purpose                                             | Required | Example            |
 |--------------------------|-----------------------------------------------------|----------|--------------------|
-| `STATUS_ADMIN_USER`      | Override admin username from config.yaml            | No       | `john`             |
-| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production)         | **Yes**  | `scrypt$72816$...` |
-| `STATUS_SECRET_KEY`      | Flask session signing key (auto-generated if unset) | No       | Any random string  |
+| `STATUS_ADMIN_USER`      | Override admin username from config.yaml (`_base.admin.user`) | No | `john`             |
+| `STATUS_ADMIN_PASS_HASH` | Password hash (**required** for production)         | **Yes**  | `scrypt:32768:8:1$...$...` |
+| `STATUS_SECRET_KEY`      | Flask session signing key. If unset, one is auto-generated **persisted to `instance/.secret_key`** (mode 600) so multi-worker gunicorn deployments share one key and sessions survive restarts | No | Any random string |
 | `STATUS_NO_ARCHIVE=1`    | Skip DB archival on restart (dev/testing only)      | No       | —                  |
 | `STATUS_TRUST_PROXY=1`   | Trust `X-Forwarded-For` for client IP (enable ONLY behind a reverse proxy that overwrites the header) | No | — |
 | `STATUS_SECURE_COOKIES=1`| Set the `Secure` flag on session cookies (HTTPS deployments) | No | — |
 | `STATUS_DISABLE_HEALTHCHECKS=1` | Don't start the healthcheck worker (dev/testing) | No | — |
 | `STATUS_SLACK_WEBHOOK_URL` | Slack webhook fallback if unset in config.yaml   | No       | `https://hooks.slack.com/...` |
 
+> Note the difference between `STATUS_DISABLE_HEALTHCHECKS` (kills the worker
+> process entirely — dev/testing) and `settings.healthchecks_enabled` in
+> config.yaml (opt out at runtime, toggleable from the admin UI). The repo's
+> bundled `config.yaml` ships with `healthchecks_enabled: false`.
+
+### 📚 Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | System design, data flow, component diagrams, security architecture |
+| [docs/api-reference.md](docs/api-reference.md) | Every HTTP endpoint with request/response examples |
+| [docs/configuration.md](docs/configuration.md) | Full config.yaml reference, env vars, security credentials, migrations |
+| [docs/deployment-guide.md](docs/deployment-guide.md) | install.sh, manual systemd, Docker, reverse proxies, SSL, monitoring |
+| [docs/scripts-and-maintenance.md](docs/scripts-and-maintenance.md) | Every shell script: purpose, execution flow, safety features |
+| [docs/testing.md](docs/testing.md) | Test suite layout, running tests, MC/DC decision coverage |
+| [README_MCDC.md](README_MCDC.md) | Structural-testing strategy (MC/DC proof tables) |
+
 **Generate a hash:**
 
 ```bash
 python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('my-secure-pw'))"
+# Output looks like: scrypt:32768:8:1$<salt>$<hex-hash> — copy the whole string
 ```
 
 ### Database persistence & backups
@@ -470,30 +498,21 @@ cp config.yaml.bak1 config.yaml
 
 ## 🛠 Scripts reference
 
-| Script | Purpose |
-|---|---|
-| `install.sh` | One-command production installer (systemd, venv, DB seed, credentials) |
-| `start.sh` / `stop.sh` / `restart.sh` | Server lifecycle |
-| `rebuild.sh` | Full dep install + DB migrations + restart |
-| `cleanup.sh` | Archive manager: list/show/prune/report |
-| `change_password.sh` | Rotate the admin password hash in `.env.local` |
-| `scripts/build_release.sh` | Build a clean deployable `dist/*.tar.gz` from git-tracked files |
-| `scripts/install_logo.sh` | Install customer logos into `static/logos/` + wire config.yaml |
-| `scripts/backup.sh` | Backup/restore CLI wrapper |
-| `scripts/backup_db.py` | Consistent SQLite snapshot & restore |
-| `scripts/export_db.py` | Database export utility |
-
 | Script | Purpose | Example usage |
 |---|---|---|
-| `start.sh` | Launch dev server (PID tracking, logs → `logs/server.log`) | `./start.sh` |
-| `stop.sh` | Graceful shutdown via PID file | `./stop.sh` |
-| `restart.sh` | Kill + start without reinstalling deps | `./restart.sh` |
+| `install.sh` | Production deploy wizard (venv, DB seed, credentials, systemd in root mode) | `sudo ./install.sh[/abs/path]` |
+| `dev-setup.sh` | Interactive dev bootstrap: git pull, venv, prompts, `.env.local`, DB seed | `./dev-setup.sh` |
+| `start.sh` / `stop.sh` / `restart.sh` | Server lifecycle (gunicorn, PID tracking, logs → `logs/server.log`) | `./start.sh` |
 | `rebuild.sh` | Full dep install + DB migrations + restart | `./rebuild.sh` |
-| `install.sh` | Production deploy wizard (systemd, user, gunicorn) | `sudo ./install.sh[/path]` |
-| `cleanup.sh` | Archive manager for `archives/` JSON snapshots | See commands below |
-| `scripts/backup.sh` | Database backup, restore, list, and pruning CLI wrapper | `./scripts/backup.sh -l` |
-| `scripts/backup_db.py` | Python script for consistent SQLite backup API snapshots | `python3 scripts/backup_db.py` |
+| `cleanup.sh` | Archive manager for `archives/` JSON snapshots: list/show/prune/report | `./cleanup.sh list` |
+| `change_password.sh` | Rotate the admin password hash in `.env.local` | `./change_password.sh` |
+| `lib.sh` | Shared error-reporting helpers (sourced by other scripts, not a CLI) | — |
+| `scripts/backup.sh` | Database backup / restore / list / prune (30-day default retention) | `./scripts/backup.sh --list` |
+| `scripts/backup_db.py` | Consistent SQLite backup/restore (the engine behind `backup.sh`) | `python3 scripts/backup_db.py --list` |
 | `scripts/export_db.py` | Database export utility | `python3 scripts/export_db.py` |
+| `scripts/build_release.sh` | Build a clean deployable `dist/*.tar.gz` from git-tracked files | `./scripts/build_release.sh` |
+| `scripts/install_logo.sh` | Install customer logos into `static/logos/` + wire config.yaml | `./scripts/install_logo.sh logo.png` |
+| `scripts/fake_slack.py` | Local mock Slack webhook for testing notifications | `python3 scripts/fake_slack.py` |
 
 ### `cleanup.sh` commands
 
@@ -508,7 +527,7 @@ cp config.yaml.bak1 config.yaml
 
 ## 📜 License
 
-MIT License — see [LICENSE.md](LICENSE.md) for details.
+MIT License — see [License.md](License.md) for details.
 
 ---
 

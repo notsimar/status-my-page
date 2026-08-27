@@ -17,11 +17,11 @@
 
 | Script | Purpose | User Privilege | Key Files Modified |
 |--------|---------|----------------|--------------------|
-| `start.sh` | Launch dev server with PID tracking & log capture | None (user) | Creates `.server-pid`, `logs/server.log` |
-| `stop.sh` | Graceful shutdown via PID file | sudo for systemd, none for dev | Reads `.server-pid` or uses `kill $(pgrep -f gunicorn)` |
-| `restart.sh` | Kill existing process then start fresh | None (user) | Uses stop.sh + start.sh chain |
+| `start.sh` | Launch server (gunicorn) with PID tracking & log capture | None (user) | Creates `.server.pid`, `logs/server.log` |
+| `stop.sh` | Graceful shutdown via PID file (kills worker children too) | None (user) | Reads `.server.pid` |
+| `restart.sh` | stop.sh + 1 s grace period + start.sh | None (user) | Uses stop.sh + start.sh chain |
 | `rebuild.sh` | Full dependency install + DB migration + server restart | sudo for system deps | Installs venv, runs migrations in app.py |
-| `install.sh` | One-command production deploy wizard | Root/sudo | System user, systemd unit, /etc/status-page/env |
+| `install.sh` | One-command production deploy wizard (root: systemd + 0.0.0.0; non-root: deploy only) | Root or user | Installs to `$HOME/.local/share/status-page` (or given abs path), `.env.local` (0600), systemd unit in root mode |
 | `cleanup.sh` | Archive management (list/show/prune/report) | None (user) | Reads/writes `archives/` JSON snapshots |
 | `change_password.sh` | Securely reset/update admin password hash in env | None (user) | Updates `.env.local` / `.env` (`STATUS_ADMIN_PASS_HASH`) |
 | `scripts/build_release.sh` | Build clean deployable `dist/*.tar.gz` from git-tracked files | None (user) | Creates `dist/` tarball |
@@ -89,53 +89,43 @@ single-quoted env values, `600` permissions, and `$`-surviving sourcing.
 
 ---
 
-## 3. start.sh — Development Server Launcher
+## 3. start.sh — Server Launcher
 
 ### Purpose
 
-Starts the Flask application for local development with process tracking and structured logging.
+Launches the status page with gunicorn (matching install.sh's systemd unit) with
+PID tracking and log capture.
 
 ### Execution Flow
 
 ```
 start.sh
     │
-    ├── Check if server already running (read .server-pid)
-    │   └── YES → display "Server is already running" → exit 1
+    ├── Already running? (kill -0 against PID in .server.pid)
+    │   └── YES → "Already running (PID …)" → exit 0
     │
     ├── Create logs/ directory if missing
     │   └── mkdir -p logs
     │
-    ├── Determine Python venv location
-    │   ├── Prefer .venv/bin/python (local)
-    │   └── Fall back to system python3 if .venv not found
+    ├── Load environment from .env.local (set by install.sh/dev-setup.sh),
+    │   falling back to .env — sourced with `set -a` so values with
+    │   spaces/quotes survive export
     │
-    ├── Apply environment variables from .env file or system
-    │   └── Source: .env file (if present, dotenv-style parsing)
-    │
-    ├── Launch Gunicorn or Flask dev server
-    │   ├── Production mode: gunicorn app:app --bind 0.0.0.0:8920
-    │   └── Dev mode: python -m flask run --port 8920
-    │
-    ├── Write PID to .server-pid file for stop.sh
-    │   └── echo $! > .server-pid
-    │
-    └── Log startup message
-        └── echo "[start] Server started on PID $!" >> logs/server.log
+    └── Launch gunicorn in the background
+        └── nohup .venv/bin/gunicorn --bind 0.0.0.0:8920 --workers 2 --timeout 30 app:app
+            >> logs/server.log 2>&1 &
+        ├── Write PID to .server.pid (for stop.sh)
+        └── Print "Running on http://0.0.0.0:8920 (PID $!, gunicorn)"
 ```
 
-### Configuration Overrides
+### Notes
 
-Environment variables are loaded from:
-1. `.env` file (dotenv format if present) — NOT tracked in version control via .gitignore
-2. System environment variables
-3. Defaults defined in `app.config`
-
-### Safety Features
-
-- **PID tracking**: Written to `.server-pid` so stop.sh can gracefully terminate
-- **Port conflict detection**: Tries default port 8920 first, reports if occupied
-- **Logging**: All server output captured to `logs/server.log`, preventing terminal noise
+- Requires `.venv` — run `./dev-setup.sh` or `./install.sh` first. There is
+  no system-python fallback and no automatic port-conflict detection (gunicorn
+  will fail loudly in `logs/server.log` if 8920 is taken).
+- Server output goes to `logs/server.log`, not the terminal.
+- For a browser-facing dev server with the Flask reloader, use
+  `flask --app app run --host 127.0.0.1 --port 8920` instead.
 
 ---
 
@@ -143,34 +133,28 @@ Environment variables are loaded from:
 
 ### stop.sh
 
-#### For Development (PID file mode)
 ```bash
-if [ -f .server-pid ]; then
-    PID=$(cat .server-pid)
-    kill $PID 2>/dev/null || echo "No process found"
-    rm -f .server-pid
+if [ ! -f .server.pid ]; then
+    echo "No PID file found."
+    exit 0
 fi
+PID=$(cat .server.pid)
+pkill -P "$PID" 2>/dev/null || true   # gunicorn worker children
+kill "$PID" 2>/dev/null || true
+rm -f .server.pid
 ```
 
-#### For Production (systemd mode)
-```bash
-sudo systemctl stop status-page
-```
-
-The script auto-detects whether a PID file exists (development) or systemd service is present (production).
+`stop.sh` is user-level only — it never talks to systemd. For a
+systemd-managed production install use `sudo systemctl stop status-page`.
 
 ### restart.sh
 
-Chains stop.sh then start.sh:
+Chains stop.sh then start.sh (dev mode) or use
+`sudo systemctl restart status-page` under systemd:
 ```bash
-./stop.sh
+./stop.sh 2>/dev/null || true
 sleep 1          # Grace period for socket cleanup
 ./start.sh
-```
-
-For systemd-managed production:
-```bash
-sudo systemctl restart status-page
 ```
 
 ---
