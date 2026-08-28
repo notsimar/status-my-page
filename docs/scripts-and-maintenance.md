@@ -20,6 +20,7 @@
 | `start.sh` | Launch server (gunicorn) with PID tracking & log capture | None (user) | Creates `.server.pid`, `logs/server.log` |
 | `stop.sh` | Graceful shutdown via PID file (kills worker children too) | None (user) | Reads `.server.pid` |
 | `restart.sh` | stop.sh + 1 s grace period + start.sh | None (user) | Uses stop.sh + start.sh chain |
+| `clear_history.sh` | History timeline CLI over the admin API: `list`, `show <id>`, `clear <id>`, `clear-all` (destructive commands confirm unless `--yes`) | None (user) | Deletes `status_history` rows via `POST /api/history/<id>/clear` (no local file changes) |
 | `rebuild.sh` | Full dependency install + DB migration + server restart | sudo for system deps | Installs venv, runs migrations in app.py |
 | `install.sh` | One-command production deploy wizard (root: systemd + 0.0.0.0; non-root: deploy only) | Root or user | Installs to `$HOME/.local/share/status-page` (or given abs path), `.env.local` (0600), systemd unit in root mode |
 | `cleanup.sh` | Archive management (list/show/prune/report) | None (user) | Reads/writes `archives/` JSON snapshots |
@@ -156,6 +157,36 @@ Chains stop.sh then start.sh (dev mode) or use
 sleep 1          # Grace period for socket cleanup
 ./start.sh
 ```
+
+---
+
+### clear_history.sh
+
+Manages the status-change history timeline **over the admin API** (requires a
+running server — `./start.sh` or systemd). Reads `.env.local`/`.env` like
+start.sh; authenticates as admin using `HEALTH_PASS` (and optional
+`HEALTH_USER`, default `admin`) — same convention as `tests/test_health.sh`.
+
+```
+./clear_history.sh list                      # all services: id / entry count / last change
+./clear_history.sh show <id>                 # one service's timeline (occurred / event / old -> new)
+./clear_history.sh clear <id>                # delete one service's rows (confirmation prompt)
+./clear_history.sh clear-all                 # delete every service's rows (confirmation prompt)
+./clear_history.sh clear-all --yes           # skip the prompt (CI/scripts)
+./clear_history.sh list https://host:8920    # optional server URL (default http://localhost:8920)
+```
+
+Notes:
+
+- `list` degrades gracefully when the public history feature is disabled —
+  per-service entry count shows `n/a` instead of failing.
+- The CSRF token is single-use (rotated per accepted mutation), so it is
+  re-fetched before **each** `POST /api/history/<id>/clear`.
+- The clear endpoint is admin+CSRF only and is **not** gated by the history
+  feature setting — an admin can wipe the timeline while the public view is
+  off.
+- Exit codes: `0` all clears succeeded, `1` one or more services failed (or
+  bad usage / login failure).
 
 ---
 

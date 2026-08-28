@@ -503,6 +503,7 @@ cp config.yaml.bak1 config.yaml
 | `install.sh` | Production deploy wizard (venv, DB seed, credentials, systemd in root mode) | `sudo ./install.sh[/abs/path]` |
 | `dev-setup.sh` | Interactive dev bootstrap: git pull, venv, prompts, `.env.local`, DB seed | `./dev-setup.sh` |
 | `start.sh` / `stop.sh` / `restart.sh` | Server lifecycle (gunicorn, PID tracking, logs → `logs/server.log`) | `./start.sh` |
+| `clear_history.sh` | History timeline CLI: `list` / `show <id>` / `clear <id>` / `clear-all` over the admin API (auth: `HEALTH_PASS`) | `./clear_history.sh list` |
 | `rebuild.sh` | Full dep install + DB migrations + restart | `./rebuild.sh` |
 | `cleanup.sh` | Archive manager for `archives/` JSON snapshots: list/show/prune/report | `./cleanup.sh list` |
 | `change_password.sh` | Rotate the admin password hash in `.env.local` | `./change_password.sh` |
