@@ -332,7 +332,7 @@ if (addItemForm) {
             row.className = 'status-row';
             row.dataset.id = item.id;
 
-            // Build row via DOM to avoid any double-encoding risk from escHtml
+            // Build row via DOM (`.textContent` for user values) avoiding double-encoding
             row.innerHTML = `
                 <div class="drag-handle" title="Drag to reorder">⠿</div>
                 <div class="status-main">

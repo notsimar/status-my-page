@@ -109,7 +109,7 @@ def sanitize_xss(text: str) -> str:
 
     This is the primary defense for any text that may be rendered in HTML
     contexts where auto-escaping isn't guaranteed (e.g., API JSON responses
-    consumed by client-side JS that uses innerHTML).
+    interpolated directly into HTML). Prefer `.textContent` / Jinja auto-escape.
     """
     return _html_escape(text, quote=True)
 
@@ -295,8 +295,8 @@ def validate_name(raw: str, field: str = "name",
 def validate_notes(raw: str, field: str = "notes") -> str:
     """Validate status notes (free text, longer, no character whitelist).
 
-    Applies injection detection + HTML escaping. Notes are stored in the DB
-    and rendered in both Jinja templates (auto-escaped) and JS (escHtml),
+    Applies injection detection. Notes are stored in the DB and rendered
+    via Jinja auto-escaping or `.textContent` (no `innerHTML` interpolation),
     so double-escaping is avoided — we only check for dangerous patterns.
     """
     if not isinstance(raw, str):

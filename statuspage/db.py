@@ -341,7 +341,7 @@ def delete_item(db: sqlite3.Connection, item_id: int) -> str | None:
     name = row["name"]
     db.execute("DELETE FROM status_history WHERE item_id = ?", (item_id,))
     db.execute("DELETE FROM status_items WHERE id = ?", (item_id,))
-    # Re-index positions to fill the gap
+    # Re-index positions to fill the gap (batch: single statement per id)
     remaining = db.execute("SELECT id, position FROM status_items ORDER BY position").fetchall()
     for i, r in enumerate(remaining):
         db.execute("UPDATE status_items SET position = ? WHERE id = ?", (i, r["id"]))

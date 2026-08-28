@@ -32,11 +32,10 @@ CURL_MAX_REDIRS = 5
 RSS_MAX_ITEMS = 20
 RSS_MAX_BYTES = 512 * 1024
 
-# DOCTYPE with an internal DTD entity block — the classic "billion laughs"
-# entity-expansion vector. Paid/vendor RSS never needs internal entities, so
-# any feed presenting one is rejected as a fetch failure (never as green).
-# (Python 3.14's ElementTree already caps internal-entity recursion depth;
-# this belt-and-braces check makes the policy explicit and exportable.)
+# Internal DTD entity block (entity-expansion / "billion laughs" attack).
+# Vendor RSS feeds never use internal entities; any feed with this pattern
+# is rejected as a fetch failure (never green). Python 3.14's ElementTree
+# caps recursion depth; this explicit check makes the policy auditable.
 _RSS_DOCTYPE_INTERNAL_ENTITY = re.compile(
     r'<!DOCTYPE\s+\S+\s*\[\s*<!ENTITY[^>]+>', re.IGNORECASE
 )
@@ -524,7 +523,7 @@ def _run_rss_feed_check(url: str, timeout: int, keywords: dict[str, list[str]] |
     if code != 200:
         return None, code
 
-    # Reject DTD entity-expansion payloads BEFORE parsing (billion laughs).
+    # Reject DTD entity-expansion payloads BEFORE parsing (entity-expansion attack).
     if feed_treats_as_unfetchable(resp_body):
         return None, code
 
