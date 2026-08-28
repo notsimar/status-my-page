@@ -1,0 +1,10 @@
+<!-- Shared static-export fragment. Used by generate_static_html() via string
+     interpolation; values inserted must be pre-escaped with html.escape(). -->
+<div class="status-row{show_class}" data-id="{id}">
+    <div class="status-main">
+        <span class="status-dot {status}"></span>
+        <span class="status-name">{name}</span>
+        <span class="status-label {status}">{label}</span>
+    </div>
+    {notes_div}
+</div>

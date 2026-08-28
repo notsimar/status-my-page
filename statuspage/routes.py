@@ -214,21 +214,15 @@ def generate_static_html() -> str:
     for item in items:
         status = item["status"]
         status_label = "Operational" if status == "green" else ("Degraded" if status == "degraded" else "Outage")
-        # Escape admin-controlled text — this HTML bypasses Jinja autoescaping
+        # Fragment loaded from templates/static_fragment.html; values pre-escaped
         notes = _html.escape((item["notes"] or "").strip()) if "notes" in item.keys() else ""
         show_notes_class = " show-notes" if status != "green" and notes else ""
-
-        notes_html = f'<div class="static-notes">{notes}</div>' if notes else ''
-
-        row_html = f"""
-        <div class="status-row{show_notes_class}" data-id="{item['id']}">
-            <div class="status-main">
-                <span class="status-dot {status}"></span>
-                <span class="status-name">{_html.escape(item['name'])}</span>
-                <span class="status-label {status}">{status_label}</span>
-            </div>
-            {notes_html}
-        </div>"""
+        notes_div = f'<div class="static-notes">{notes}</div>' if notes else ""
+        fragment = (Path(__file__).parent.parent / "templates" / "static_fragment.html").read_text()
+        row_html = fragment.format(
+            id=item["id"], status=status, name=_html.escape(item["name"]),
+            label=status_label, show_class=show_notes_class, notes_div=notes_div
+        )
         status_rows_html.append(row_html)
 
     status_list_html = "\n".join(status_rows_html)
