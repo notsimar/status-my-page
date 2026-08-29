@@ -1,12 +1,12 @@
 items:
-- Slack
-- Glean
-- Google workspace
-- ServiceNow
-- MS365
-- Azure
-- Workday
-- Atlassian
+- Service1
+- Service2
+- Service3
+- Service4
+- Service5
+- Service6
+- Service7
+- Service8
 _base:
   admin:
     user: admin

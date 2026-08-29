@@ -253,9 +253,9 @@ def validate_name(raw: str, field: str = "name",
         real notes for no security gain.
 
     Character whitelist details:
-        - STRICT: ^[a-zA-Z0-9 _\-]+$ — letters, digits, space,
+        - STRICT: ^[a-zA-Z0-9 _\\-]+$ — letters, digits, space,
           hyphen, underscore only.
-        - RELAXED: ^[a-zA-Z0-9 _\-../@()]+$ — above, plus
+        - RELAXED: ^[a-zA-Z0-9 _\\-../@()]+$ — above, plus
           dot, slash, parentheses, at-sign.
     """
     if not isinstance(raw, str):
