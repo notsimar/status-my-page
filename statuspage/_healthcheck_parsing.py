@@ -26,7 +26,7 @@ RSS_MAX_BYTES = 512 * 1024
 # entity-expansion vector. Paid/vendor RSS never needs internal entities, so
 # any feed presenting one is rejected as a fetch failure (never as green).
 _RSS_DOCTYPE_INTERNAL_ENTITY = re.compile(
-    r'<!DOCTYPE\s+\S+\s*\[\\s*<!ENTITY[^>]+>', re.IGNORECASE
+    r'<!DOCTYPE\s+\S+\s*\[\s*<!ENTITY[^>]+>', re.IGNORECASE
 )
 
 

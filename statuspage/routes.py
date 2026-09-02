@@ -211,15 +211,17 @@ def generate_static_html() -> str:
     generated_time = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     status_rows_html = []
+    # Load the shared row fragment ONCE per export: per-item read_text()
+    # would re-stat the template N times for no reason (export endpoint).
+    row_fragment = (Path(__file__).parent.parent / "templates" / "static_fragment.html").read_text()
     for item in items:
         status = item["status"]
         status_label = "Operational" if status == "green" else ("Degraded" if status == "degraded" else "Outage")
-        # Fragment loaded from templates/static_fragment.html; values pre-escaped
+        # Values pre-escaped for the string-interpolated fragment
         notes = _html.escape((item["notes"] or "").strip()) if "notes" in item.keys() else ""
         show_notes_class = " show-notes" if status != "green" and notes else ""
         notes_div = f'<div class="static-notes">{notes}</div>' if notes else ""
-        fragment = (Path(__file__).parent.parent / "templates" / "static_fragment.html").read_text()
-        row_html = fragment.format(
+        row_html = row_fragment.format(
             id=item["id"], status=status, name=_html.escape(item["name"]),
             label=status_label, show_class=show_notes_class, notes_div=notes_div
         )

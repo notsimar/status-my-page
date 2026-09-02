@@ -70,9 +70,15 @@ def _write_config_atomic(path: Path, cfg: dict) -> None:
     The written file mirrors what ``yaml.dump`` produces with
     ``default_flow_style=False, sort_keys=False`` so round-trips are lossless.
     Also reasserts 0600 permissions on the written file.
+
+    Rotates config backups (config.yaml.bak1..bakN) BEFORE overwriting so the
+    previous version survives. Callers must hold ``_CONFIG_LOCK`` (required
+    by ``_rotate_backups`` — its file ops race with other saves otherwise).
     """
     import stat as _stat
     import tempfile
+
+    _rotate_backups()
 
     fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".config_", suffix=".tmp")
     try:

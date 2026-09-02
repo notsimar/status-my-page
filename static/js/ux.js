@@ -52,6 +52,15 @@
     }
     window.showToast = showToast;
 
+    // Escape text that lands in innerHTML (okLabel is the only dynamic part
+    // of the dialog markup — names are whitelisted server-side, but escape
+    // here so the dialog can never be used as an injection sink).
+    function _escHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     // ── Confirm modal (styled replacement for window.confirm) ───────
     function uxConfirm(message, opts) {
         opts = opts || {};
@@ -73,7 +82,7 @@
                 '<button data-act="ok" style="padding:7px 16px;border-radius:6px;border:none;' +
                 'cursor:pointer;' + (danger ||
                     'background:#4a90d9;color:#fff;') + '">' +
-                (opts.okLabel || 'OK') + '</button></div></div>';
+                (opts.okLabel ? _escHtml(opts.okLabel) : 'OK') + '</button></div></div>';
             overlay.querySelector('p').textContent = message;
             const done = (val) => { overlay.remove(); resolve(val); };
             overlay.querySelector('[data-act=cancel]').onclick = () => done(false);

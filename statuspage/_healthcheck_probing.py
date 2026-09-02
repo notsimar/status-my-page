@@ -32,7 +32,7 @@ RSS_MAX_BYTES = 512 * 1024
 # DOCTYPE with an internal DTD entity block — the classic "billion laughs"
 # entity-expansion vector.
 _RSS_DOCTYPE_INTERNAL_ENTITY = re.compile(
-    r'<!DOCTYPE\s+\S+\s*\[\\s*<!ENTITY[^>]+>', re.IGNORECASE
+    r'<!DOCTYPE\s+\S+\s*\[\s*<!ENTITY[^>]+>', re.IGNORECASE
 )
 
 
