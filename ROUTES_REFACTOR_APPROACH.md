@@ -1,5 +1,12 @@
 # Refactoring approach for statuspage/routes.py
 
+> **Status (2026-09-01): superseded.** The planned `routes_public.py` split
+> and the companion `_healthcheck_{parsing,probing,worker}.py` split were
+> started, never wired in, and **deleted** (commit `9a98f46`) — the two
+> copies had already drifted (broken DTD guard regex in the split). `routes.py`
+> is still the single route file; this doc remains the reference for a
+> future, completed split.
+
 ## Overview
 
 The 984-line `routes.py` contains all HTTP route handlers mixed with business logic,

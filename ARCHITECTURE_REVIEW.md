@@ -1,7 +1,16 @@
 # Status-My-Page — Architecture Review
 
 Review scope: full system (`app.py`, `statuspage/`, `healthcheck`, templates, deploy).
-Source: `~/Developer/status-my-page/` @ commit `357d741`.
+**Source:** `~/Developer/status-my-page/` @ commit `357d741`.
+
+> **Post-review status (2026-09-01):** the unfinished modular split that
+> `ROUTES_REFACTOR_APPROACH.md` tracked — `statuspage/routes_public.py`,
+> `_healthcheck_parsing.py`, `_healthcheck_probing.py`, `_healthcheck_worker.py` —
+> was never imported by anything, so it was **deleted** (commit `9a98f46`), not
+> finished. `routes.py` remains the single file (P0 still open) and
+> `statuspage/_healthcheck_impl.py` is the sole live healthcheck implementation.
+> The security review of `e20cea5` fixed the `_rotate_backups()` regression,
+> the DTD-guard regex, and the `uxConfirm` `okLabel` escaping.
 
 ---
 ## 1. Module Structure

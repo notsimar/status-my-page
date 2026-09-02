@@ -94,7 +94,7 @@
 5. **Database as Single Source of Truth** — Runtime mutations (status, notes, reorder, items, history) are maintained directly in SQLite.
 6. **Polling-free UI, RSS feed for consumers** — A prior SSE broadcast layer was removed; the client updates the DOM in response to each successful mutation (no long-lived connections holding gunicorn prefork slots). External consumers (uptime monitors, IFTTT, other dashboards) subscribe to the public `/feed.xml` RSS 2.0 status-change feed instead.
 7. **Package layout (`app.py` + `statuspage/`)** — `app.py` is a thin composition root (Flask app factory, route registration, security headers, bootstrap); each concern lives in `statuspage/`: `config.py` (parsing + migration + runtime state), `db.py` (schema + history), `services.py` (domain ops), `routes.py` (HTTP handlers), `auth.py` (session/CSRF/rate-limit/lockout), `healthcheck.py` (integration facade; implementation in `statuspage/_healthcheck_impl.py`), `slack.py` (notification outbox), `rss.py` (public feed builder), `logging_setup.py` (structured logs). `constants.py` holds shared tunables. The repo-root `healthcheck.py` is a compatibility alias so `import healthcheck` keeps working for tests and tooling.
-   - *WIP:* `routes_public.py` (public route handlers) and `_healthcheck_parsing/probing/worker.py` are unfinished modular splits that nothing imports yet (`ROUTES_REFACTOR_APPROACH.md` tracks this); they must be finished and re-exported — or deleted — before any doc treats them as live components.
+   - *History:* an unfinished modular split (`routes_public.py`, `_healthcheck_{parsing,probing,worker}.py`) once sat in this package; nothing imported it, so it was **deleted** (2026-09-01, commit `9a98f46`). `ROUTES_REFACTOR_APPROACH.md` remains the tracking doc should the split ever be revisited.
 8. **RSS healthchecks are explicit-only** — `type: rss` must be stated; a bare `url` never auto-detects as rss (it stays `curl`). Feeds are fetched via a curl subprocess (redirect policy, max-filesize, max-redirs capped) and parsed with stdlib ElementTree — no third-party RSS library.
 
 ---
@@ -168,7 +168,7 @@ POST/GET /api/healthchecks, PUT/DELETE /api/healthchecks/<name>
   → validate type (curl|ping|tcp|soap|rss), _safe_url/_safe_host,
     numeric bounds, rss keyword lists (list-of-strings, ≤ 32 words)
   → rewrite config.yaml healthchecks section (config.py)
-  → re-parse + hot-restart worker (healthcheck.py configure + restart)
+  → worker picks it up on its next poll cycle (config re-read from disk each loop)
 ```
 
 ### 2.3 State Management
@@ -321,14 +321,14 @@ worker loop (one thread, fcntl-locked to a single instance)
 
 **Safety caps** (constants.py / implementation): `HEALTHCHECK_INTERVAL_DEFAULT` 60s, `HEALTHCHECK_TIMEOUT_DEFAULT` 10s, `HEALTHCHECK_RETRIES_DEFAULT` 2 (retries are clamped to a minimum of 1 at parse time — see the retry ladder above). Feed body 512 KB, 20 entries scanned, redirect depth 5, curl max-time = timeout + 5.
 
-> **WIP note:** `statuspage/_healthcheck_parsing.py`, `_healthcheck_probing.py`,
-> and `_healthcheck_worker.py` are an unfinished modular split — import
-> nowhere in the app or test suite (test docstrings reference the historical
-> function names only). The running app uses `statuspage/_healthcheck_impl.py`
-> (loaded as top-level `healthcheck`). Treat `_impl.py` as the source of truth
-> until the split lands or the stubs are deleted.
+> Note: `_healthcheck_impl.py` is the sole, running healthcheck implementation
+> (loaded as top-level `healthcheck` via the repo-root alias). An earlier
+> unfinished modular split (`_healthcheck_parsing.py`, `_healthcheck_probing.py`,
+> `_healthcheck_worker.py`) was never imported and was deleted
+> (commit `9a98f46`); test docstrings reference the historical function names
+> only and still resolve against `_healthcheck_impl.py`.
 
-**Restart semantics:** `PUT /api/healthchecks/<name>` (or delete/create) re-parses config and hot-restarts the worker thread in place — no process restart needed. The per-item history prune carries an outer `item_id = ?` filter so one item flipping can never wipe another item's history (regression-tested).
+**Restart semantics:** `PUT /api/healthchecks/<name>` (or delete/create) changes take effect on the worker's *next poll cycle* — it re-reads config from disk every loop rather than restarting. No process restart is needed. The per-item history prune carries an outer `item_id = ?` filter so one item flipping can never wipe another item's history (regression-tested).
 
 ---
 
